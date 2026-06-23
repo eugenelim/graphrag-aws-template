@@ -31,51 +31,29 @@
 
 ## Apps and packages
 
-<!--
-Replace this section with a real listing of your apps and packages.
-The ideal entry tells an agent: what is this, what does it depend on, and
-where do I look first?
+**Greenfield — no application code has been written yet.** This repo currently
+holds the product and architecture record that *precedes* the code; `apps/` and
+`packages/` are not yet populated. The planned shape is settled in the design doc
+and recorded in ADRs — read those for "what's coming" until code lands:
 
-- `apps/web/` — the public-facing web app (Next.js). Depends on `packages/api-client`,
-  `packages/ui`. Entry point: `app/page.tsx`.
-- `packages/api-client/` — typed HTTP client for the API. Generated from
-  the OpenAPI spec in `apps/api/openapi.yaml`.
-- ...
--->
+- [`architecture/graphrag-aws-architecture/design.md`](graphrag-aws-architecture/design.md)
+  — the topology and the two resolved decisions (hybrid orchestration; ephemeral
+  VPC stack). Planned runtime components: an on-demand **Fargate ingestion/sync**
+  task, an in-VPC **query Lambda** behind an IAM-auth Function URL, a thin local
+  **CLI**, and the **Neptune + OpenSearch + Bedrock** stores.
+- [`../product/briefs/graphrag-aws-demo.md`](../product/briefs/graphrag-aws-demo.md)
+  — the five shippable slices (Spec map) the code will be built from.
 
-<!--
-Optional section. If this project ships skill/agent packs, list them
-here with a one-line purpose each. Delete this section if you don't
-ship packs.
-
-Example:
-
-- `<pack-name>` — <one-line purpose>. <scope: repo-only / user-scope / both>.
--->
-<list your packs and packages here>
-
-## Conventions you'll see across packages
-
-<!--
-Things that are true of every package in the monorepo. Example:
-
-- Every package has its own `AGENTS.md` describing package-specific rules.
-- Every package exports a `package.json` with `main`, `module`, and `types`.
-- Every package has a `README.md` aimed at human consumers.
-
-Add yours here.
--->
+Update this section with the real `apps/`/`packages/` listing once slice 1 lands.
 
 ## Where to start
 
-<!--
-A short, opinionated path for someone new to the repo. Example:
-
-1. Read [`docs/CHARTER.md`](../CHARTER.md) — the project's mission and scope.
+1. Read [`docs/CHARTER.md`](../CHARTER.md) — mission and scope. **(Currently a
+   template — see the note in this repo's docs; charter content is RFC-gated.)**
 2. Read this file (architecture overview).
-3. Skim [`docs/product/roadmap.md`](../product/roadmap.md) for current direction.
-4. Pick a recent feature in `docs/specs/` and read its `spec.md` and `plan.md`
-   side by side with the resulting code in `apps/` or `packages/`.
-5. Look at the latest 3 ADRs in `docs/adr/` to see the kinds of decisions
-   we record.
--->
+3. Read the design doc + [`docs/adr/`](../adr/) — the architecture is decided
+   before the code exists, so these are the current source of truth.
+4. Skim [`docs/product/roadmap.md`](../product/roadmap.md) and the
+   [brief](../product/briefs/graphrag-aws-demo.md) for the slice sequence.
+5. When code lands, each `docs/specs/<slice>/` will carry a `spec.md` + `plan.md`
+   alongside the resulting code in `apps/`.
