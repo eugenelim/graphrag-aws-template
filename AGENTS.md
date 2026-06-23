@@ -10,7 +10,10 @@
 ## What this repo is
 
 <!-- ONE sentence. Replace this. -->
-A monorepo for `<project-name>` — a `<one-line description of what it does and for whom>`.
+A repo for `graphrag-aws-template` — a reproducible, clone-and-deploy AWS reference
+demo that shows solution architects when graph-augmented retrieval beats vector
+search, across ingestion → retrieval → search (vector / graph / hybrid), over the
+public Kubernetes `community` + `enhancements` corpus.
 
 The detailed map of what lives where is in [`docs/architecture/overview.md`](docs/architecture/overview.md).
 **Read it before exploring.** It will save you 20 minutes of grep.
