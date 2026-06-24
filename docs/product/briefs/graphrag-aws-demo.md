@@ -86,3 +86,16 @@ are scaffolded — do not hand-edit. Ordered by delivery dependency. -->
 | `hybrid-orchestration` | _not yet scaffolded_ |
 | `permission-filtered-retrieval` | _not yet scaffolded_ |
 | `incremental-delta-reingest` | _not yet scaffolded_ |
+
+<!-- The GraphRAG pattern-catalog expansion (Metadata Filtering, Cypher Templates,
+Parent-Child, Text2openCypher, Global Community Summary) is a separate received
+outcome at a different appetite — it lives in its own brief,
+`graphrag-pattern-catalog.md`, not here. See RFC-0001. -->
+
+## Related work
+
+- **Pattern-catalog expansion** → [`graphrag-pattern-catalog.md`](graphrag-pattern-catalog.md)
+  — a sibling brief that takes the same stack past this demo into an AWS
+  implementation of the [graphrag.com](https://graphrag.com) pattern catalog.
+  Governed by [RFC-0001](../../rfc/0001-adopt-project-charter.md); appetite-gated
+  behind this demo's three-mode core.
