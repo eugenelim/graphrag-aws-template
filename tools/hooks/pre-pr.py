@@ -28,6 +28,7 @@ a hard failure.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -53,6 +54,69 @@ def _find_loop_cohort() -> Path | None:
         if candidate.is_file():
             return candidate
     return None
+
+
+# --- Committed-config secret guard (infra-config-separation AC7) -------------
+# This repo's `apps/infra/scripts/config*.env` files are committed (per-deployer
+# values live in the gitignored config.local.env). Guard the *tracked* config files
+# against a real subscriber email / IAM role ARN landing in history. A targeted
+# guard, not a repo-wide scanner -- the full gitleaks/shellcheck CI is deferred
+# (docs/backlog.md `infra-secret-scan-ci`).
+_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+_ROLE_ARN_RE = re.compile(r"arn:aws:iam::([^:\s]+):role/")
+# RFC-2606 reserved domains are documentation placeholders, not real addresses.
+_PLACEHOLDER_EMAIL_DOMAINS = {"example.com", "example.org", "example.net"}
+
+
+def _is_placeholder_email(addr: str) -> bool:
+    # Suffix match: the reserved domain itself or any subdomain of it is a
+    # placeholder (`you@example.com`, `ops@foo.example.com`), but a lookalike
+    # suffix like `you@example.com.attacker.io` is NOT (fails closed).
+    domain = addr.rsplit("@", 1)[-1].lower()
+    return any(
+        domain == d or domain.endswith("." + d) for d in _PLACEHOLDER_EMAIL_DOMAINS
+    )
+
+
+def _is_placeholder_arn(account: str) -> bool:
+    # An all-zero account or an angle-bracket token (`<acct>`) is a placeholder.
+    return account == "000000000000" or account.startswith("<")
+
+
+def _scan_config_text(rel: str, text: str) -> list[str]:
+    """Pure secret-scan of one config file's *text* — no git, no I/O. Returns
+    human-readable findings for any non-placeholder email address or IAM role ARN."""
+    findings: list[str] = []
+    for m in _EMAIL_RE.finditer(text):
+        if not _is_placeholder_email(m.group(0)):
+            findings.append(f"{rel}: non-placeholder email '{m.group(0)}'")
+    for m in _ROLE_ARN_RE.finditer(text):
+        if not _is_placeholder_arn(m.group(1)):
+            findings.append(f"{rel}: non-placeholder IAM role ARN (account {m.group(1)})")
+    return findings
+
+
+def _tracked_config_files(repo_root: Path) -> list[str]:
+    """The tracked ``apps/infra/scripts/config*`` files (repo-relative paths). The
+    gitignored ``config.local.env`` is never tracked, so it is excluded by construction."""
+    listed = subprocess.run(
+        ["git", "ls-files", "apps/infra/scripts/config*"],
+        capture_output=True, text=True, check=False, cwd=repo_root,
+    )
+    return listed.stdout.split()
+
+
+def _committed_config_secret_findings(repo_root: Path) -> list[str]:
+    """Scan tracked ``apps/infra/scripts/config*`` files for a non-placeholder email
+    address or IAM role ARN. Returns a list of human-readable findings (empty = clean)."""
+    findings: list[str] = []
+    for rel in _tracked_config_files(repo_root):
+        try:
+            text = (repo_root / rel).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        findings.extend(_scan_config_text(rel, text))
+    return findings
 
 
 def _repo_root() -> Path:
@@ -124,6 +188,19 @@ def main() -> int:
                     )
                     sys.exit(1)
                 print(f"pre-pr: ✓ loop-cohort check {spec_dir} ({phase})")
+
+    # --- Committed-config secret guard (infra-config-separation AC7) ---------
+    secret_findings = _committed_config_secret_findings(repo_root)
+    if secret_findings:
+        for finding in secret_findings:
+            print(f"pre-pr: ✖ committed-config secret — {finding}", file=sys.stderr)
+        print(
+            "pre-pr: ✖ committed-config secret guard failed "
+            "(put per-deployer values in the gitignored config.local.env)",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    print("pre-pr: ✓ committed-config secret guard")
 
     # --- This project's gate: ruff (lint + format + S security), mypy, pytest ---
     # Silence the CDK/jsii "untested node version" warning during the synth test.
