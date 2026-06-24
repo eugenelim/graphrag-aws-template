@@ -144,8 +144,10 @@ the ADR-0002 stack behind the same IaC app:
 ### T3 — Entity + edge extraction
 - **Depends on:** T2
 - **Tests:** `test_extract.py` — expected SIG/Person/KEP/Subproject entities and
-  CHAIRS/TECH_LEADS/OWNS/AUTHORS/APPROVES/HAS_SUBPROJECT/OWNS_SUBPROJECT edges
-  from the fixture. `# STUB: AC2`, `# STUB: AC3`, `stub: true`.
+  CHAIRS/TECH_LEADS/OWNS/AUTHORS/APPROVES/HAS_SUBPROJECT edges from the fixture.
+  (`Person→Subproject` ownership is *not* modeled — sigs.yaml subproject `owners`
+  are OWNERS-file URLs, not inline handles; fabricating it was declined.)
+  `# STUB: AC2`, `# STUB: AC3`, `stub: true`.
 - **Approach:** `graphrag.extract` — map parsed records to `Node`/`Edge`, IDs via
   `normalize`.
 

@@ -1,0 +1,11 @@
+# Alias table — the prose-name ↔ canonical-handle map the de-risk verdict flagged
+# for pre-`kep.yaml` KEPs that name authors in prose by display name.
+#
+# Keys are lowercased display names; values are canonical GitHub handles. This is
+# the ONLY non-mechanical step in resolution and it is small, hand-authored, and
+# reviewed — deliberately NOT a trained model (charter pattern 1: narratable).
+aliases:
+  "tim hockin": thockin
+  "antonio ojea": aojea
+  "dawn chen": dchen1107
+  "derek carr": derekwaynecarr

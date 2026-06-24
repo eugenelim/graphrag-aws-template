@@ -1,0 +1,48 @@
+# Hand-labeled sample for the resolver "open confirmation" (AC5).
+#
+# Each mention is a *real* form as it appears across the two repos (the @-prefix
+# and case inconsistencies are verbatim), plus the harder prose display-name forms
+# a real corpus carries. `gold` is the independently-known canonical identity.
+# The eval scores the resolver's clustering pairwise (precision/recall ≥ 0.80).
+#
+# This deliberately includes un-aliased prose names (e.g. "Guilherme Cassolato",
+# "Bowei Du") that the alias table does NOT cover — so the resolver genuinely
+# misses them (false negatives) and the metric has teeth rather than being a
+# constructed 1.0. The de-risk verdict's bar is ≥0.80, not perfection.
+mentions:
+  # --- thockin: handle in both sources, plus capitalized + prose (aliased) ---
+  - { raw: "@thockin", source: enhancements, gold: thockin }      # KEP approver
+  - { raw: "thockin", source: community, gold: thockin }          # SIG tech_lead (bare)
+  - { raw: "@Thockin", source: enhancements, gold: thockin }      # case variant
+  - { raw: "Tim Hockin", source: enhancements, gold: thockin }    # legacy prose (aliased)
+
+  # --- aojea: cross-source handle + prose (aliased) ---
+  - { raw: "aojea", source: community, gold: aojea }              # SIG tech_lead
+  - { raw: "@aojea", source: enhancements, gold: aojea }          # KEP author
+  - { raw: "Antonio Ojea", source: community, gold: aojea }       # prose (aliased)
+
+  # --- dchen1107: cross-source handle + prose (aliased) ---
+  - { raw: "@dchen1107", source: enhancements, gold: dchen1107 }
+  - { raw: "dchen1107", source: community, gold: dchen1107 }
+  - { raw: "Dawn Chen", source: community, gold: dchen1107 }      # prose (aliased)
+
+  # --- derekwaynecarr: handle + prose (aliased) ---
+  - { raw: "@derekwaynecarr", source: enhancements, gold: derekwaynecarr }
+  - { raw: "Derek Carr", source: community, gold: derekwaynecarr }  # prose (aliased)
+
+  # --- un-aliased prose forms: gold says merge, resolver MISSES (false negatives) ---
+  - { raw: "@guicassolato", source: community, gold: guicassolato }
+  - { raw: "Guilherme Cassolato", source: community, gold: guicassolato }  # NOT aliased -> FN
+  - { raw: "@bowei", source: community, gold: bowei }
+  - { raw: "Bowei Du", source: community, gold: bowei }           # NOT aliased -> FN
+
+  # --- distinct singletons (negatives: must not merge into any cluster) ---
+  - { raw: "@andrewsykim", source: enhancements, gold: andrewsykim }
+  - { raw: "@SergeyKanzhelev", source: community, gold: sergeykanzhelev }
+  - { raw: "mrunalp", source: community, gold: mrunalp }
+  - { raw: "@lavalamp", source: enhancements, gold: lavalamp }
+
+  # --- SIG slugs: controlled vocabulary across both sources ---
+  - { raw: "sig-network", source: enhancements, kind: sig, gold: sig-network }
+  - { raw: "Network", source: community, kind: sig, gold: sig-network }
+  - { raw: "sig-node", source: community, kind: sig, gold: sig-node }

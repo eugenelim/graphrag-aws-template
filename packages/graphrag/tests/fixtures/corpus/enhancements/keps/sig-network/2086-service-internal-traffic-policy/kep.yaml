@@ -1,0 +1,15 @@
+# Real excerpt — kubernetes/enhancements KEP-2086. Note the @-prefix inconsistency
+# the resolver must normalize: reviewers list "thockin" bare, approvers "@thockin".
+title: Service Internal Traffic Policy
+kep-number: 2086
+authors:
+  - "@andrewsykim"
+owning-sig: sig-network
+status: implemented
+reviewers:
+  - "robscott"
+  - "thockin"
+approvers:
+  - "@thockin"
+stage: stable
+latest-milestone: "v1.26"

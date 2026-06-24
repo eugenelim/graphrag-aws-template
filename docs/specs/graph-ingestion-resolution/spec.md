@@ -1,6 +1,6 @@
 # Spec: graph-ingestion-resolution
 
-- **Status:** Approved
+- **Status:** Implementing
 - **Shape:** mixed
 - **Brief:** [`docs/product/briefs/graphrag-aws-demo.md`](../../product/briefs/graphrag-aws-demo.md)
 - **Constrained by:** [ADR-0001](../../adr/0001-hybrid-orchestration-seed-and-expand.md) (seed-and-expand reuses this resolver/alias table), [ADR-0002](../../adr/0002-ephemeral-vpc-store-topology.md) (ephemeral VPC + Neptune + Fargate topology), [ADR-0003](../../adr/0003-iac-tool-aws-cdk-python.md) (IaC tool), [design doc](../../architecture/graphrag-aws-architecture/design.md)
@@ -43,7 +43,8 @@ precisely because it reuses what this slice builds).
   doc subset** (per de-risk verdict #2: KEP READMEs, SIG charters; not every terse
   fix-KEP).
 - Entity kinds: **SIG, Person, KEP, Subproject**. Edge kinds: **CHAIRS,
-  TECH_LEADS, OWNS (SIG→KEP), AUTHORS, APPROVES, HAS_SUBPROJECT, OWNS_SUBPROJECT**.
+  TECH_LEADS (Person→SIG), OWNS (SIG→KEP), AUTHORS, APPROVES (Person→KEP),
+  HAS_SUBPROJECT (SIG→Subproject)**.
 - Cross-source resolution: normalized-slug match for SIGs, normalized-handle match
   for Persons, and a small alias table (`aliases.yaml`) for the prose-name ↔
   `@handle` case the de-risk verdict flagged in pre-`kep.yaml` KEPs. **No trained
@@ -164,8 +165,7 @@ Gates: `ruff` (lint+format, with the `S` security ruleset), `mypy` (typecheck),
   *(TDD)*
 - [ ] **AC3 — Edge extraction.** Extraction yields the expected edges —
   **CHAIRS, TECH_LEADS** (Person→SIG), **OWNS** (SIG→KEP), **AUTHORS, APPROVES**
-  (Person→KEP), **HAS_SUBPROJECT** (SIG→Subproject), **OWNS_SUBPROJECT**
-  (Person→Subproject) — from the fixture. *(TDD)*
+  (Person→KEP), **HAS_SUBPROJECT** (SIG→Subproject) — from the fixture. *(TDD)*
 - [ ] **AC4 — Cross-source resolution into single nodes (with negatives).** A SIG
   slug present in *both* sources resolves to exactly one SIG node; a GitHub handle
   present in both `sigs.yaml` leadership and `kep.yaml` author/approver lists
