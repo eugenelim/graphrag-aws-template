@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 from aws_cdk import (
+    CfnOutput,
     CfnParameter,
     RemovalPolicy,
     Stack,
@@ -115,7 +116,7 @@ class GraphragStack(Stack):
 
     # --- S3 corpus snapshot bucket: private, encrypted, teardown-removable ---------
     def _corpus_bucket(self) -> s3.Bucket:
-        return s3.Bucket(
+        bucket = s3.Bucket(
             self,
             "CorpusBucket",
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
@@ -124,6 +125,8 @@ class GraphragStack(Stack):
             removal_policy=RemovalPolicy.DESTROY,
             auto_delete_objects=True,  # so `destroy` leaves nothing billable
         )
+        CfnOutput(self, "CorpusBucketName", value=bucket.bucket_name)
+        return bucket
 
     # --- Neptune Serverless: VPC-resident (subnet group), min capacity -------------
     def _neptune(self, vpc: ec2.Vpc) -> tuple[neptune.CfnDBCluster, ec2.SecurityGroup]:
@@ -159,6 +162,8 @@ class GraphragStack(Stack):
             db_cluster_identifier=cluster.ref,
             db_instance_class="db.serverless",
         ).add_dependency(cluster)
+        # The endpoint the in-VPC ingestion task / live round-trip test connects to.
+        CfnOutput(self, "NeptuneEndpoint", value=f"https://{cluster.attr_endpoint}:8182")
         return cluster, sg
 
     # --- Fargate ingestion task with a least-privilege task role -------------------
@@ -218,7 +223,14 @@ class GraphragStack(Stack):
         # The task's ENI sits in the private subnets; Neptune accepts it on 8182.
         task_sg = ec2.SecurityGroup(self, "IngestionSg", vpc=vpc, description="Fargate ingestion")
         neptune_sg.add_ingress_rule(task_sg, ec2.Port.tcp(8182), "ingestion to neptune 8182")
-        _ = cluster_compute  # cluster is referenced by the task definition at run time
+
+        # Handles for `aws ecs run-task` (the live ingest + retrieve smoke).
+        private_subnets = vpc.select_subnets(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED)
+        CfnOutput(self, "EcsClusterName", value=cluster_compute.cluster_name)
+        CfnOutput(self, "IngestionTaskDefArn", value=task_def.task_definition_arn)
+        CfnOutput(self, "IngestionSecurityGroupId", value=task_sg.security_group_id)
+        CfnOutput(self, "PrivateSubnetId", value=private_subnets.subnet_ids[0])
+        CfnOutput(self, "IngestionRepoUri", value=repo.repository_uri)
 
     # --- Budgets cost alarm: threshold + a notification subscriber -----------------
     def _budget_alarm(self, email: str) -> None:

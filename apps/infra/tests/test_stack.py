@@ -188,6 +188,21 @@ def test_governance_tags_on_taggable_resources(template: Template) -> None:
             assert not missing, f"{rtype} missing governance tags: {sorted(missing)}"
 
 
+def test_run_task_handles_are_exported_as_outputs(template: Template) -> None:
+    # The smoke (live ingest + retrieve) needs these handles; export them so an
+    # operator doesn't have to hunt the console.
+    outputs = set(template.find_outputs("*").keys())
+    assert {
+        "NeptuneEndpoint",
+        "CorpusBucketName",
+        "EcsClusterName",
+        "IngestionTaskDefArn",
+        "IngestionSecurityGroupId",
+        "PrivateSubnetId",
+        "IngestionRepoUri",
+    } <= outputs
+
+
 def test_corpus_bucket_enforces_tls(template: Template) -> None:
     # enforce_ssl=True must synthesize a Deny-on-insecure-transport bucket policy.
     deny_insecure = False
