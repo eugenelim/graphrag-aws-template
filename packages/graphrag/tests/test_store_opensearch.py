@@ -5,13 +5,18 @@
 
 from __future__ import annotations
 
+import io
 import json
+import ssl
+import urllib.error
+import urllib.request
+from email.message import Message
 
 import pytest
 from botocore.credentials import Credentials
 
 from graphrag.chunk import Chunk
-from graphrag.store.opensearch import HttpResponse, OpenSearchVectorStore
+from graphrag.store.opensearch import HttpResponse, OpenSearchVectorStore, _UrllibClient
 from graphrag.store.vector_base import EmbeddedChunk
 
 
@@ -161,3 +166,62 @@ def test_delete_by_query_is_body_parameterized() -> None:
     _store(http).delete(["a", "b"])
     body = http.last_body()
     assert body["query"]["terms"]["chunk_id"] == ["a", "b"]
+
+
+# STUB: AC1 — the default urllib client must *return* (not raise) on an HTTP-error
+# response, so `_request` interprets status uniformly and `create_index`'s documented
+# already-exists tolerance actually fires. This is the regression test: red before the
+# fix (the HTTPError propagates uncaught). The trailing 0xff byte in the body also pins
+# the error-path `errors="replace"` decode: under strict utf-8 it would raise a
+# UnicodeDecodeError inside the except and mask the real 400 status.
+def test_urllib_client_returns_http_response_on_http_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_urlopen(req: urllib.request.Request, *, context: object, timeout: int) -> object:
+        raise urllib.error.HTTPError(
+            req.full_url,
+            400,
+            "Bad Request",
+            Message(),
+            io.BytesIO(b"resource_already_exists_exception: index exists \xff"),
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    resp = _UrllibClient().request(
+        "PUT", "https://vectors.example/graphrag-chunks", data=b"{}", headers={}, verify=True
+    )
+    assert resp.status == 400
+    assert "resource_already_exists" in resp.text
+
+
+# STUB: AC2 — the catch is narrow. A transport-level failure (no HTTP status) must still
+# propagate uncaught, never be swallowed into a fabricated response. Covers both a bare
+# connection-level `URLError` and a TLS-verification failure (a `URLError` wrapping an
+# `ssl.SSLCertVerificationError` — the case the spec's Boundaries `Never do` names). Both
+# are non-`HTTPError` subclasses, so `except HTTPError` must not catch them. Green before
+# *and* after the fix; would go red if the catch were broadened to `URLError`.
+@pytest.mark.parametrize(
+    "reason",
+    ["connection refused", ssl.SSLCertVerificationError("certificate verify failed")],
+    ids=["connection-refused", "tls-verify-failed"],
+)
+def test_urllib_client_propagates_transport_errors(
+    monkeypatch: pytest.MonkeyPatch, reason: object
+) -> None:
+    def fake_urlopen(req: urllib.request.Request, *, context: object, timeout: int) -> object:
+        raise urllib.error.URLError(reason)
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    with pytest.raises(urllib.error.URLError):
+        _UrllibClient().request(
+            "GET", "https://vectors.example/graphrag-chunks", data=None, headers={}, verify=True
+        )
+
+
+# STUB: AC3 — create_index's idempotency tolerance is scoped to resource_already_exists
+# only; any other 4xx (e.g. a mapping error) must still re-raise loudly. Green before *and*
+# after the fix — pins the guard's scope so a future broadening is caught.
+def test_create_index_reraises_non_already_exists_4xx() -> None:
+    http = RecordingHttp([HttpResponse(400, "mapper_parsing_exception: bad mapping")])
+    with pytest.raises(RuntimeError, match="OpenSearch .* 400"):
+        _store(http).create_index()
