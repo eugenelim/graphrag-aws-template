@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import ssl
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -63,8 +64,18 @@ class _UrllibClient:
         if not verify:  # opt-in only; never the default
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE
-        with urllib.request.urlopen(req, context=context, timeout=30) as resp:  # noqa: S310
-            return HttpResponse(status=resp.status, text=resp.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(req, context=context, timeout=30) as resp:  # noqa: S310
+                return HttpResponse(status=resp.status, text=resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            # A 4xx/5xx is a *received HTTP response*, not a transport failure — urlopen raises
+            # it rather than returning. Return it as an HttpResponse so `_request` applies its
+            # uniform status check (and `create_index`'s documented already-exists tolerance
+            # actually fires). Transport failures — connection refused, TLS-verification
+            # failure — are `URLError` *without* a status (HTTPError's superclass) and are
+            # deliberately NOT caught here, so they still propagate uncaught. `errors="replace"`
+            # keeps a non-UTF-8 error body from masking the real status with a UnicodeDecodeError.
+            return HttpResponse(status=exc.code, text=exc.read().decode("utf-8", errors="replace"))
 
 
 def _knn_mapping(dimensions: int) -> dict[str, Any]:
