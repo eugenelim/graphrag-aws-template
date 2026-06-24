@@ -33,22 +33,29 @@ flowchart TB
             ING["Fargate ingestion task<br/>(on-demand, scale-to-zero)"]
             NP["Neptune smoke probe<br/>(Lambda, scale-to-zero)"]
             VP["Vector smoke probe<br/>(Lambda, scale-to-zero)"]
+            QL["Query Lambda<br/>(seed-and-expand, scale-to-zero)"]
             NEP[("Neptune Serverless<br/>min 1 NCU · IAM-auth · encrypted")]
             OS[("OpenSearch single-node<br/>t3.small.search · k-NN · encrypted")]
             EPS["VPC endpoints (no NAT):<br/>s3(gw) · ecr.api · ecr.dkr<br/>· logs · sts · bedrock-runtime"]
         end
+        FURL["Function URL<br/>AuthType=AWS_IAM<br/>(only public ingress)"]
     end
+    CLI["laptop CLI<br/>(SigV4 service=lambda)"] -->|signed POST| FURL
+    FURL -->|IAM-auth + scoped invoke| QL
     ING -->|8182 SigV4| NEP
     ING -->|443 SigV4 es| OS
     ING -->|InvokeModel| EPS
     NP -->|8182| NEP
     VP -->|443| OS
     VP -->|Titan v2| EPS
+    QL -->|8182 SigV4| NEP
+    QL -->|443 SigV4 es| OS
+    QL -->|Titan v2 + Claude Converse| EPS
     ING -->|read| S3
     EPS -.->|private egress| S3
 ```
 
-## Resource inventory (slices 1–2)
+## Resource inventory (slices 1–3)
 
 ### Network — the no-NAT, endpoints-only spine
 - **VPC**, **2 AZs** (a Neptune DB subnet group requires ≥2 AZs — an API rule, not
@@ -57,7 +64,10 @@ flowchart TB
 - **VPC endpoints** (the set is part of the ADR-0002 decision, not an impl detail):
   `s3` (gateway), `ecr.api`, `ecr.dkr`, `logs`, `sts`, `bedrock-runtime` (interface).
 - **Security groups** — least-path: `IngestionSg → Neptune:8182` and `→ OpenSearch:443`;
-  `NeptuneSmokeSg → Neptune:8182`; `VectorSmokeSg → OpenSearch:443`. No public ingress.
+  `NeptuneSmokeSg → Neptune:8182`; `VectorSmokeSg → OpenSearch:443`;
+  `QuerySg → Neptune:8182` and `→ OpenSearch:443`. No public *network* ingress; the
+  query Lambda's only public surface is its **IAM-auth Function URL** (slice 3), and
+  its SG keeps the no-egress (VPC-endpoint-only) guarantee.
 
 ### Stores — the standing-cost floor (do **not** scale to zero)
 | Store | Shape | Posture |
@@ -72,6 +82,9 @@ flowchart TB
   dual-writes Neptune + OpenSearch.
 - **Neptune smoke probe** + **vector smoke probe** — in-VPC Python 3.12 Lambdas,
   invoked on demand, no public URL.
+- **Query Lambda** (slice 3) — in-VPC Python 3.12 Lambda running seed-and-expand
+  (`graphrag.query_lambda`), behind an **IAM-auth Function URL**; scale-to-zero, no
+  hourly URL charge, Bedrock Claude billed per-invocation only.
 - **ECS cluster** — no standing cost without a running task.
 
 ### IAM — least privilege, scoped, no wildcard `Resource`
@@ -80,7 +93,13 @@ flowchart TB
 | Ingestion task role | `s3` read (corpus bucket), `neptune-db:*` data actions (this cluster), `es:ESHttp*` (this domain), `bedrock:InvokeModel` (the one Titan model) |
 | Vector probe role | VPC-access managed policy, `es:ESHttp*` (this domain), `bedrock:InvokeModel` (Titan) |
 | Neptune probe role | `neptune-db:*` data actions (this cluster) |
+| **Query Lambda role** (slice 3) | VPC-access managed policy; `neptune-db:*` data actions (this cluster); `es:ESHttp*` (this domain); `bedrock:InvokeModel` (Titan) + `bedrock:InvokeModel`/`bedrock:Converse` (the synthesis Claude — the **inference-profile ARN AND each underlying regional foundation-model ARN**) — no wildcard `Resource` |
 | ECS execution role | ECR pull + logs (`ecr:GetAuthorizationToken` is the one legitimate `"*"`) |
+
+The Function URL is `AuthType=AWS_IAM` (the only public ingress) **and** its invoke
+permission is scoped to a named principal — the `InvokerRoleArn` CfnParameter (the
+deploying/CLI role) — never `Principal: *`/account-root. IAM auth gates *that a request
+is signed*; the scoped grant gates *who may invoke*.
 
 The OpenSearch SigV4 signing service and the IAM `es:ESHttp*` prefix come from a
 **single `"es"` constant** (`store/opensearch.py`) so they can't drift.
@@ -104,6 +123,7 @@ two stores even while idle. Order-of-magnitude, **verify against current pricing
 | `bedrock-runtime` interface endpoint | hourly per-AZ | no |
 | NAT gateway | **$0 (none provisioned)** | n/a |
 | Fargate / Lambda / ECS | ~$0 idle | yes |
+| Query Lambda + Function URL (slice 3) | **$0 idle** (no hourly URL charge; Claude per-invocation) | yes |
 
 Controls: one-command `cdk destroy` removes every billable resource; the Budgets
 alarm + the README cost note are the cloned-and-forgotten backstop.
@@ -162,10 +182,19 @@ Append one entry per slice that touches infrastructure. Newest first.
   corpus bucket; the **Fargate ingestion** task + least-privilege role; the
   **Neptune smoke probe**; the Budgets alarm; governance tags.
 
+- **Slice 3 — `hybrid-orchestration` (2026-06-24).** Added to the same stack: the
+  in-VPC **query Lambda** (`graphrag.query_lambda`, private isolated subnets, no
+  egress) behind an **IAM-auth Function URL** (`AuthType=AWS_IAM`, the only public
+  ingress) whose invoke permission is scoped to a named principal (the `InvokerRoleArn`
+  CfnParameter); the query Lambda role gains scoped Neptune-data + OpenSearch-data +
+  Bedrock-invoke (Titan + the synthesis **Claude** — the cross-region inference-profile
+  ARN **and** the underlying regional foundation-model ARNs, no wildcard); a
+  stack-managed log group; an SG path to Neptune 8182 + OpenSearch 443; the Function
+  URL `CfnOutput`. **No new standing cost** — the Lambda is scale-to-zero, so the
+  Budgets limit holds at **$150**. The CDK `_SYNTHESIS_MODEL_ID` is asserted equal to
+  the library `DEFAULT_SYNTHESIS_MODEL_ID` so the grant scope and runtime default can't
+  drift. Live smoke is the supervisor's step (AC9).
+
 ### Planned (not yet built)
-- **Slice 3 — `hybrid-orchestration`.** The in-VPC **query Lambda** behind an
-  IAM-auth **Function URL** (the only public ingress) running seed-and-expand. New
-  infra: the Lambda + Function URL; reuses both stores + the `bedrock-runtime`
-  endpoint.
 - **Slices 4–5** (permission-filtered retrieval, incremental delta re-ingest) — no
   new infra expected; they reuse the stores and the query path.

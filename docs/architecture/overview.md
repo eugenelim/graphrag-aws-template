@@ -31,21 +31,19 @@
 
 ## Apps and packages
 
-**Slices 1–2 have landed** — the graph half *and* the vector baseline. Current
-layout:
+**Slices 1–3 have landed** — the graph half, the vector baseline, *and* the hybrid
+seed-and-expand mode + three-mode runner. Current layout:
 
 | Path | What | Stack |
 | --- | --- | --- |
-| `packages/graphrag/` | Core library + the `graphrag` CLI. Graph half: parse → extract → resolve → query (in-memory + Neptune). Vector half (slice 2): chunk → embed (Titan v2) → k-NN (in-memory + OpenSearch), `vector-query` with a retrieval trace, and the credible-baseline `vector-eval`. | Python 3.11+ (`pyyaml`, `boto3`) |
+| `packages/graphrag/` | Core library + the `graphrag` CLI. Graph half: parse → extract → resolve → query (in-memory + Neptune). Vector half (slice 2): chunk → embed (Titan v2) → k-NN (in-memory + OpenSearch), `vector-query` + the credible-baseline `vector-eval`. Hybrid half (slice 3): question entity-linking, a `Synthesizer` seam (Bedrock Claude via Converse + offline template), bounded neighborhood expansion, the **seed-and-expand `hybrid_query`**, the three-mode `compare` runner, `hybrid-query`/`compare` CLI verbs, the in-VPC `query_lambda`, and a consolidated `showcase` set. | Python 3.11+ (`pyyaml`, `boto3`) |
 | `apps/ingestion/` | On-demand Fargate task entrypoint — resolves the S3 corpus snapshot and runs `graphrag.ingest`; slice 2 added the **single-parse dual-write** (graph + vector) over the same corpus read. | Python + Dockerfile |
-| `apps/infra/` | AWS CDK app — no-NAT VPC + endpoints (incl. `bedrock-runtime`) + Neptune Serverless + **single-node OpenSearch (k-NN)** + S3 + Fargate task def + two in-VPC smoke probes (graph + vector) + Budgets alarm. | AWS CDK (Python) |
+| `apps/infra/` | AWS CDK app — no-NAT VPC + endpoints (incl. `bedrock-runtime`) + Neptune Serverless + **single-node OpenSearch (k-NN)** + S3 + Fargate task def + two in-VPC smoke probes (graph + vector) + **the in-VPC query Lambda behind an IAM-auth Function URL** (slice 3) + Budgets alarm. | AWS CDK (Python) |
 
 Build/test from the repo root: `pip install -e ".[dev,infra]"` then `pytest`,
 `ruff check packages apps`, `mypy packages/graphrag/src apps`.
 
-**Still to come** (per the design doc + brief Spec map): slice 3 adds the in-VPC
-query Lambda and the three-mode comparison runner (and the hybrid seed-and-expand
-that reads the chunk→entity metadata slice 2 writes); slices 4–5 add
+**Still to come** (per the design doc + brief Spec map): slices 4–5 add
 permission-filtered retrieval and incremental delta re-ingest. Read:
 
 - [`architecture/graphrag-aws-architecture/design.md`](graphrag-aws-architecture/design.md)

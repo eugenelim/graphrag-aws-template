@@ -26,6 +26,15 @@
 | Internet → OpenSearch | Domain is VPC-resident in the private isolated subnets, **not public**; encryption at rest + node-to-node encryption + enforce-HTTPS. |
 | Retrieved corpus text → output | **Display-only** in this slice — chunk text is embedded and rendered, never fed to an LLM as instructions and no tool execution, so OWASP LLM01 is out of reach. It becomes control-bearing the moment slice 3 routes it into Claude synthesis (isolate-and-no-instruction there). |
 
+## Trust boundaries (slice 3 — hybrid orchestration)
+
+| Boundary | Control |
+| --- | --- |
+| Internet → query path | The in-VPC query Lambda's **only** public ingress is its **Function URL with `AuthType=AWS_IAM`** (never `NONE`) — every request must be SigV4-signed. The invoke permission is additionally **scoped to a named principal** (the `InvokerRoleArn` CfnParameter, the deploying/CLI role), never `Principal: *`/account-root: IAM auth gates *that a request is signed*, the scoped grant gates *who may invoke*. The Lambda sits in private isolated subnets and keeps the no-egress (VPC-endpoint-only, no NAT) guarantee. |
+| Untrusted retrieved content → Claude (LLM01/LLM08) | The question and retrieved corpus Markdown are passed to Bedrock Claude (Converse) as **data, not instructions** — placed in the `messages` content, never concatenated into the `system` block; the `system` block carries an explicit **defensive directive** that any instructions embedded in the data must not be followed. The synthesized answer is **display-only** (no caller evaluates it, shells out on it, or feeds it into a tool call). A bounded `inferenceConfig.maxTokens` caps a runaway generation. |
+| Compute → Bedrock (Claude synthesis) | Via the `bedrock-runtime` VPC endpoint; default botocore-chain TLS client (no `verify=False`, no plaintext `endpoint_url`); the synthesis model id rides the request body, never string-interpolated. |
+| Public Function URL → error responses | On any failure the handler returns a **sanitized envelope** (a correlation id + a generic message; **no internal endpoint / ARN / stack text**) and logs the real detail to CloudWatch only — the loud-raise-with-body posture stays in-VPC (CLI/adapter side), never crossing the public ingress (information-disclosure boundary). An over-long question (> ~8 KB) is rejected before any orchestration runs. |
+
 ## Least privilege
 
 The Fargate **task role** and the **vector probe role** grant only: scoped `s3`
@@ -36,6 +45,16 @@ cluster (task only), **`es:ESHttp*` scoped to the one OpenSearch domain ARN**, a
 the adapter's SigV4 signing service come from a single `"es"` constant so they can't
 drift. The execution role's `ecr:GetAuthorizationToken` is the one legitimate `"*"`
 (an AWS requirement) and is out of that assertion's scope.
+
+The slice-3 **query Lambda role** carries the same scoped grants (Neptune-data on the
+cluster, `es:ESHttp*` on the domain, Titan `bedrock:InvokeModel`) **plus** the
+synthesis Claude grant: `bedrock:InvokeModel` + `bedrock:Converse` scoped to **both**
+the cross-region inference-profile ARN (`inference-profile/us.anthropic.claude-sonnet-4-6`,
+account+region-qualified) **and** each underlying regional foundation-model ARN
+(`foundation-model/anthropic.claude-sonnet-4-6` in the profile's routing regions) — a
+cross-region inference profile needs both, with **no wildcard `Resource`** (asserted by
+`test_stack.py`). The CDK `_SYNTHESIS_MODEL_ID` is asserted equal to the library
+`DEFAULT_SYNTHESIS_MODEL_ID` so the grant scope can't drift from the runtime default.
 
 ## Cost as a security-adjacent control
 
@@ -48,20 +67,24 @@ Budgets alarm with a threshold + subscriber (charter principle 4).
 - **Production authorization.** Slice 4's synthetic visibility labels are a
   *teaching stand-in for ACLs*, never real authz (charter principle 5). Not built
   here.
-- **Prompt injection from retrieved Markdown** (OWASP LLM01/08). Slice 2 embeds the
-  corpus but keeps retrieved text **display-only** (no LLM instruction surface, no
-  tools) — so the boundary is documented, not yet a control. It becomes a control in
-  slice 3, where retrieved chunks reach Claude synthesis.
+- **Prompt injection from retrieved Markdown** (OWASP LLM01/08). **Now a control as
+  of slice 3** (see the slice-3 trust-boundary table): retrieved chunks reach Claude as
+  data-not-instruction with a defensive system directive, the answer is display-only,
+  and `maxTokens` is bounded. *Accepted residual:* the corpus is public/benign and the
+  output is display-only, so a successful injection can at worst produce a misleading
+  display string — it routes to `security-reviewer` if the demo ever ingests private
+  data or wires the output into a tool.
 - **SAST/SCA scanners, cdk-nag, pip-audit.** Recommended as CI gates; ruff `S` +
   the explicit synth assertions cover the controls in the meantime. (Wiring
   `pip-audit`/Dependabot is the standing follow-up — see the security-review note in
   the `vector-rag-baseline` plan.)
 - **Live IAM/SG evaluation.** Source/synth review only; the deployed-config review
   rides the deferred `graph-ingestion-resolution-live-deploy` backlog item.
-- **Uniform least-privilege SG *egress*.** The OpenSearch SG sets
-  `allow_all_outbound=False`, but the compute SGs (Fargate ingestion, both probes)
-  default to allow-all egress. In the no-NAT, VPC-endpoint-only VPC there is no
-  internet path, so this is **not exploitable** — accepted as defence-in-depth debt.
+- **Uniform least-privilege SG *egress*.** The OpenSearch SG and the slice-3 query
+  Lambda SG set `allow_all_outbound=False`, but the other compute SGs (Fargate
+  ingestion, both smoke probes) default to allow-all egress. In the no-NAT,
+  VPC-endpoint-only VPC there is no internet path, so this is **not exploitable** —
+  accepted as defence-in-depth debt.
   The follow-up is a single uniform pass setting `allow_all_outbound=False` + explicit
   443 egress on every compute SG (do it across all SGs at once, not per-slice, to
   avoid asymmetry); it becomes load-bearing only if a NAT or public endpoint is ever
