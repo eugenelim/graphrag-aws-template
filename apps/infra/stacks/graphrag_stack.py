@@ -510,14 +510,18 @@ class GraphragStack(Stack):
         invoker_role_arn: str,
     ) -> None:
         # Private isolated subnets only (not public); the Function URL is the sole
-        # public ingress, IAM-auth. No-egress SG (VPC-endpoint-only, no NAT) — the
-        # established guarantee holds now that it sits behind a public ingress.
+        # The query Lambda is in-VPC COMPUTE that initiates outbound to Neptune (8182),
+        # OpenSearch (443), and the Bedrock VPC endpoint (443) — so it allows outbound,
+        # exactly like the Fargate task and the smoke probes (IngestionSg / SmokeSg /
+        # VectorSmokeSg). The "no-egress-path" guarantee is the no-NAT topology, not a
+        # closed SG: with no NAT, outbound can only reach VPC endpoints + in-VPC stores,
+        # there is no internet path. (allow_all_outbound=False here would silently block
+        # the first Bedrock call and hang the function to its timeout.)
         sg = ec2.SecurityGroup(
             self,
             "QuerySg",
             vpc=vpc,
-            description="query lambda - VPC-internal only",  # ASCII only (EC2 charset)
-            allow_all_outbound=False,
+            description="query lambda - in-VPC compute (egress to stores + VPC endpoints)",
         )
         neptune_sg.add_ingress_rule(sg, ec2.Port.tcp(8182), "query lambda to neptune 8182")
         opensearch_sg.add_ingress_rule(sg, ec2.Port.tcp(443), "query lambda to opensearch 443")
