@@ -35,7 +35,7 @@ graphrag = ["aliases.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["packages/graphrag/tests", "apps/ingestion/tests", "apps/infra/tests"]
-pythonpath = ["packages/graphrag/src", "apps"]
+pythonpath = ["packages/graphrag/src", "apps", "apps/infra"]
 
 [tool.ruff]
 line-length = 100
