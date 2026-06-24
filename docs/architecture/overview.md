@@ -52,6 +52,9 @@ retrieval and incremental delta re-ingest. Read:
   — the topology and the two resolved decisions (hybrid orchestration; ephemeral
   VPC stack).
 - [`security.md`](security.md) — the consolidated security posture.
+- [`deployment-and-verification.md`](deployment-and-verification.md) — how the
+  stack deploys/tears down, the in-VPC smoke probe that verifies the live graph
+  store, and the live-deploy findings.
 - [`../product/briefs/graphrag-aws-demo.md`](../product/briefs/graphrag-aws-demo.md)
   — the five shippable slices.
 

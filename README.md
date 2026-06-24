@@ -34,10 +34,14 @@ cluster with `--neptune-endpoint https://… --region …`.
 ## Deploy on AWS
 
 The slice-1 topology (no-NAT VPC, Neptune Serverless, Fargate ingestion, Budgets
-alarm) is an AWS CDK app — see [`apps/infra/README.md`](apps/infra/README.md) for
-`cdk deploy` / `cdk destroy`. **Teardown is a feature:** Neptune does not scale to
-zero, so `cdk destroy` removes every billable resource and a Budgets alarm guards
-the cloned-and-forgotten footgun.
+alarm) is an AWS CDK app. The full **deploy → verify → teardown** runbook with
+steps is in [`apps/infra/README.md`](apps/infra/README.md) (deploy/destroy scripts,
+the in-VPC smoke probe that verifies the live graph store, and the teardown), and
+the rationale + verification ladder is in
+[`docs/architecture/deployment-and-verification.md`](docs/architecture/deployment-and-verification.md).
+**Teardown is a feature:** Neptune does not scale to zero, so `scripts/destroy.sh`
+removes every billable resource and a Budgets alarm guards the cloned-and-forgotten
+footgun.
 
 ## Develop
 
