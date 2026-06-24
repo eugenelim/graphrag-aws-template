@@ -101,3 +101,101 @@ def traverse(
 def resolve_nodes(store: GraphStore, ids: list[str]) -> list[Node]:
     """Look up nodes for a list of IDs (skipping any that are absent)."""
     return [n for n in (store.get_node(i) for i in ids) if n is not None]
+
+
+# --- Seed-and-expand neighborhood (slice-3 AC3) -----------------------------------
+
+
+@dataclass
+class NeighborhoodTrace:
+    """One hop of an undirected-over-all-edge-kinds expansion.
+
+    ``frontier_in`` is the set this hop expanded from; ``reached`` is the new nodes it
+    discovered; ``edge_kinds`` names every edge kind that contributed a reached node;
+    ``truncated`` records a hop whose frontier exceeded ``frontier_cap``.
+    """
+
+    hop: int
+    frontier_in: list[str]
+    reached: list[str]
+    edge_kinds: list[EdgeKind] = field(default_factory=list)
+    truncated: bool = False
+
+
+@dataclass
+class NeighborhoodResult:
+    seed_ids: list[str]
+    trace: list[NeighborhoodTrace] = field(default_factory=list)
+    result_ids: list[str] = field(default_factory=list)
+
+    def render(self) -> str:
+        """Render the expansion as a human-readable narration (charter principle 1)."""
+        lines = [f"seeds: {', '.join(self.seed_ids) or '(none)'}"]
+        for entry in self.trace:
+            kinds = ", ".join(ek.value for ek in entry.edge_kinds) or "(none)"
+            reached = ", ".join(entry.reached) or "(none)"
+            note = "  [frontier truncated]" if entry.truncated else ""
+            lines.append(f"  hop {entry.hop}: via {kinds} -> {reached}{note}")
+        lines.append(f"reached: {', '.join(self.result_ids) or '(none)'}")
+        return "\n".join(lines)
+
+
+def expand_neighborhood(
+    store: GraphStore,
+    seed_ids: list[str],
+    *,
+    max_hops: int = DEFAULT_MAX_HOPS,
+    frontier_cap: int = DEFAULT_FRONTIER_CAP,
+) -> NeighborhoodResult:
+    """Expand ``seed_ids`` up to ``max_hops`` over **all** edge kinds in both directions.
+
+    The graph-side twin of ``traverse``: where ``traverse`` follows a fixed
+    edge-kind/direction path, this gathers the whole neighborhood (every ``EdgeKind`` ×
+    ``Direction``), so seed-and-expand collects structural facts around a seed without
+    naming the path. It expands over the ``GraphStore.neighbors_batch`` seam — a default
+    app-layer fan-out over ``neighbors()`` (in-memory) or a backend-batched query
+    (Neptune) — and **sorts** the reached set + edge kinds each hop, so the trace is
+    identical regardless of which backend or what order the store returns edges in.
+
+    Bounds (ADR-0001): a hop whose newly-reached frontier exceeds ``frontier_cap`` is
+    truncated and the truncation recorded. Because the reached set is **sorted before**
+    the cap, the surviving nodes are the lexicographically-smallest IDs (a deterministic
+    set), not the first-discovered ones — the price of a backend-independent trace. An
+    empty seed set expands to nothing. Returns the reached node IDs (cumulative,
+    excluding the seeds) and the per-hop trace.
+    """
+    seeds = _dedupe(seed_ids)
+    result = NeighborhoodResult(seed_ids=seeds)
+    visited: set[str] = set(seeds)
+    frontier = list(seeds)
+
+    for hop in range(1, max_hops + 1):
+        if not frontier:
+            break
+        # One batched fetch per hop (Neptune: two openCypher queries; in-memory: a
+        # fan-out over neighbors()). The reached set + contributing edge kinds are
+        # sorted before recording, so the trace is deterministic and identical across
+        # backends regardless of the order the store returns edges in.
+        edges = store.neighbors_batch(frontier)
+        newly = {e.neighbor.id for e in edges if e.neighbor.id not in visited}
+        truncated = len(newly) > frontier_cap
+        reached = sorted(newly)[:frontier_cap]
+        reached_set = set(reached)
+        contributing = sorted(
+            {e.edge_kind for e in edges if e.neighbor.id in reached_set},
+            key=lambda k: k.value,
+        )
+        result.trace.append(
+            NeighborhoodTrace(
+                hop=hop,
+                frontier_in=list(frontier),
+                reached=list(reached),
+                edge_kinds=list(contributing),
+                truncated=truncated,
+            )
+        )
+        visited.update(reached)
+        result.result_ids.extend(reached)
+        frontier = reached
+
+    return result

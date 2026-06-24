@@ -142,3 +142,56 @@ def test_malformed_node_result_raises_with_context() -> None:
     store = _store(http)
     with pytest.raises(RuntimeError, match="missing id/kind"):
         store.get_node("x")
+
+
+def test_neighbors_batch_two_queries_parameterized_no_injection() -> None:
+    # OUT result then IN result — one query per direction for the whole frontier.
+    out_resp = HttpResponse(
+        200,
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "src": "sig:sig-network",
+                        "kind": "OWNS",
+                        "node": {"~properties": {"id": "kep-2086", "kind": "KEP"}},
+                    }
+                ]
+            }
+        ),
+    )
+    in_resp = HttpResponse(
+        200,
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "src": "sig:sig-network",
+                        "kind": "TECH_LEADS",
+                        "node": {"~properties": {"id": "person:thockin", "kind": "Person"}},
+                    }
+                ]
+            }
+        ),
+    )
+    http = RecordingHttp([out_resp, in_resp])
+    edges = _store(http).neighbors_batch(["sig:sig-network"])
+
+    # exactly two HTTP calls (one per direction), both parameterized via $ids.
+    assert len(http.calls) == 2
+    for call in http.calls:
+        body = json.loads(call["data"])
+        assert "WHERE a.id IN $ids" in body["query"]
+        assert json.loads(body["parameters"]) == {"ids": ["sig:sig-network"]}
+        # the frontier id is never string-interpolated into the query text.
+        assert "sig:sig-network" not in body["query"]
+
+    by_dir = {(e.direction, e.edge_kind, e.neighbor.id) for e in edges}
+    assert (Direction.OUT, EdgeKind.OWNS, "kep-2086") in by_dir
+    assert (Direction.IN, EdgeKind.TECH_LEADS, "person:thockin") in by_dir
+
+
+def test_neighbors_batch_empty_frontier_makes_no_call() -> None:
+    http = RecordingHttp([])
+    assert _store(http).neighbors_batch([]) == []
+    assert http.calls == []

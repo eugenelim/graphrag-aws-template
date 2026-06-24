@@ -56,6 +56,21 @@ excerpts — this extends the open confirmation to the whole corpus. Unblocked b
 `graphrag resolve-eval --corpus <full-clone>` with a labeled sample of the full
 handle/slug set.
 
+## hybrid-orchestration
+
+### hybrid-orchestration-synthesis-edges
+
+**Quality follow-up (AC9 surfaced it; AC9 itself is met).** The live hybrid query works
+end-to-end (verified 2026-06-24, 22.7 s), and the seed-and-expand trace *reaches* the owned KEPs
+correctly — but the merged context handed to the Bedrock Claude synthesizer lists the graph
+**nodes** without their **typed edges** (`OWNS`, `TECH_LEADS`, …). So Claude hedges ("the graph
+facts do not include explicit owns edges connecting @thockin to KEPs") instead of stating the
+ownership chain, even though the chain is in the trace. The structural win + trace are correct;
+this is purely the synthesis-context richness. **Fix:** include the reached edges (src → kind →
+dst) in the context `synthesize()` builds — `hybrid_query` already has the hop trace with edge
+kinds — so the model can ground the relationship, not just the node set. Verify by re-running the
+live entity-led query and confirming the answer names KEP-1880/2086 as `sig-network`-owned.
+
 <!-- Add one section per spec with open work, e.g.:
 
 ## <spec-name>

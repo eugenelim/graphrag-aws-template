@@ -69,6 +69,18 @@ _INTERFACE_ENDPOINTS = {
 # self-reference in the access policy (avoids a CDK dependency cycle).
 _OPENSEARCH_DOMAIN_NAME = "graphrag-vectors"
 _TITAN_MODEL_ID = "amazon.titan-embed-text-v2:0"
+
+# Synthesis Claude model (slice 3). Must equal the library
+# `graphrag.synthesize.DEFAULT_SYNTHESIS_MODEL_ID` — a synth test asserts the equality
+# so the Bedrock IAM grant scope and the runtime default can't drift. This is a
+# **cross-region inference profile**: the grant scopes BOTH the account+region-qualified
+# inference-profile ARN AND each underlying regional foundation-model ARN it routes to
+# (no wildcard Resource — AC8).
+_SYNTHESIS_MODEL_ID = "us.anthropic.claude-sonnet-4-6"
+# The underlying foundation model the `us.` profile fronts, and the regions the US
+# cross-region profile routes to (foundation-model ARNs carry no account id).
+_SYNTHESIS_FOUNDATION_MODEL = "anthropic.claude-sonnet-4-6"
+_SYNTHESIS_PROFILE_REGIONS = ("us-east-1", "us-east-2", "us-west-2")
 # es:ESHttp* data-plane verbs, scoped to the domain (least privilege; no wildcard
 # resource). The "es" prefix matches store/opensearch.py's OPENSEARCH_SERVICE so the
 # SigV4 signing service and the IAM action prefix are one source.
@@ -116,6 +128,15 @@ class GraphragStack(Stack):
             type="String",
             description="Email address that receives the AWS Budgets cost alarm.",
         )
+        # The named principal allowed to invoke the IAM-auth query Function URL — the
+        # demo's deploying / CLI role. IAM auth gates *that a request is signed*; this
+        # scoped grant gates *who may invoke* (never Principal: * / account-root).
+        invoker_role_arn = CfnParameter(
+            self,
+            "InvokerRoleArn",
+            type="String",
+            description="IAM role ARN permitted to invoke the query Function URL (SigV4).",
+        )
 
         vpc = self._vpc()
         bucket = self._corpus_bucket()
@@ -147,6 +168,9 @@ class GraphragStack(Stack):
         self._ingestion_task(vpc, bucket, cluster, neptune_sg, task_role, domain, opensearch_sg)
         self._smoke_lambda(vpc, cluster, neptune_sg)
         self._vector_smoke_lambda(vpc, domain, opensearch_sg, vector_probe_role)
+        self._query_lambda(
+            vpc, cluster, neptune_sg, domain, opensearch_sg, invoker_role_arn.value_as_string
+        )
         self._budget_alarm(budget_email.value_as_string)
         self._apply_governance_tags()
 
@@ -363,6 +387,35 @@ class GraphragStack(Stack):
             ],
         )
 
+    def _bedrock_synthesis_invoke(self) -> iam.PolicyStatement:
+        # Scoped to the synthesis Claude model, with bedrock:Converse (the synthesizer
+        # uses the Converse API). Because the configured model is a cross-region
+        # inference profile, scope BOTH the account+region-qualified inference-profile
+        # ARN AND each underlying regional foundation-model ARN it routes to — never a
+        # wildcard Resource (AC8). Foundation-model ARNs carry no account id.
+        resources = [
+            self.format_arn(
+                service="bedrock",
+                region=self.region,
+                resource="inference-profile",
+                resource_name=_SYNTHESIS_MODEL_ID,
+            )
+        ]
+        for region in _SYNTHESIS_PROFILE_REGIONS:
+            resources.append(
+                self.format_arn(
+                    service="bedrock",
+                    region=region,
+                    account="",
+                    resource="foundation-model",
+                    resource_name=_SYNTHESIS_FOUNDATION_MODEL,
+                )
+            )
+        return iam.PolicyStatement(
+            actions=["bedrock:InvokeModel", "bedrock:Converse"],
+            resources=resources,
+        )
+
     # --- OpenSearch: single-node, VPC-resident, encrypted, IAM-scoped access -------
     def _opensearch(
         self, vpc: ec2.Vpc, principals: list[iam.IRole]
@@ -445,6 +498,93 @@ class GraphragStack(Stack):
             environment={"OPENSEARCH_ENDPOINT": f"https://{domain.domain_endpoint}"},
         )
         CfnOutput(self, "VectorSmokeProbeName", value=fn.function_name)
+
+    # --- In-VPC query Lambda behind an IAM-auth Function URL (slice 3) --------------
+    def _query_lambda(
+        self,
+        vpc: ec2.Vpc,
+        cluster: neptune.CfnDBCluster,
+        neptune_sg: ec2.SecurityGroup,
+        domain: opensearch.Domain,
+        opensearch_sg: ec2.SecurityGroup,
+        invoker_role_arn: str,
+    ) -> None:
+        # Private isolated subnets only (not public); the Function URL is the sole
+        # The query Lambda is in-VPC COMPUTE that initiates outbound to Neptune (8182),
+        # OpenSearch (443), and the Bedrock VPC endpoint (443) — so it allows outbound,
+        # exactly like the Fargate task and the smoke probes (IngestionSg / SmokeSg /
+        # VectorSmokeSg). The "no-egress-path" guarantee is the no-NAT topology, not a
+        # closed SG: with no NAT, outbound can only reach VPC endpoints + in-VPC stores,
+        # there is no internet path. (allow_all_outbound=False here would silently block
+        # the first Bedrock call and hang the function to its timeout.)
+        sg = ec2.SecurityGroup(
+            self,
+            "QuerySg",
+            vpc=vpc,
+            description="query lambda - in-VPC compute (egress to stores + VPC endpoints)",
+        )
+        neptune_sg.add_ingress_rule(sg, ec2.Port.tcp(8182), "query lambda to neptune 8182")
+        opensearch_sg.add_ingress_rule(sg, ec2.Port.tcp(443), "query lambda to opensearch 443")
+
+        role = iam.Role(
+            self,
+            "QueryRole",
+            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+            managed_policies=[
+                iam.ManagedPolicy.from_aws_managed_policy_name(
+                    "service-role/AWSLambdaVPCAccessExecutionRole"
+                )
+            ],
+        )
+        # Least privilege: Neptune data scoped to the cluster, es:ESHttp* scoped to the
+        # domain, Bedrock invoke scoped to the Titan model AND the synthesis Claude
+        # model (inference-profile + foundation-model ARNs) — no wildcard Resource.
+        role.add_to_policy(self._neptune_data_access(cluster))
+        role.add_to_policy(self._opensearch_data_access())
+        role.add_to_policy(self._bedrock_invoke())
+        role.add_to_policy(self._bedrock_synthesis_invoke())
+
+        log_group = logs.LogGroup(
+            self,
+            "QueryLambdaLogs",
+            retention=logs.RetentionDays.ONE_WEEK,
+            removal_policy=RemovalPolicy.DESTROY,
+        )
+        fn = lambda_.Function(
+            self,
+            "QueryLambda",
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            handler="graphrag.query_lambda.lambda_handler",
+            code=lambda_.Code.from_asset(_GRAPHRAG_SRC),  # zipped as-is, no docker
+            timeout=Duration.seconds(120),  # VPC cold start + Neptune/OpenSearch/Bedrock
+            memory_size=512,
+            vpc=vpc,
+            vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED),
+            security_groups=[sg],
+            log_group=log_group,  # not the auto-created /aws/lambda/<fn> group
+            role=role,
+            environment={
+                "NEPTUNE_ENDPOINT": f"https://{cluster.attr_endpoint}:8182",
+                "OPENSEARCH_ENDPOINT": f"https://{domain.domain_endpoint}",
+                "SYNTHESIS_MODEL_ID": _SYNTHESIS_MODEL_ID,
+            },
+        )
+        # IAM-auth Function URL — the only public ingress. Invoke scoped to a named
+        # principal (the deploying/CLI role), never Principal: * / account-root. The
+        # permission is created explicitly (not via grant_invoke_url) because the
+        # principal is a CfnParameter token, which can't be resolved into a construct
+        # ID; CfnPermission takes the token as the Principal directly.
+        url = fn.add_function_url(auth_type=lambda_.FunctionUrlAuthType.AWS_IAM)
+        lambda_.CfnPermission(
+            self,
+            "QueryUrlInvoke",
+            action="lambda:InvokeFunctionUrl",
+            function_name=fn.function_arn,
+            principal=invoker_role_arn,
+            function_url_auth_type="AWS_IAM",
+        )
+        CfnOutput(self, "QueryFunctionUrl", value=url.url)
+        CfnOutput(self, "QueryLambdaName", value=fn.function_name)
 
     # --- Budgets cost alarm: threshold + a notification subscriber -----------------
     def _budget_alarm(self, email: str) -> None:

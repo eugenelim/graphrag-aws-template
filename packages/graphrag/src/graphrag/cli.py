@@ -8,15 +8,21 @@ resolve-eval prints the precision/recall of the open confirmation.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
+import re
 import sys
 from collections import Counter
 from pathlib import Path
+from typing import Any
+from urllib.parse import urlparse
 
 from .chunk import chunk_corpus
+from .compare import run_modes
 from .embed import BedrockTitanEmbedder, Embedder, HashEmbedder
 from .eval import evaluate, load_labeled_sample
+from .hybrid import hybrid_query
 from .ingest import ingest
 from .model import Direction, EdgeKind
 from .normalize import kep_id, person_id, sig_id
@@ -25,8 +31,15 @@ from .resolve import load_aliases
 from .sources import load_corpus
 from .store.base import GraphStore
 from .store.memory import MemoryGraphStore
+from .store.neptune import HttpClient, HttpResponse, _UrllibClient
 from .store.vector_base import EmbeddedChunk, VectorStore
 from .store.vector_memory import MemoryVectorStore
+from .synthesize import (
+    DEFAULT_SYNTHESIS_MODEL_ID,
+    BedrockClaudeSynthesizer,
+    Synthesizer,
+    TemplateSynthesizer,
+)
 from .vector import vector_search
 from .vector_eval import (
     evaluate_query_set,
@@ -34,6 +47,15 @@ from .vector_eval import (
     load_frozen,
     load_query_set,
 )
+
+# Default region for SigV4 signing when a Function URL doesn't encode one.
+_DEFAULT_REGION = "us-east-1"
+_LAMBDA_SERVICE = "lambda"
+# Read timeout (s) for the live Function-URL client — long enough for a cold VPC
+# Lambda + the full hybrid path, not the single-hop 30s default.
+_FUNCTION_URL_TIMEOUT = 150
+# Region embedded in a Function URL host: <id>.lambda-url.<region>.on.aws
+_FUNCTION_URL_REGION = re.compile(r"\.lambda-url\.([a-z0-9-]+)\.on\.aws")
 
 
 def _target_store(args: argparse.Namespace) -> GraphStore:
@@ -95,6 +117,62 @@ def _vector_store(args: argparse.Namespace) -> VectorStore:
     return MemoryVectorStore()
 
 
+def _synthesizer(args: argparse.Namespace) -> Synthesizer:
+    """Real Bedrock Claude when ``--bedrock`` (needs creds), else the offline
+    deterministic, non-semantic synthesizer."""
+    if getattr(args, "bedrock", False):
+        model_id = getattr(args, "synthesis_model_id", None) or DEFAULT_SYNTHESIS_MODEL_ID
+        return BedrockClaudeSynthesizer(model_id=model_id, region=args.region)
+    return TemplateSynthesizer()
+
+
+def _make_http_client() -> HttpClient:
+    """The HTTP client seam for the live Function-URL path (monkeypatched in tests).
+
+    A longer read timeout than a single Neptune hop: the hybrid query runs vector
+    search + multi-hop expansion + Bedrock Claude synthesis, and a VPC Lambda cold
+    start adds seconds — cover the function's full budget rather than the 30s default."""
+    return _UrllibClient(timeout=_FUNCTION_URL_TIMEOUT)
+
+
+def _function_url_query(url: str, question: str, region: str) -> dict[str, Any]:
+    """Thin live client: a SigV4-signed (service=lambda) POST of the question to the
+    in-VPC query Lambda's Function URL, the signature **covering the body** (an
+    ``X-Amz-Content-SHA256`` payload hash, never ``UNSIGNED-PAYLOAD``, so a tampered
+    body is rejected). A non-2xx raises with the body (loud, like the adapters)."""
+    from botocore.auth import SigV4Auth
+    from botocore.awsrequest import AWSRequest
+    from botocore.session import Session
+
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        raise ValueError(f"function URL must be https://, got {url!r}")
+    host_match = _FUNCTION_URL_REGION.search(parsed.netloc)
+    signing_region = host_match.group(1) if host_match else region
+
+    body = json.dumps({"question": question}).encode("utf-8")
+    payload_hash = hashlib.sha256(body).hexdigest()
+    request = AWSRequest(
+        method="POST",
+        url=url,
+        data=body,
+        # Make the payload hash a signed header so the signature covers the body.
+        headers={"Content-Type": "application/json", "X-Amz-Content-SHA256": payload_hash},
+    )
+    credentials = Session().get_credentials()
+    if credentials is None:
+        raise RuntimeError("no AWS credentials resolved from the default provider chain")
+    SigV4Auth(credentials, _LAMBDA_SERVICE, signing_region).add_auth(request)
+
+    resp: HttpResponse = _make_http_client().post(
+        url, data=body, headers=dict(request.headers), verify=True
+    )
+    if not 200 <= resp.status < 300:
+        raise RuntimeError(f"function URL {resp.status}: {resp.text}")
+    parsed_body = json.loads(resp.text)
+    return parsed_body if isinstance(parsed_body, dict) else {}
+
+
 def _index_corpus(
     store: VectorStore, embedder: Embedder, community: Path, enhancements: Path
 ) -> list[EmbeddedChunk]:
@@ -129,6 +207,77 @@ def _cmd_vector_query(args: argparse.Namespace) -> int:
         _index_corpus(store, embedder, Path(args.community), Path(args.enhancements))
     result = vector_search(store, embedder, args.q, k=args.k)
     print("== vector-query ==")
+    print(result.render())
+    return 0
+
+
+def _offline_label(embedder: Embedder, synthesizer: Synthesizer) -> str:
+    return (
+        f"embedder: {embedder.model_id}\n"
+        f"synthesizer: {synthesizer.model_id}\n"
+        "(offline embedder/synthesizer are NON-SEMANTIC — structural demo only; "
+        "semantic quality is the live path / frozen-vector eval)"
+    )
+
+
+def _cmd_hybrid_query(args: argparse.Namespace) -> int:
+    if getattr(args, "function_url", None):
+        # Live: thin SigV4 Function-URL client to the in-VPC query Lambda.
+        result = _function_url_query(args.function_url, args.q, args.region)
+        print("== hybrid-query (live function-url) ==")
+        print(f"seeds: {json.dumps(result.get('seeds', []))}")
+        print(f"hops: {json.dumps(result.get('hops', []))}")
+        print("trace:")
+        print(result.get("trace", "(none)"))
+        print("citations:")
+        for cite in result.get("citations", []) or []:
+            print(f"  - {cite}")
+        print("answer:")
+        print(f"  {result.get('answer', '')}")
+        return 0
+
+    # Offline: in-memory stores from the fixture corpus + offline embedder/synthesizer.
+    graph = _populated_store(args)
+    vstore = _vector_store(args)
+    embedder = _embedder(args)
+    synthesizer = _synthesizer(args)
+    if isinstance(vstore, MemoryVectorStore):
+        _index_corpus(vstore, embedder, Path(args.community), Path(args.enhancements))
+    result_h = hybrid_query(
+        args.q,
+        vector_store=vstore,
+        graph_store=graph,
+        embedder=embedder,
+        synthesizer=synthesizer,
+        aliases=load_aliases(),
+        k=args.k,
+        max_hops=args.max_hops,
+    )
+    print("== hybrid-query (offline) ==")
+    print(_offline_label(embedder, synthesizer))
+    print(result_h.render())
+    return 0
+
+
+def _cmd_compare(args: argparse.Namespace) -> int:
+    graph = _populated_store(args)
+    vstore = _vector_store(args)
+    embedder = _embedder(args)
+    synthesizer = _synthesizer(args)
+    if isinstance(vstore, MemoryVectorStore):
+        _index_corpus(vstore, embedder, Path(args.community), Path(args.enhancements))
+    result = run_modes(
+        args.q,
+        vector_store=vstore,
+        graph_store=graph,
+        embedder=embedder,
+        synthesizer=synthesizer,
+        aliases=load_aliases(),
+        k=args.k,
+        max_hops=args.max_hops,
+    )
+    print("== compare (offline) ==")
+    print(_offline_label(embedder, synthesizer))
     print(result.render())
     return 0
 
@@ -257,6 +406,45 @@ def build_parser() -> argparse.ArgumentParser:
         help="regenerate the frozen vectors via live Titan v2 (requires --bedrock)",
     )
     p_veval.set_defaults(func=_cmd_vector_eval)
+
+    def add_hybrid_args(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--community", required=True, help="path to the community source root")
+        p.add_argument("--enhancements", required=True, help="path to the enhancements source root")
+        p.add_argument("--neptune-endpoint", help="https Neptune endpoint (deployed graph store)")
+        p.add_argument(
+            "--opensearch-endpoint", help="https OpenSearch endpoint (deployed vector store)"
+        )
+        p.add_argument("--region", default="us-east-1", help="AWS region for SigV4 signing")
+        p.add_argument("--q", required=True, help="the natural-language question")
+        p.add_argument("--k", type=int, default=5, help="number of chunks to retrieve")
+        p.add_argument("--max-hops", type=int, default=2, help="expansion hop limit (1-2)")
+        p.add_argument(
+            "--bedrock",
+            action="store_true",
+            help="use real Titan v2 embeddings + Bedrock Claude synthesis (needs AWS creds); "
+            "default is the offline non-semantic embedder/synthesizer",
+        )
+        p.add_argument(
+            "--synthesis-model-id",
+            help="override the Bedrock Claude synthesis model id (with --bedrock)",
+        )
+
+    p_hybrid = sub.add_parser(
+        "hybrid-query", help="seed-and-expand hybrid retrieval with a dual-seed trace"
+    )
+    add_hybrid_args(p_hybrid)
+    p_hybrid.add_argument(
+        "--function-url",
+        help="live: SigV4-signed POST to the in-VPC query Lambda's Function URL "
+        "(thin client; the VPC-private stores are unreachable from a laptop)",
+    )
+    p_hybrid.set_defaults(func=_cmd_hybrid_query)
+
+    p_compare = sub.add_parser(
+        "compare", help="run vector-only / graph-only / hybrid side by side, each traced"
+    )
+    add_hybrid_args(p_compare)
+    p_compare.set_defaults(func=_cmd_compare)
 
     return parser
 
