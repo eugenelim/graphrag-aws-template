@@ -39,6 +39,24 @@ three-mode core.
 
 ## Later
 
+**GraphRAG pattern-catalog expansion** — taking the same AWS stack past the
+contrast demo into an implementation of the [graphrag.com](https://graphrag.com)
+pattern catalog (which documents patterns only against Neo4j/Cypher). A separate
+received outcome with its own brief,
+[`product/briefs/graphrag-pattern-catalog.md`](briefs/graphrag-pattern-catalog.md);
+direction set by [RFC-0001](../rfc/0001-adopt-project-charter.md). Appetite-gated
+behind the three-mode core; the governed-vs-risky pair below is the highest-value
+sub-bet.
+
+- **Cypher Templates + Text2openCypher** — parameterized, auditable openCypher vs.
+  flexible read-only-guarded generation; the enterprise governed-vs-risky contrast.
+  [specs: `opencypher-templates`, `text2opencypher-guarded` — brief only]
+- **Metadata filtering, parent-child retrieval, global community summary** — the
+  remaining `Planned` catalog patterns. [specs: `metadata-filtering`,
+  `parent-child-retrieval`, `global-community-summary` — brief only]
+
+**Corpus extensions**
+
 - A third ingestion source (the ingestion seam is pluggable; proving heterogeneity
   beyond the two K8s repos).
 - GitLab handbook + `team_members` corpus as a *harder* entity-resolution showcase
