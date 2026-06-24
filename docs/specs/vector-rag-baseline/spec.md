@@ -1,6 +1,6 @@
 # Spec: vector-rag-baseline
 
-- **Status:** Approved
+- **Status:** Shipped
 - **Shape:** mixed
 - **Plan:** [`plan.md`](plan.md)
 - **Brief:** [`docs/product/briefs/graphrag-aws-demo.md`](../../product/briefs/graphrag-aws-demo.md)
@@ -145,7 +145,7 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
 
 ## Acceptance Criteria
 
-- [ ] **AC1 — Chunk the prose-rich subset, with provenance + entity IDs.** Over the
+- [x] **AC1 — Chunk the prose-rich subset, with provenance + entity IDs.** Over the
   fixture corpus, chunking yields chunks from **SIG `README.md` charters and KEP
   `README.md` bodies only** (never `sigs.yaml`/`kep.yaml` structured data),
   heading-aware with a bounded chunk size and overlap; every chunk carries its
@@ -155,7 +155,7 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   `kep-<number>` plus the owning `sig:<slug>` for a KEP README). Note the form
   asymmetry is slice-1's, not new: SIG/Person use `:`, KEP uses `-`. A doc with no
   prose body yields no chunks (no empty chunks). *(TDD)*
-- [ ] **AC2 — Titan v2 embedder: correct request, offline-deterministic, injectable.**
+- [x] **AC2 — Titan v2 embedder: correct request, offline-deterministic, injectable.**
   `BedrockTitanEmbedder` issues a well-formed Titan v2 request (model
   `amazon.titan-embed-text-v2:0`, `dimensions=256`, `normalize=true`) and parses
   the returned vector, verified against a **mock** (no live call); the Bedrock
@@ -167,11 +167,11 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   execution — LLM01 is out of reach); it becomes control-bearing untrusted input
   the moment slice 3 routes it into Claude synthesis (isolate-and-no-instruction
   there). *(TDD with mock)*
-- [ ] **AC3 — In-memory vector store k-NN.** `MemoryVectorStore.knn(vector, k)`
+- [x] **AC3 — In-memory vector store k-NN.** `MemoryVectorStore.knn(vector, k)`
   returns the top-`k` chunks by **cosine similarity**, correctly ordered by score,
   bounded to `k`; an empty store returns `[]`; `k` larger than the corpus returns
   all chunks. *(TDD)*
-- [ ] **AC4 — OpenSearch adapter is injection-safe and IAM-mediated.** The adapter
+- [x] **AC4 — OpenSearch adapter is injection-safe and IAM-mediated.** The adapter
   indexes a chunk (vector + metadata) and runs a **k-NN query whose vector and
   values ride the request body, never string-interpolated**; it targets `https://`
   with TLS verification on, **SigV4-signs for service `es`** via the default
@@ -179,16 +179,17 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   the index with a `knn_vector` mapping of **dimension 256**, and a non-2xx
   response **raises loudly with the body**. Exercised (index + knn) against a
   mocked SigV4/HTTPS endpoint. *(TDD with mock)*
-- [ ] **AC5 — CLI semantic query with a retrieval trace + provenance.** `graphrag
+- [x] **AC5 — CLI semantic query with a retrieval trace + provenance.** `graphrag
   vector-query --q "<text>"` returns the top-`k` chunks ranked by score, and its
   stdout names, in order: the query, the **embedding model + dimensions**, then per
   hit the **rank, similarity score, source repo + doc path + heading (provenance),
   and owning entity ID(s)** — legible enough to narrate. Verified on the
-  semantic-led exemplar: "risks of in-place pod resize" → the top hit is a chunk of
-  the **KEP-1287** (`sig-node`) README. Rendered text/provenance is the
+  semantic-led exemplar — a natural question about the risks of changing a running
+  pod's CPU/memory in place → the top hit is a chunk of the **KEP-1287** (`sig-node`)
+  README. Rendered text/provenance is the
   pinned, trusted-by-review fixture corpus for this slice (terminal control-char
   hardening is revisited if arbitrary corpora become renderable). *(TDD + narratability check)*
-- [ ] **AC6 — Credible (fair) baseline: curated query set clears the bar.** The
+- [x] **AC6 — Credible (fair) baseline: curated query set clears the bar.** The
   curated query set holds **≥5 semantic-led queries** and **≥2 entity-led queries**,
   each authored as a **natural architect-style question** (not a paraphrase of its
   gold chunk's wording — the win must be semantic, not lexical-overlap), and each
@@ -201,12 +202,12 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   tech-leads owns"), so the baseline's strengths *and* real limits are both shown —
   credible, not a strawman in either direction (charter principle 2). `vector-eval`
   asserts the semantic bar AND each labeled miss (including gold-present). *(goal-based pytest)*
-- [ ] **AC7 — Live deploy + retrieve probe (in-VPC).** A scale-to-zero in-VPC probe
+- [x] **AC7 — Live deploy + retrieve probe (in-VPC).** A scale-to-zero in-VPC probe
   embeds text via Titan v2, indexes a unique chunk into the **live** OpenSearch
   domain, retrieves it via k-NN through the same `OpenSearchVectorStore` the CLI
   uses, asserts the ingested chunk is returned, and cleans up — returning
   `{"ok": true, ...}`. Verified live against the deployed stack. *(live smoke)*
-- [ ] **AC8 — IaC synthesizes the slice-2 additions, securely.** The CDK app
+- [x] **AC8 — IaC synthesizes the slice-2 additions, securely.** The CDK app
   synthesizes: a **single-node** OpenSearch domain with **encryption at rest +
   node-to-node encryption + enforce-HTTPS**, VPC-resident in private isolated
   subnets and **not public**, whose **domain access policy restricts to the specific
@@ -216,11 +217,11 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   task role — are **least-privilege** (`es:ESHttp*` scoped to the domain ARN,
   `bedrock:InvokeModel` scoped to the Titan model ARN; **no wildcard `Resource`**) —
   per ADR-0002. *(goal-based synth, CDK-env-gated)*
-- [ ] **AC9 — Single-parse dual-write ingestion.** The Fargate entrypoint, over one
+- [x] **AC9 — Single-parse dual-write ingestion.** The Fargate entrypoint, over one
   parse of the corpus, writes **both** stores — the graph (slice 1) and the vector
   index (chunk → embed → index) — so the two never diverge (charter pattern 2).
   *(goal-based)*
-- [ ] **AC10 — Every stage is narratable (ordered trace).** `vector-ingest` prints
+- [x] **AC10 — Every stage is narratable (ordered trace).** `vector-ingest` prints
   chunk counts by source + the embedding dims; `vector-query` prints query →
   model → ranked hits-with-provenance in order; `vector-eval` prints per-query
   hit-rank → hit@k/MRR → PASS/FAIL **and exits non-zero on FAIL** (a usable CI
@@ -276,6 +277,15 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   probe in scope (not deferred) per the environment supporting live deploy; fair
   baseline mechanized as a curated-query-set hit@5 bar against frozen real Titan v2
   vectors with a documented honest miss.
+- 2026-06-24 — `Shipped`: all 10 ACs met. AC1–AC6, AC8–AC10 verified offline (110
+  tests + ruff/mypy green; the credible-baseline `vector-eval` clears hit@5 = 1.0 on
+  the semantic-led set against real Titan v2 frozen vectors, with 2 honest entity-led
+  misses). AC7 (live in-VPC probe) verified end-to-end against a deployed stack
+  (`{"ok": true, "retrieved_id": "smoke-…"}`), then the stack was destroyed — see
+  `docs/architecture/deployment-and-verification.md`. Diff-stage adversarial +
+  security reviews applied (metadata-drift fixes; `class`-field validation; a
+  no-op `create_index` on the `VectorStore` base; tightened the Bedrock-ARN synth
+  assertion). Nothing deferred.
 - 2026-06-24 — `Approved` after spec-stage adversarial + security review.
   Adversarial: fixed the KEP entity-ID form (`kep-<n>`, derived via `normalize`, so
   the chunk→graph join slice 3 depends on stays byte-identical); hardened the

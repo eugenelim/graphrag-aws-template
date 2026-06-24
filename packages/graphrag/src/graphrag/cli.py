@@ -8,18 +8,32 @@ resolve-eval prints the precision/recall of the open confirmation.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
+from collections import Counter
 from pathlib import Path
 
+from .chunk import chunk_corpus
+from .embed import BedrockTitanEmbedder, Embedder, HashEmbedder
 from .eval import evaluate, load_labeled_sample
 from .ingest import ingest
 from .model import Direction, EdgeKind
 from .normalize import kep_id, person_id, sig_id
 from .query import Step, traverse
 from .resolve import load_aliases
+from .sources import load_corpus
 from .store.base import GraphStore
 from .store.memory import MemoryGraphStore
+from .store.vector_base import EmbeddedChunk, VectorStore
+from .store.vector_memory import MemoryVectorStore
+from .vector import vector_search
+from .vector_eval import (
+    evaluate_query_set,
+    freeze_embeddings,
+    load_frozen,
+    load_query_set,
+)
 
 
 def _target_store(args: argparse.Namespace) -> GraphStore:
@@ -63,6 +77,79 @@ def _parse_steps(spec: str) -> list[Step]:
             raise ValueError(f"step {token!r} must end with '>' (out) or start with '<' (in)")
         steps.append((EdgeKind(name.strip()), direction))
     return steps
+
+
+def _embedder(args: argparse.Namespace) -> Embedder:
+    """Real Titan v2 when ``--bedrock`` (needs creds), else the offline non-semantic embedder."""
+    if getattr(args, "bedrock", False):
+        return BedrockTitanEmbedder(region=args.region)
+    return HashEmbedder()
+
+
+def _vector_store(args: argparse.Namespace) -> VectorStore:
+    """OpenSearch when an endpoint is given (deployed, in-VPC), else a fresh in-memory store."""
+    if getattr(args, "opensearch_endpoint", None):
+        from .store.opensearch import OpenSearchVectorStore  # lazy: deploy-only path
+
+        return OpenSearchVectorStore(args.opensearch_endpoint, args.region)
+    return MemoryVectorStore()
+
+
+def _index_corpus(
+    store: VectorStore, embedder: Embedder, community: Path, enhancements: Path
+) -> list[EmbeddedChunk]:
+    """Chunk the prose-rich subset, embed it, and index every chunk into ``store``."""
+    chunks = chunk_corpus(load_corpus(community, enhancements))
+    vectors = embedder.embed([c.text for c in chunks])
+    embedded = [EmbeddedChunk(c, v) for c, v in zip(chunks, vectors, strict=True)]
+    for ec in embedded:
+        store.index_chunk(ec)
+    return embedded
+
+
+def _cmd_vector_ingest(args: argparse.Namespace) -> int:
+    store = _vector_store(args)
+    store.create_index()  # no-op for the in-memory store; creates the k-NN index on OpenSearch
+    embedder = _embedder(args)
+    embedded = _index_corpus(store, embedder, Path(args.community), Path(args.enhancements))
+    by_source = Counter(ec.chunk.source for ec in embedded)
+    print("== vector-ingest ==")
+    print(f"embedding: {embedder.model_id} (dim={embedder.dimensions})")
+    print(
+        f"chunks: {len(embedded)}  by source: "
+        + ", ".join(f"{k}={v}" for k, v in sorted(by_source.items()))
+    )
+    return 0
+
+
+def _cmd_vector_query(args: argparse.Namespace) -> int:
+    store = _vector_store(args)
+    embedder = _embedder(args)
+    if isinstance(store, MemoryVectorStore):  # offline: populate by chunk+embed now
+        _index_corpus(store, embedder, Path(args.community), Path(args.enhancements))
+    result = vector_search(store, embedder, args.q, k=args.k)
+    print("== vector-query ==")
+    print(result.render())
+    return 0
+
+
+def _cmd_vector_eval(args: argparse.Namespace) -> int:
+    cases = load_query_set(Path(args.query_set))
+    corpus = {
+        c.id: c for c in chunk_corpus(load_corpus(Path(args.community), Path(args.enhancements)))
+    }
+    frozen_path = Path(args.frozen)
+    if getattr(args, "refresh_embeddings", False):
+        if not args.bedrock:
+            raise SystemExit("--refresh-embeddings requires --bedrock (real Titan v2 vectors)")
+        frozen = freeze_embeddings(corpus, cases, BedrockTitanEmbedder(region=args.region))
+        frozen_path.write_text(json.dumps(frozen, indent=2, sort_keys=True), encoding="utf-8")
+        print(
+            f"wrote frozen embeddings: {frozen_path} ({len(corpus)} chunks, {len(cases)} queries)"
+        )
+    result = evaluate_query_set(cases, load_frozen(frozen_path), corpus, k=args.k)
+    print(result.render())
+    return 0 if result.passes() else 1
 
 
 def _cmd_ingest(args: argparse.Namespace) -> int:
@@ -121,6 +208,55 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval.add_argument("--sample", required=True, help="path to the labeled sample YAML")
     p_eval.add_argument("--bar", type=float, default=0.80, help="precision/recall bar")
     p_eval.set_defaults(func=_cmd_resolve_eval)
+
+    def add_vector_corpus_args(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--community", required=True, help="path to the community source root")
+        p.add_argument("--enhancements", required=True, help="path to the enhancements source root")
+        p.add_argument(
+            "--opensearch-endpoint", help="https OpenSearch endpoint (deployed vector store)"
+        )
+        p.add_argument("--region", default="us-east-1", help="AWS region for SigV4 signing")
+        p.add_argument(
+            "--bedrock",
+            action="store_true",
+            help="use real Titan v2 embeddings (needs AWS creds); "
+            "default is the offline non-semantic embedder",
+        )
+
+    p_vingest = sub.add_parser(
+        "vector-ingest", help="chunk -> embed -> index the prose-rich subset"
+    )
+    add_vector_corpus_args(p_vingest)
+    p_vingest.set_defaults(func=_cmd_vector_ingest)
+
+    p_vquery = sub.add_parser(
+        "vector-query", help="semantic search with a retrieval trace + provenance"
+    )
+    add_vector_corpus_args(p_vquery)
+    p_vquery.add_argument("--q", required=True, help="the natural-language query")
+    p_vquery.add_argument("--k", type=int, default=5, help="number of chunks to return")
+    p_vquery.set_defaults(func=_cmd_vector_query)
+
+    p_veval = sub.add_parser(
+        "vector-eval", help="credible-baseline confirmation (hit@k over the curated set)"
+    )
+    p_veval.add_argument(
+        "--community", required=True, help="path to the eval-corpus community root"
+    )
+    p_veval.add_argument(
+        "--enhancements", required=True, help="path to the eval-corpus enhancements root"
+    )
+    p_veval.add_argument("--query-set", required=True, help="path to the curated query-set YAML")
+    p_veval.add_argument("--frozen", required=True, help="path to the frozen-embeddings JSON")
+    p_veval.add_argument("--k", type=int, default=5, help="hit@k cutoff")
+    p_veval.add_argument("--region", default="us-east-1", help="AWS region (for --refresh)")
+    p_veval.add_argument("--bedrock", action="store_true", help="use real Titan v2 (for --refresh)")
+    p_veval.add_argument(
+        "--refresh-embeddings",
+        action="store_true",
+        help="regenerate the frozen vectors via live Titan v2 (requires --bedrock)",
+    )
+    p_veval.set_defaults(func=_cmd_vector_eval)
 
     return parser
 

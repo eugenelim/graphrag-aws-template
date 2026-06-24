@@ -1,0 +1,85 @@
+# Curated query set for the credible-baseline confirmation (slice-2 AC6).
+#
+# Two classes, both authored as natural architect-style questions (never a paraphrase
+# of the gold chunk's wording — the win must be semantic, not lexical; the eval test
+# guards against a long verbatim overlap):
+#
+#   class: semantic  — questions plain vector RAG should answer well. Bar: hit@5 = 1.0.
+#   class: entity    — scoping questions vector honestly MISSES. The answer edge
+#                      (approver/owner) lives in kep.yaml, which is NOT chunked into
+#                      the vector index, so no chunk carries the @handle; the gold
+#                      chunk exists in the corpus but is not retrievable by semantics.
+#                      This is the case the slice-3 graph mode wins.
+#
+# gold_chunk_ids are chunk ids from `chunk_corpus` over tests/fixtures/vector/corpus.
+# gold_source_span records where each gold chunk was drawn from (audit trail).
+queries:
+  - id: q1
+    class: semantic
+    query: "What can go wrong when changing a running pod's CPU and memory allocation without a restart?"
+    gold_chunk_ids:
+      - "enhancements/keps/sig-node/1287-in-place-update-pod-resources/README.md#0"
+      - "enhancements/keps/sig-node/1287-in-place-update-pod-resources/README.md#1"
+    gold_source_span: "KEP-1287 README, 'Summary'/'Risks and Mitigations'"
+    expect_miss: false
+
+  - id: q2
+    class: semantic
+    query: "How do I keep traffic to a service on the same machine to avoid extra network hops?"
+    gold_chunk_ids:
+      - "enhancements/keps/sig-network/2086-service-internal-traffic-policy/README.md#0"
+      - "enhancements/keps/sig-network/2086-service-internal-traffic-policy/README.md#1"
+    gold_source_span: "KEP-2086 README, 'Summary'/'Motivation'"
+    expect_miss: false
+
+  - id: q3
+    class: semantic
+    query: "How can operators enlarge the pool of cluster IP addresses for services after the cluster is built?"
+    gold_chunk_ids:
+      - "enhancements/keps/sig-network/1880-multiple-service-cidrs/README.md#0"
+      - "enhancements/keps/sig-network/1880-multiple-service-cidrs/README.md#1"
+    gold_source_span: "KEP-1880 README, 'Summary'/'Motivation'"
+    expect_miss: false
+
+  - id: q4
+    class: semantic
+    query: "How does the platform stop workloads from consuming the memory the system daemons need?"
+    gold_chunk_ids:
+      - "enhancements/keps/sig-node/0009-legacy-node-allocatable/README.md#1"
+    gold_source_span: "KEP-0009 README, 'Summary'"
+    expect_miss: false
+
+  - id: q5
+    class: semantic
+    query: "Can the node use disk-backed paging memory for workloads instead of disabling it?"
+    gold_chunk_ids:
+      - "enhancements/keps/sig-node/2400-node-swap/README.md#0"
+      - "enhancements/keps/sig-node/2400-node-swap/README.md#1"
+    gold_source_span: "KEP-2400 README, 'Summary'/'Motivation'"
+    expect_miss: false
+
+  - id: q6
+    class: semantic
+    query: "How are failing or degraded storage volumes surfaced to the people running workloads?"
+    gold_chunk_ids:
+      - "enhancements/keps/sig-storage/1487-volume-health-monitor/README.md#0"
+      - "enhancements/keps/sig-storage/1487-volume-health-monitor/README.md#1"
+    gold_source_span: "KEP-1487 README, 'Summary'/'Motivation'"
+    expect_miss: false
+
+  # --- entity-led: honest misses (the approver relationship is not in any chunk) ---
+  - id: m1
+    class: entity
+    query: "Which enhancement proposals has the reviewer @thockin signed off on as an approver?"
+    gold_chunk_ids:
+      - "enhancements/keps/sig-node/1287-in-place-update-pod-resources/README.md#0"
+    gold_source_span: "KEP-1287 (approvers include @thockin in kep.yaml — a graph edge, not prose)"
+    expect_miss: true
+
+  - id: m2
+    class: entity
+    query: "What proposals is @derekwaynecarr listed as an approver for?"
+    gold_chunk_ids:
+      - "enhancements/keps/sig-node/2400-node-swap/README.md#0"
+    gold_source_span: "KEP-2400 (approvers include @derekwaynecarr in kep.yaml — a graph edge, not prose)"
+    expect_miss: true

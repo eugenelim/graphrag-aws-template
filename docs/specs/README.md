@@ -20,7 +20,6 @@ docs/specs/<feature>/
 | Spec | Status | Constrained by | Notes |
 | --- | --- | --- | --- |
 | [`graph-ingestion-resolution`](graph-ingestion-resolution/spec.md) | Implementing | ADR-0001, ADR-0002, ADR-0003 | Slice 1 (lead). Graph ingest + cross-source resolution + CLI + slice-1 IaC. AC9 (live deploy) deferred. |
-| [`vector-rag-baseline`](vector-rag-baseline/spec.md) | Approved | ADR-0001, ADR-0002, ADR-0003 | Slice 2. Chunk → Titan v2 embed → OpenSearch k-NN + `vector-query` CLI with retrieval trace; fair-baseline query set; live retrieve probe. |
 
 ## Shipped specs (archived)
 
@@ -29,7 +28,7 @@ docs/specs/<feature>/
 
 | Spec | Status | Constrained by | Notes |
 | --- | --- | --- | --- |
-<!-- no shipped specs yet -->
+| [`vector-rag-baseline`](vector-rag-baseline/spec.md) | Shipped | ADR-0001, ADR-0002, ADR-0003 | Slice 2. Chunk → Titan v2 embed → OpenSearch k-NN + `vector-query` CLI with retrieval trace; credible-baseline query set (hit@5=1.0 + honest misses); live retrieve probe verified + torn down. |
 
 ## Adding a new spec
 

@@ -6,7 +6,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from graphrag.store import MemoryGraphStore
+from graphrag.embed import HashEmbedder
+from graphrag.store import MemoryGraphStore, MemoryVectorStore
 from ingestion.entrypoint import run
 
 CORPUS = Path(__file__).parents[3] / "packages/graphrag/tests/fixtures/corpus"
@@ -56,3 +57,19 @@ def test_entrypoint_downloads_and_ingests() -> None:
     assert report.nodes == 22
     assert "sig:sig-network" in report.merges
     assert len(store.all_nodes()) == 22
+
+
+def test_entrypoint_dual_writes_graph_and_vector() -> None:
+    # One parse, two stores (charter pattern 2): the graph and vector indices are
+    # written from the same corpus read so they can't diverge.
+    graph = MemoryGraphStore()
+    vectors = MemoryVectorStore()
+    run(
+        {"CORPUS_BUCKET": "demo-bucket", "CORPUS_PREFIX": "snap/", "AWS_REGION": "us-east-1"},
+        s3_client=FakeS3(CORPUS, "snap/"),
+        store=graph,
+        vector_store=vectors,
+        embedder=HashEmbedder(),
+    )
+    assert graph.all_nodes()  # graph half written
+    assert vectors.count() > 0  # vector half written from the same parse

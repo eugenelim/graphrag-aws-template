@@ -64,3 +64,13 @@ exclude = "(^|/)cdk\\.out/"
 [[tool.mypy.overrides]]
 module = ["yaml", "boto3", "boto3.*", "botocore", "botocore.*", "aws_cdk", "aws_cdk.*", "constructs"]
 ignore_missing_imports = true
+
+# numpy is not a project dependency; it is pulled into some environments transitively
+# (via other globally-installed tools) and its current stubs use 3.12-only `type`
+# syntax that mypy rejects under our 3.11 target, aborting the run before it checks
+# any project code. Skip following it — we never import it.
+[[tool.mypy.overrides]]
+module = ["numpy", "numpy.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true
+ignore_missing_imports = true

@@ -1,7 +1,7 @@
 # Plan: vector-rag-baseline
 
 - **Spec:** [`spec.md`](spec.md)
-- **Status:** Drafting
+- **Status:** Done
 
 > **Plan contract:** this is the implementation strategy. Unlike the spec, this
 > document is allowed to change as you learn. Substantial changes get a dated
@@ -331,7 +331,10 @@ established repo (no `docs/architecture/reference.md` present): Python 3.11+,
 - **Depends on:** T1-T11
 - **Tests:** n/a (docs).
 - **Approach:** update `docs/architecture/overview.md` (new modules + the vector
-  half landed), `docs/architecture/deployment-and-verification.md` (the vector
+  half landed); add `docs/architecture/infrastructure.md` (the **living
+  infrastructure lens** — topology + inventory + idle cost + cross-cutting infra
+  patterns + a per-slice evolution log, grown each infra slice);
+  `docs/architecture/deployment-and-verification.md` (the vector
   probe + live result + verification-ladder row), `docs/architecture/security.md`
   (OpenSearch/Bedrock boundaries, least-privilege, display-only-no-injection-control
   note), `docs/specs/README.md` (status), `docs/product/changelog.md`; add
@@ -407,3 +410,10 @@ Per the design doc's phased rollout, slice 2 extends the **same** IaC stack:
 
 - 2026-06-24 — Initial plan (slice 2). Inside-out build mirroring slice 1; frozen
   real Titan v2 vectors for the credible-baseline eval; live probe in scope.
+- 2026-06-24 (EXECUTE) — the credible-baseline eval uses a **dedicated vector eval
+  corpus** under `tests/fixtures/vector/corpus/` (real pinned excerpts, a superset
+  of the graph fixture's prose plus extra KEP READMEs). Rationale: the shared
+  graph fixture is only ~6 prose docs (~13 chunks), too few for a selective hit@5
+  with realizable honest misses; and growing the *shared* corpus would break
+  slice-1's fixed node/merge counts (`test_entrypoint.py` asserts `nodes == 22`).
+  The eval corpus is decoupled, so slice 1 stays green and the bar is honest.

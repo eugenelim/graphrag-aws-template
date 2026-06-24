@@ -1,0 +1,21 @@
+sigs:
+  - dir: sig-network
+    name: Network
+    leadership:
+      tech_leads: [thockin, aojea]
+  - dir: sig-node
+    name: Node
+    leadership:
+      tech_leads: [dchen1107, derekwaynecarr]
+  - dir: sig-storage
+    name: Storage
+    leadership:
+      tech_leads: [xing-yang]
+  - dir: sig-scheduling
+    name: Scheduling
+    leadership:
+      tech_leads: [ahg-g]
+  - dir: sig-auth
+    name: Auth
+    leadership:
+      tech_leads: [enj]

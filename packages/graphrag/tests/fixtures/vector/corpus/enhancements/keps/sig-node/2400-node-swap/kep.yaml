@@ -1,0 +1,5 @@
+title: Kubelet Swap Memory Support
+kep-number: 2400
+owning-sig: sig-node
+authors: ["@ehashman"]
+approvers: ["@derekwaynecarr", "@dchen1107"]
