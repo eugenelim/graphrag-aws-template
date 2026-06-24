@@ -56,6 +56,22 @@ excerpts — this extends the open confirmation to the whole corpus. Unblocked b
 `graphrag resolve-eval --corpus <full-clone>` with a labeled sample of the full
 handle/slug set.
 
+## hybrid-orchestration
+
+### hybrid-orchestration-live-deploy
+
+**AC9 (deferred).** Corpus-backed live hybrid-query smoke — deploy the stack, run the Fargate
+dual-write to index the corpus into the live Neptune + OpenSearch, then SigV4-POST a curated
+entity-led question to the IAM-auth Function URL and assert an answer + citations + a seed/hop
+trace whose seeds include the question-linked entity; then `cdk destroy`. AWS creds, CDK
+bootstrap, and Bedrock access to `us.anthropic.claude-sonnet-4-6` are all confirmed, and the IaC
+**`cdk synth`-validates** (the real template carries the `AWS_IAM` Function URL, the
+named-principal invoke grant, and the Bedrock grant scoped to the `inference-profile` +
+`foundation-model` ARNs). Blocked **only** on building the Fargate ingestion image, which needs a
+**Docker daemon not available in the build environment**. Unblocked by a maintainer running
+`apps/infra/scripts/deploy.sh` on a host with Docker, the documented dual-write + Function-URL
+invocation, and recording the result in `deployment-and-verification.md`.
+
 <!-- Add one section per spec with open work, e.g.:
 
 ## <spec-name>

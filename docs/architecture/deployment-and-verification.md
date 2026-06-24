@@ -156,3 +156,25 @@ fix so it can't regress silently:
 > then torn down with `scripts/destroy.sh`. Offline layers (65 tests + synth) are
 > green; this is the deferred AC9 live confirmation, now satisfied for the graph
 > store round-trip.
+
+## Verification ladder — slice 3 (hybrid live query)
+
+| Rung | What it proves | Status |
+| --- | --- | --- |
+| Offline (`pytest` + synth) | seed-and-expand, the three-mode runner, the CLI verbs, the query-Lambda handler (mocked), and the IaC shape (query Lambda + IAM-auth Function URL + scoped Claude grant) | **green** (this PR) |
+| `cdk synth` (real template) | the synthesized `GraphragSlice1` template carries the `AuthType: AWS_IAM` Function URL, the named-principal (`InvokerRoleArn`) invoke grant, and the Bedrock grant scoped to the `inference-profile/us.anthropic.claude-sonnet-4-6` **and** `foundation-model/anthropic.claude-sonnet-4-6` ARNs (no wildcard) | **green** (this PR — `cdk synth` clean) |
+| Live hybrid query (AC9) | a SigV4-signed POST to the Function URL runs a curated entity-led question through live OpenSearch + Neptune + **Bedrock Claude**, returning an answer + citations + a seed/hop trace whose seeds include the question-linked entity | **deferred — `hybrid-orchestration-live-deploy` (Docker not available to build the ingestion image)** |
+
+> **Hybrid live smoke: DEFERRED (backlog `hybrid-orchestration-live-deploy`).** AWS
+> credentials, CDK bootstrap, and Bedrock access to `us.anthropic.claude-sonnet-4-6`
+> are all confirmed, and `cdk synth` validates the template's security posture — but the
+> corpus-backed live run needs the Fargate **ingestion image**, whose build requires a
+> **Docker daemon not available in this build environment**, so it is deferred to a
+> maintainer's deploy window. To run it: on a host with Docker, `scripts/deploy.sh`
+> (passing `InvokerRoleArn`), run the Fargate dual-write, then SigV4-POST a curated
+> entity-led question (e.g. *"Which KEPs does the SIG @thockin tech-leads own?"*) to the
+> `QueryFunctionUrl` output — via `graphrag hybrid-query --function-url <url>` or
+> `aws lambda invoke` — confirm an answer + citations + a dual-seed trace whose
+> `question` seeds include `person:thockin`, then `scripts/destroy.sh`. Record the result
+> JSON + teardown here when done.
+> _(Placeholder row; AC9 stays unticked in the spec until this is filled in.)_

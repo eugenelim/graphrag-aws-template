@@ -204,18 +204,20 @@ def test_governance_tags_on_taggable_resources(template: Template) -> None:
 
 
 def test_smoke_probe_is_in_vpc_with_no_public_url(template: Template) -> None:
-    # The smoke Lambda must run in-VPC (private subnets) and expose no public URL.
+    # The Neptune smoke Lambda must run in-VPC (private subnets) and expose no URL of
+    # its own (disambiguated by its handler — the slice-3 query Lambda also reads
+    # NEPTUNE_ENDPOINT).
     fns = [r for r in _resources(template).values() if r["Type"] == "AWS::Lambda::Function"]
     smoke = [
-        f
-        for f in fns
-        if "NEPTUNE_ENDPOINT" in f["Properties"].get("Environment", {}).get("Variables", {})
+        f for f in fns if f["Properties"].get("Handler") == "graphrag.smoke_lambda.lambda_handler"
     ]
     assert len(smoke) == 1, "expected exactly one Neptune smoke Lambda"
     assert "VpcConfig" in smoke[0]["Properties"], "smoke Lambda must be VPC-attached"
     # LoggingConfig => points at the stack-managed log group, not /aws/lambda/<fn>.
     assert "LoggingConfig" in smoke[0]["Properties"], "smoke Lambda needs a stack-managed log group"
-    template.resource_count_is("AWS::Lambda::Url", 0)  # no public function URL
+    # The only Function URL in the stack is the IAM-auth query URL (slice 3); the
+    # smoke probes have none.
+    template.resource_count_is("AWS::Lambda::Url", 1)
 
 
 def test_log_groups_are_stack_managed_and_destroyed(template: Template) -> None:
@@ -300,38 +302,40 @@ def test_opensearch_access_policy_is_scoped_not_all_principals(template: Templat
 
 
 def test_vector_actions_are_scoped_no_wildcard_resource(template: Template) -> None:
-    saw_bedrock = saw_opensearch = False
+    saw_titan = saw_opensearch = False
     for stmt in _iam_statements(template):
         actions = _as_list(stmt["Action"])
         resources = _as_list(stmt["Resource"])
         if any(a == "bedrock:InvokeModel" for a in actions):
+            # Every bedrock:InvokeModel grant is scoped (slice 3 adds a second, the
+            # Claude synthesis grant — also scoped, asserted in its own test).
             assert resources != ["*"], "bedrock:InvokeModel must be scoped to the model ARN"
-            # Scoped to the one Titan model specifically — so the grant can't silently
-            # widen to another model in a future edit.
-            assert "amazon.titan-embed-text-v2:0" in json.dumps(resources), (
-                "bedrock:InvokeModel must be scoped to the Titan v2 model ARN"
-            )
-            saw_bedrock = True
+            # At least one grant is scoped to the one Titan model specifically — so the
+            # query-embedding grant can't silently widen to another model.
+            if "amazon.titan-embed-text-v2:0" in json.dumps(resources):
+                saw_titan = True
         if any(a.startswith("es:ESHttp") for a in actions):
             assert resources != ["*"], "es:ESHttp* must be scoped to the domain ARN"
             saw_opensearch = True
-    assert saw_bedrock, "expected a scoped bedrock:InvokeModel grant"
+    assert saw_titan, "expected a scoped bedrock:InvokeModel grant on the Titan v2 model ARN"
     assert saw_opensearch, "expected a scoped es:ESHttp* grant"
 
 
 def test_vector_smoke_probe_is_in_vpc_with_no_public_url(template: Template) -> None:
+    # Disambiguated by handler — the slice-3 query Lambda also reads OPENSEARCH_ENDPOINT.
     fns = [r for r in _resources(template).values() if r["Type"] == "AWS::Lambda::Function"]
     vector = [
         f
         for f in fns
-        if "OPENSEARCH_ENDPOINT" in f["Properties"].get("Environment", {}).get("Variables", {})
+        if f["Properties"].get("Handler") == "graphrag.vector_smoke_lambda.lambda_handler"
     ]
     assert len(vector) == 1, "expected exactly one OpenSearch vector smoke Lambda"
     assert "VpcConfig" in vector[0]["Properties"], "vector probe must be VPC-attached"
     assert "LoggingConfig" in vector[0]["Properties"], (
         "vector probe needs a stack-managed log group"
     )
-    template.resource_count_is("AWS::Lambda::Url", 0)  # still no public function URL
+    # The only Function URL is the IAM-auth query URL (slice 3); the probe has none.
+    template.resource_count_is("AWS::Lambda::Url", 1)
 
 
 def test_budget_limit_re_evaluated_for_two_standing_stores(template: Template) -> None:
@@ -347,6 +351,106 @@ def test_budget_limit_re_evaluated_for_two_standing_stores(template: Template) -
 def test_opensearch_endpoint_is_exported(template: Template) -> None:
     outputs = set(template.find_outputs("*").keys())
     assert {"OpenSearchEndpoint", "VectorSmokeProbeName"} <= outputs
+
+
+# --- slice 3: query Lambda + IAM-auth Function URL + scoped Bedrock-Claude grant ----
+
+# STUB: AC8
+
+
+def test_query_lambda_is_vpc_resident_not_public(template: Template) -> None:
+    fns = [r for r in _resources(template).values() if r["Type"] == "AWS::Lambda::Function"]
+    query = [
+        f for f in fns if f["Properties"].get("Handler") == "graphrag.query_lambda.lambda_handler"
+    ]
+    assert len(query) == 1, "expected exactly one query Lambda"
+    props = query[0]["Properties"]
+    assert "VpcConfig" in props, "query Lambda must be VPC-attached (private isolated)"
+    assert "LoggingConfig" in props, "query Lambda needs a stack-managed log group"
+    env = props.get("Environment", {}).get("Variables", {})
+    assert "NEPTUNE_ENDPOINT" in env
+    assert "OPENSEARCH_ENDPOINT" in env
+    assert "SYNTHESIS_MODEL_ID" in env
+
+
+def test_function_url_is_iam_auth(template: Template) -> None:
+    template.has_resource_properties("AWS::Lambda::Url", {"AuthType": "AWS_IAM"})
+    urls = [r for r in _resources(template).values() if r["Type"] == "AWS::Lambda::Url"]
+    assert len(urls) == 1, "expected exactly one Function URL (IAM-auth)"
+    for u in urls:
+        assert u["Properties"]["AuthType"] == "AWS_IAM", "Function URL must be AWS_IAM, never NONE"
+
+
+def test_function_url_invoke_permission_scoped_to_named_principal(template: Template) -> None:
+    perms = [r for r in _resources(template).values() if r["Type"] == "AWS::Lambda::Permission"]
+    url_perms = [p for p in perms if p["Properties"].get("FunctionUrlAuthType") == "AWS_IAM"]
+    assert url_perms, "expected an invoke-url permission with the AWS_IAM auth-type condition"
+    for p in url_perms:
+        principal = p["Properties"].get("Principal")
+        # never account-root / wildcard — a named principal (the InvokerRoleArn param).
+        assert principal not in ("*", None), f"invoke principal must be named, got {principal}"
+        assert p["Properties"].get("Action") == "lambda:InvokeFunctionUrl"
+
+
+def test_query_lambda_sg_reaches_neptune_and_opensearch(template: Template) -> None:
+    ports = set()
+    # Match the exact query-Lambda ingress-rule descriptions (not a loose "query"
+    # substring that an unrelated future rule could collide with).
+    query_descs = {"query lambda to neptune 8182", "query lambda to opensearch 443"}
+    for res in _resources(template).values():
+        if res["Type"] == "AWS::EC2::SecurityGroupIngress":
+            desc = res["Properties"].get("Description", "")
+            if isinstance(desc, str) and desc.lower() in query_descs:
+                ports.add(res["Properties"].get("FromPort"))
+    assert 8182 in ports, "query Lambda SG must reach Neptune 8182"
+    assert 443 in ports, "query Lambda SG must reach OpenSearch 443"
+
+
+def test_bedrock_claude_grant_scopes_profile_and_foundation_no_wildcard(
+    template: Template,
+) -> None:
+    # The synthesis Claude model is a cross-region inference profile; the grant must
+    # scope BOTH the inference-profile ARN AND each underlying regional foundation-model
+    # ARN — never a wildcard resource, never bedrock:* on "*".
+    saw_profile = saw_foundation = False
+    for stmt in _iam_statements(template):
+        actions = _as_list(stmt["Action"])
+        if not any(a.startswith("bedrock:") for a in actions):
+            continue
+        resources_blob = json.dumps(_as_list(stmt["Resource"]))
+        assert "*" not in _as_list(stmt["Resource"]), "bedrock grant must not be wildcard resource"
+        if "inference-profile/us.anthropic.claude-sonnet-4-6" in resources_blob:
+            saw_profile = True
+        if "foundation-model/anthropic.claude-sonnet-4-6" in resources_blob:
+            saw_foundation = True
+    assert saw_profile, "expected the inference-profile ARN in a scoped bedrock grant"
+    assert saw_foundation, "expected the underlying foundation-model ARN in a scoped bedrock grant"
+    # bedrock:Converse must be among the granted actions (the synthesizer uses Converse).
+    converse = any("bedrock:Converse" in _as_list(s["Action"]) for s in _iam_statements(template))
+    assert converse, "expected bedrock:Converse in the synthesis grant"
+
+
+def test_query_function_url_is_exported(template: Template) -> None:
+    outputs = set(template.find_outputs("*").keys())
+    assert "QueryFunctionUrl" in outputs
+
+
+def test_budget_limit_unchanged_at_150(template: Template) -> None:
+    # The query Lambda is scale-to-zero — no new standing cost; the limit holds at 150.
+    template.has_resource_properties(
+        "AWS::Budgets::Budget",
+        {"Budget": Match.object_like({"BudgetLimit": {"Amount": 150, "Unit": "USD"}})},
+    )
+
+
+def test_cdk_synthesis_model_id_equals_library_default() -> None:
+    # The CDK env default and the runtime default must not drift — the grant scope is
+    # derived from the CDK constant; the runtime synthesizer defaults to the library one.
+    from stacks.graphrag_stack import _SYNTHESIS_MODEL_ID
+
+    from graphrag.synthesize import DEFAULT_SYNTHESIS_MODEL_ID
+
+    assert _SYNTHESIS_MODEL_ID == DEFAULT_SYNTHESIS_MODEL_ID
 
 
 def _resources(template: Template) -> dict:

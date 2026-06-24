@@ -1,0 +1,164 @@
+# Consolidated showcase query set — the single home for the demo's queries (AC10).
+#
+# Each query is labeled with the retrieval mode it is meant to WIN (vector | graph |
+# hybrid), the gold entity-id(s) and/or chunk-id(s) the trace should surface (every one
+# RESOLVES in the bundled fixture corpus — a test asserts this), and a one-line
+# highlight the presenter narrates. The presenter script
+# (docs/guides/tutorials/three-mode-demo.md) walks vector -> graph -> hybrid over these.
+#
+# IDs are byte-identical to the slice-1 normalize output (graph node IDs) and the
+# slice-2 chunk_corpus ids, so gold can be checked mechanically.
+
+queries:
+  # --- vector wins: semantic, prose-rich questions with no entity to seed from ------
+  - id: vec-traffic-policy
+    query: "How does service internal traffic policy keep traffic node-local?"
+    wins: vector
+    gold:
+      - "enhancements/keps/sig-network/2086-service-internal-traffic-policy/README.md#0"
+    highlight: "Semantic match on the KEP-2086 prose; no named entity to seed a graph hop."
+
+  - id: vec-multiple-cidrs
+    query: "What problem do multiple service CIDRs solve?"
+    wins: vector
+    gold:
+      - "enhancements/keps/sig-network/1880-multiple-service-cidrs/README.md#0"
+    highlight: "Vector finds the KEP-1880 summary from a paraphrase, not a keyword."
+
+  - id: vec-in-place-resize
+    query: "Can pod resources be updated in place without a restart?"
+    wins: vector
+    gold:
+      - "enhancements/keps/sig-node/1287-in-place-update-pod-resources/README.md#0"
+    highlight: "Conceptual question lands on the KEP-1287 prose chunk by meaning."
+
+  - id: vec-node-allocatable
+    query: "What is legacy node allocatable about?"
+    wins: vector
+    gold:
+      - "enhancements/keps/sig-node/0009-legacy-node-allocatable/README.md#0"
+    highlight: "Prose-only KEP (no kep.yaml) — vector retrieves it from the README."
+
+  - id: vec-network-charter
+    query: "What is the charter and scope of the networking special interest group?"
+    wins: vector
+    gold:
+      - "community/sig-network/README.md#0"
+    highlight: "Charter prose retrieved semantically; the SIG name is paraphrased."
+
+  - id: vec-node-charter
+    query: "What does the node group focus on for kubelet and the container runtime?"
+    wins: vector
+    gold:
+      - "community/sig-node/README.md#0"
+    highlight: "Semantic hit on the SIG Node charter prose."
+
+  # --- graph wins: entity-led, multi-hop structure vector can't enumerate -----------
+  - id: graph-thockin-owned-keps
+    query: "Which KEPs does the SIG @thockin tech-leads own?"
+    wins: graph
+    gold:
+      - "person:thockin"
+      - "sig:sig-network"
+      - "kep-1880"
+      - "kep-2086"
+    highlight: "2-hop person:thockin -TECH_LEADS-> sig:sig-network -OWNS-> {kep-1880, kep-2086}."
+
+  - id: graph-network-owns
+    query: "What KEPs does sig-network own?"
+    wins: graph
+    gold:
+      - "sig:sig-network"
+      - "kep-1880"
+      - "kep-2086"
+    highlight: "OWNS edges from the SIG enumerate the owned set directly."
+
+  - id: graph-node-owns
+    query: "What KEPs does SIG Node own?"
+    wins: graph
+    gold:
+      - "sig:sig-node"
+      - "kep-9"
+      - "kep-1287"
+    highlight: "The other SIG's OWNS set — graph keeps the two SIGs cleanly separated."
+
+  - id: graph-kep-1287-approvers
+    query: "Who approves KEP-1287?"
+    wins: graph
+    gold:
+      - "kep-1287"
+      - "person:thockin"
+      - "person:dchen1107"
+      - "person:derekwaynecarr"
+    highlight: "APPROVES edges (IN) from the KEP name its approvers — a relationship, not prose."
+
+  - id: graph-network-leaders
+    query: "Who tech-leads and chairs sig-network?"
+    wins: graph
+    gold:
+      - "sig:sig-network"
+      - "person:thockin"
+      - "person:bowei"
+    highlight: "TECH_LEADS / CHAIRS edges (IN) enumerate the SIG's leadership."
+
+  - id: graph-network-subprojects
+    query: "What subprojects does SIG Network have?"
+    wins: graph
+    gold:
+      - "sig:sig-network"
+      - "subproject:sig-network/kube-proxy"
+      - "subproject:sig-network/external-dns"
+    highlight: "HAS_SUBPROJECT edges list the SIG's subprojects structurally."
+
+  # --- hybrid wins: a semantic question whose answer needs the graph join -----------
+  - id: hybrid-thockin-traffic
+    query: "Of the KEPs the SIG @thockin tech-leads owns, which one keeps traffic node-local?"
+    wins: hybrid
+    gold:
+      - "person:thockin"
+      - "sig:sig-network"
+      - "kep-2086"
+    highlight: "Question seeds @thockin; vector seeds the traffic-policy chunk; the join lands KEP-2086."
+
+  - id: hybrid-network-cidr-detail
+    query: "For the SIG that owns multiple service CIDRs, what does that KEP propose?"
+    wins: hybrid
+    gold:
+      - "sig:sig-network"
+      - "kep-1880"
+    highlight: "Vector finds the CIDR prose; the graph confirms sig-network OWNS KEP-1880."
+
+  - id: hybrid-node-resize-owner
+    query: "Which SIG owns the in-place pod resize KEP, and what is it about?"
+    wins: hybrid
+    gold:
+      - "sig:sig-node"
+      - "kep-1287"
+    highlight: "Vector seeds the KEP-1287 chunk; expansion surfaces the owning SIG Node."
+
+  - id: hybrid-network-charter-keps
+    query: "Summarize sig-network's charter and the KEPs it owns."
+    wins: hybrid
+    gold:
+      - "sig:sig-network"
+      - "kep-1880"
+      - "kep-2086"
+      - "community/sig-network/README.md#0"
+    highlight: "Vector brings the charter prose; the graph brings the owned-KEP enumeration."
+
+  - id: hybrid-thockin-role
+    query: "What does @thockin do across sig-network and its KEPs?"
+    wins: hybrid
+    gold:
+      - "person:thockin"
+      - "sig:sig-network"
+      - "kep-2086"
+    highlight: "Question seeds @thockin; the neighborhood expansion shows his SIG + KEP relationships."
+
+  - id: hybrid-node-allocatable-owner
+    query: "Which SIG owns the legacy node allocatable proposal?"
+    wins: hybrid
+    gold:
+      - "sig:sig-node"
+      - "kep-9"
+    highlight: "Vector finds the prose-only KEP-9; expansion attributes it to SIG Node via OWNS."
