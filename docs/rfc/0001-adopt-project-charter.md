@@ -1,12 +1,15 @@
 # RFC-0001 — Adopt the project charter (mission, scope, principles, architecture patterns)
 
-- **Status:** Draft
+- **Status:** Accepted (2026-06-23)
 - **Author:** eugenelim
 - **Created:** 2026-06-23
 - **Last updated:** 2026-06-23
-- **Discussion:** _(PR link once opened)_
-- **Follow-on artifacts:** edit to [`docs/CHARTER.md`](../CHARTER.md) (the
-  proposed text in § Detailed proposal lands there verbatim on acceptance)
+- **Discussion:** [PR #2](https://github.com/eugenelim/graphrag-aws-template/pull/2)
+- **Follow-on artifacts:** the Detailed-proposal block was transcribed into
+  [`docs/CHARTER.md`](../CHARTER.md) (link depths renormalized per the Follow-on
+  note); [`CONVENTIONS.md` § 1](../CONVENTIONS.md) amended to permit the
+  patterns spine for reference-template projects; the catalog brief's slices are
+  now schedulable.
 
 ## Summary
 

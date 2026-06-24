@@ -10,7 +10,7 @@ Lifecycle: `Draft → Open → Final Comment Period → Accepted | Rejected | Wi
 
 | #    | Title                                          | Status |
 | ---- | ---------------------------------------------- | ------ |
-| [0001](0001-adopt-project-charter.md) | Adopt the project charter (mission, scope, principles, architecture patterns) | Draft |
+| [0001](0001-adopt-project-charter.md) | Adopt the project charter (mission, scope, principles, architecture patterns) | Accepted |
 
 ## Adding a new RFC
 
