@@ -164,32 +164,52 @@ fix so it can't regress silently:
 | Offline (`pytest` + synth) | seed-and-expand, the three-mode runner, the CLI verbs, the query-Lambda handler (mocked), and the IaC shape (query Lambda + IAM-auth Function URL + scoped Claude grant) | **green** (this PR) |
 | `cdk synth` (real template) | the synthesized `GraphragSlice1` template carries the `AuthType: AWS_IAM` Function URL, the named-principal (`InvokerRoleArn`) invoke grant, and the Bedrock grant scoped to the `inference-profile/us.anthropic.claude-sonnet-4-6` **and** `foundation-model/anthropic.claude-sonnet-4-6` ARNs (no wildcard) | **green** (this PR — `cdk synth` clean) |
 | Live deploy + dual-write | `cdk deploy` stands up the full stack (`CREATE_COMPLETE`); the Fargate ingestion task runs the **single-parse dual-write** end-to-end | **PASS (2026-06-24)** — graph: 22 nodes / 28 edges / 6 cross-source merges (incl. `person:thockin`, `sig:sig-network`); vector: 13 chunks indexed via **live Bedrock Titan**; Neptune smoke probe `ok:true` |
-| Live hybrid query (AC9) | a SigV4-signed POST to the Function URL runs a curated entity-led question through live OpenSearch + Neptune + **Bedrock Claude**, returning an answer + citations + a seed/hop trace whose seeds include the question-linked entity | **deferred — `hybrid-orchestration-live-deploy`: the query Lambda times out at its 120s budget (see finding below)** |
+| Live hybrid query (AC9) | a SigV4-signed POST to the Function URL runs a curated entity-led question through live OpenSearch + Neptune + **Bedrock Claude**, returning an answer + citations + a seed/hop trace whose seeds include the question-linked entity | **PASS (2026-06-24)** — completes in **22.7 s** with a real Claude answer; trace below |
 
-> **Live-deploy findings (2026-06-24).** Deployed to account `<redacted>` (`us-east-1`)
-> with Docker available; the offline gates, `cdk synth`, and the **Fargate dual-write all
-> passed live** — the graph + vector stores were populated from the pinned fixture corpus,
-> with live Bedrock Titan embeddings, and the slice-1 Neptune smoke probe returned
-> `{"ok": true, ...}`. Two findings surfaced that only a live run could:
+> **Live hybrid-query smoke: PASS (2026-06-24).** Deployed to account `<redacted>`
+> (`us-east-1`), corpus dual-written, then a **SigV4-signed POST to the IAM-auth Function
+> URL** (via `graphrag hybrid-query --function-url …`) for *"Which KEPs does the SIG
+> @thockin tech-leads own?"* returned in **22.7 s** with the dual-seed seed-and-expand
+> trace:
+> ```text
+> seeds:
+>   vector: kep-9, sig:sig-node, sig:sig-network, kep-2086
+>   question: person:thockin          # the @thockin handle linked from the question
+> hops:
+>   hop 1: via APPROVES, AUTHORS, CHAIRS, HAS_SUBPROJECT, OWNS, TECH_LEADS
+>          -> kep-1287, kep-1880, …(people + subprojects)
+>   hop 2: via APPROVES, AUTHORS -> person:lavalamp, person:tallclair, person:vinaykul
+> citations: KEP-0009 / sig-node / sig-network READMEs + entity ids …
+> answer: <real Bedrock Claude synthesis>
+> ```
+> This exercised the full live path — Titan embed (Bedrock) → OpenSearch k-NN →
+> question entity-linking → 2-hop Neptune expansion → Bedrock **Claude Converse**
+> synthesis — and satisfies AC9 (answer + citations + a seed/hop trace whose `question`
+> seed is `person:thockin`). The stack was then torn down with `scripts/destroy.sh`
+> (teardown-first); no billable resource remains.
 >
-> 1. **`deploy.sh` did not pass the new `InvokerRoleArn` CfnParameter** (added by this
->    slice for the IAM-auth Function URL invoke grant) — the documented deploy would fail
->    on a missing parameter. **Fixed** in this PR: `deploy.sh` derives the caller's role
->    ARN (override via `INVOKER_ROLE_ARN`) and passes it.
-> 2. **The query Lambda hits its 120s timeout on every invocation** (CloudWatch
->    `Duration` max = 120000 ms), with no fast error — i.e. it runs the full budget doing
->    *successful* work, not blocking on an unreachable hop (Neptune is reachable; the
->    smoke probe proves it). Root cause: `query.expand_neighborhood` fans out
->    `O(frontier × 6 edge-kinds × 2 directions)` **sequential** `neighbors()` openCypher
->    round-trips per hop. That is instant against the in-memory store (offline tests) but
->    **pathologically slow against Neptune Serverless at minimum NCU** (~hundreds of
->    sequential HTTPS+SigV4 queries > 120s). The CLI's `--function-url` client also
->    inherits the Neptune adapter's hard-coded **30s** read timeout, too short for a
->    multi-step hybrid query.
+> **Three findings surfaced that only a live run could** — the first two are fixed in
+> this PR, the third is a quality follow-up:
 >
-> **Fix (follow-up, backlog `hybrid-orchestration-live-deploy`):** add a *batched* neighbor
-> fetch to `GraphStore` — one openCypher query per hop for the whole frontier (the
-> `all_edges()` MATCH shape, parameterized `$ids`), with a default app-layer fan-out so
-> the in-memory backend and the trace stay identical — and give the live Function-URL CLI
-> client a longer, configurable timeout. Then re-deploy and record the AC9 result JSON
-> here. The stack from this run was torn down with `scripts/destroy.sh` (teardown-first).
+> 1. **`deploy.sh` did not pass the new `InvokerRoleArn` CfnParameter.** The documented
+>    deploy would fail on a missing parameter. **Fixed:** `deploy.sh` derives the
+>    caller's role ARN (override via `INVOKER_ROLE_ARN`) and passes it.
+> 2. **The query Lambda hung to its 120s timeout** — the *actual* blocker, masked behind
+>    the timeout across two diagnoses. (a) The first-order cause: `QuerySg` was created
+>    `allow_all_outbound=False` (the store-SG pattern), so the in-VPC compute could not
+>    initiate outbound — its first Bedrock Titan-embed call (boto3 60s connect × retries)
+>    hung to the budget, never reaching the graph. **Fixed:** `QuerySg` allows outbound
+>    like the other compute SGs (no-NAT = no internet path anyway); guarded by
+>    `test_query_lambda_sg_allows_outbound`. (b) A real second-order cost:
+>    `expand_neighborhood` issued `O(frontier × 6 edge-kinds × 2 directions)` sequential
+>    `neighbors()` openCypher round-trips per hop — instant in-memory, slow against
+>    Neptune Serverless. **Fixed:** a batched `GraphStore.neighbors_batch` (one query per
+>    direction per hop; default app-layer fan-out keeps the trace identical) + a longer,
+>    configurable Function-URL client timeout.
+> 3. **Synthesis context under-specifies the typed edges (quality follow-up,**
+>    **backlog `hybrid-orchestration-synthesis-edges`).** The expansion correctly *reaches*
+>    the owned KEPs (they are in the trace), but the merged context handed to Claude lists
+>    graph *nodes* without the typed `OWNS` / `TECH_LEADS` *edges*, so Claude hedged ("the
+>    graph facts do not include explicit owns edges") instead of stating the ownership
+>    chain. The trace + structural win are correct; enriching the synthesis context with
+>    the relationships is the next quality step.
