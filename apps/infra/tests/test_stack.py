@@ -121,6 +121,8 @@ def test_no_security_group_allows_public_ingress(template: Template) -> None:
         assert not (isinstance(value, str) and value in public), f"public ingress: {value}"
 
     for res in _resources(template).values():
+        # Inline rules today carry intrinsic (Fn::GetAtt CidrBlock) CIDRs; this
+        # branch guards against a future hardcoded literal "0.0.0.0/0" rule.
         if res["Type"] == "AWS::EC2::SecurityGroup":
             for rule in res["Properties"].get("SecurityGroupIngress", []):
                 _not_public(rule.get("CidrIp"))

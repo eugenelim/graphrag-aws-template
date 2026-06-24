@@ -132,7 +132,7 @@ def _extract_kep_readme(
     p = doc.payload
     md = doc.markdown
     number = p.get("dir_number")
-    if number is None:  # one malformed doc must not fail the whole ingest (AC1)
+    if number is None:  # defensive — load_enhancements always sets dir_number
         return
     kid = kep_id(str(number))
     title = md.headings[0].lstrip("# ").strip() if md and md.headings else None
