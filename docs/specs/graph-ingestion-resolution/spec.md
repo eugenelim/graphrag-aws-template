@@ -152,21 +152,21 @@ Gates: `ruff` (lint+format, with the `S` security ruleset), `mypy` (typecheck),
 
 ## Acceptance Criteria
 
-- [ ] **AC1 — Dual-source parse, safely.** Given the fixture corpus, the loader
+- [x] **AC1 — Dual-source parse, safely.** Given the fixture corpus, the loader
   parses `community` (`sigs.yaml` + SIG `README.md` front-matter/headings) and
   `enhancements` (`keps/**/kep.yaml` + KEP `README.md`) into typed parsed-document
   records with source provenance, without error; a doc with broken front-matter is
   skipped with a warning, not a crash. The parser uses `yaml.safe_load` — a fixture
   containing a `!!python/object` tag parses inert (asserted by a negative test).
   *(TDD + security)*
-- [ ] **AC2 — Entity extraction.** Extraction yields the expected **SIG, Person,
+- [x] **AC2 — Entity extraction.** Extraction yields the expected **SIG, Person,
   KEP, Subproject** entities from the fixture with their key fields (slug/label,
   handle/display-name, KEP number/title/status/owning-sig, subproject name).
   *(TDD)*
-- [ ] **AC3 — Edge extraction.** Extraction yields the expected edges —
+- [x] **AC3 — Edge extraction.** Extraction yields the expected edges —
   **CHAIRS, TECH_LEADS** (Person→SIG), **OWNS** (SIG→KEP), **AUTHORS, APPROVES**
   (Person→KEP), **HAS_SUBPROJECT** (SIG→Subproject) — from the fixture. *(TDD)*
-- [ ] **AC4 — Cross-source resolution into single nodes (with negatives).** A SIG
+- [x] **AC4 — Cross-source resolution into single nodes (with negatives).** A SIG
   slug present in *both* sources resolves to exactly one SIG node; a GitHub handle
   present in both `sigs.yaml` leadership and `kep.yaml` author/approver lists
   resolves to exactly one Person node, including the `@handle`-vs-bare-`handle` and
@@ -175,12 +175,12 @@ Gates: `ruff` (lint+format, with the `S` security ruleset), `mypy` (typecheck),
   distinct handles do *not* merge, and a display name absent from the alias table
   stays split (no false merge). The resolved graph has no duplicate node for any
   shared entity. *(TDD)*
-- [ ] **AC5 — Resolver clears the ≥80% bar (open confirmation).** Running the
+- [x] **AC5 — Resolver clears the ≥80% bar (open confirmation).** Running the
   resolver over the hand-labeled sample of shared entities (real SIG slugs + GitHub
   handles, with negatives) yields **precision ≥ 0.80 AND recall ≥ 0.80**; the test
   asserts both. The sample is drawn from real, pinned repo excerpts so the bar is
   empirical. *(goal-based pytest)*
-- [ ] **AC6 — CLI multi-hop graph query with a visible trace.** `graphrag
+- [x] **AC6 — CLI multi-hop graph query with a visible trace.** `graphrag
   graph-query` traverses from a seed entity over a bounded (1–2 hop) edge-step
   sequence and returns the correctly-scoped result set; its stdout names each seed
   entity, each hop (edge kind + direction), and each resulting node — legible
@@ -188,7 +188,7 @@ Gates: `ruff` (lint+format, with the `S` security ruleset), `mypy` (typecheck),
   SIG that `@thockin` tech-leads" → seed `@thockin` →`TECH_LEADS`→ `sig-network`
   →`OWNS`→ {`kep-2086`, `kep-1880`} (and *not* the sig-node KEP-1287). *(TDD +
   narratability check)*
-- [ ] **AC7 — Backend-abstracted store; Neptune adapter is injection-safe and
+- [x] **AC7 — Backend-abstracted store; Neptune adapter is injection-safe and
   IAM-mediated.** The same traversal yields identical results/trace against the
   in-memory store and the Neptune adapter (the local≡Neptune **trace-identity**
   claim against a *live* cluster is part of the deferred AC9). The Neptune adapter
@@ -198,7 +198,7 @@ Gates: `ruff` (lint+format, with the `S` security ruleset), `mypy` (typecheck),
   read at the call site. Exercised (upsert + neighbors) against a mocked
   SigV4/HTTPS endpoint; a non-2xx response raises loudly with the body. *(TDD with
   mock)*
-- [ ] **AC8 — IaC synthesizes the slice-1 topology, securely.** The CDK (Python)
+- [x] **AC8 — IaC synthesizes the slice-1 topology, securely.** The CDK (Python)
   app synthesizes a stack containing: a VPC with private subnets and **no NAT
   gateway**; the VPC endpoints `s3` (gateway), `ecr.api`, `ecr.dkr`, `logs`, `sts`;
   a **Neptune Serverless** cluster at minimum capacity **with no public endpoint**;
@@ -213,7 +213,7 @@ Gates: `ruff` (lint+format, with the `S` security ruleset), `mypy` (typecheck),
   billable resource. Entrypoints + documented procedure ship here; **live-AWS
   verification is** *(deferred: graph-ingestion-resolution-live-deploy)*. *(manual
   QA)*
-- [ ] **AC10 — Every stage is narratable (ordered trace).** `ingest`,
+- [x] **AC10 — Every stage is narratable (ordered trace).** `ingest`,
   `graph-query`, and `resolve-eval` each emit a human-readable trace whose
   **structure** is asserted: parsed counts → resolved merges (before/after) for
   ingest; seed list → per-hop entry (edge kind + direction + frontier) → result set

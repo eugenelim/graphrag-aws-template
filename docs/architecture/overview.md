@@ -31,20 +31,29 @@
 
 ## Apps and packages
 
-**Greenfield — no application code has been written yet.** This repo currently
-holds the product and architecture record that *precedes* the code; `apps/` and
-`packages/` are not yet populated. The planned shape is settled in the design doc
-and recorded in ADRs — read those for "what's coming" until code lands:
+**Slice 1 (`graph-ingestion-resolution`) has landed** — the graph half of the
+demo. Current layout:
+
+| Path | What | Stack |
+| --- | --- | --- |
+| `packages/graphrag/` | Core library + the `graphrag` CLI: parse → extract → resolve → query, the graph store abstraction (in-memory + Neptune openCypher adapter), and the resolver eval. | Python 3.11+ (`pyyaml`, `boto3`) |
+| `apps/ingestion/` | On-demand Fargate task entrypoint — resolves the S3 corpus snapshot and runs the same `graphrag.ingest` the CLI runs. | Python + Dockerfile |
+| `apps/infra/` | AWS CDK app — the slice-1 topology subset (no-NAT VPC + endpoints + Neptune Serverless + S3 + Fargate task def + Budgets alarm). | AWS CDK (Python) |
+
+Build/test from the repo root: `pip install -e ".[dev,infra]"` then `pytest`,
+`ruff check packages apps`, `mypy packages/graphrag/src apps`.
+
+**Still to come** (per the design doc + brief Spec map): slice 2 adds OpenSearch +
+Titan v2 embeddings + the `bedrock-runtime` endpoint; slice 3 adds the in-VPC query
+Lambda and the three-mode comparison runner; slices 4–5 add permission-filtered
+retrieval and incremental delta re-ingest. Read:
 
 - [`architecture/graphrag-aws-architecture/design.md`](graphrag-aws-architecture/design.md)
   — the topology and the two resolved decisions (hybrid orchestration; ephemeral
-  VPC stack). Planned runtime components: an on-demand **Fargate ingestion/sync**
-  task, an in-VPC **query Lambda** behind an IAM-auth Function URL, a thin local
-  **CLI**, and the **Neptune + OpenSearch + Bedrock** stores.
+  VPC stack).
+- [`security.md`](security.md) — the consolidated security posture.
 - [`../product/briefs/graphrag-aws-demo.md`](../product/briefs/graphrag-aws-demo.md)
-  — the five shippable slices (Spec map) the code will be built from.
-
-Update this section with the real `apps/`/`packages/` listing once slice 1 lands.
+  — the five shippable slices.
 
 ## Where to start
 

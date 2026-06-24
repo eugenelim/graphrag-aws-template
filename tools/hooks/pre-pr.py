@@ -125,17 +125,13 @@ def main() -> int:
                     sys.exit(1)
                 print(f"pre-pr: ✓ loop-cohort check {spec_dir} ({phase})")
 
-    # --- Wire your own gate here ---------------------------------------------
-    # This is your project's pre-PR gate. Add your lint / typecheck / test
-    # commands as `_run(...)` calls — they run in repo-root, fail the hook on a
-    # non-zero exit, and skip gracefully if the tool isn't present. Examples:
-    #
-    #   _run("lint", ["make", "lint"])
-    #   _run("typecheck", ["npx", "tsc", "--noEmit"])
-    #   _run("test", ["make", "test"])
-    #
-    # (The `adapt-to-project` skill can fill these in from your project's
-    # detected build/test commands.)
+    # --- This project's gate: ruff (lint + format + S security), mypy, pytest ---
+    # Silence the CDK/jsii "untested node version" warning during the synth test.
+    os.environ.setdefault("JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION", "1")
+    _run("lint", ["ruff", "check", "packages", "apps"])
+    _run("format", ["ruff", "format", "--check", "packages", "apps"])
+    _run("typecheck", ["mypy", "packages/graphrag/src", "apps"])
+    _run("test", [py, "-m", "pytest", "-q"])
 
     print("pre-pr: all checks passed")
     return 0
