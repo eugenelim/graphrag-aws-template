@@ -1,6 +1,6 @@
 # Spec: hybrid-orchestration
 
-- **Status:** Implementing
+- **Status:** Shipped
 - **Shape:** mixed
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** [ADR-0001](../../adr/0001-hybrid-orchestration-seed-and-expand.md) (the seed-and-expand decision this slice ships — D1), [ADR-0002](../../adr/0002-ephemeral-vpc-store-topology.md) (the in-VPC query Lambda behind an IAM-auth Function URL; Bedrock reached via the VPC endpoint), [ADR-0003](../../adr/0003-iac-tool-aws-cdk-python.md) (IaC is AWS CDK Python), [design doc](../../architecture/graphrag-aws-architecture/design.md) (D1 seed-and-expand diagram; D2 thin-CLI / query-Lambda topology)
@@ -264,24 +264,24 @@ Already wired into `tools/hooks/pre-pr.py`.
   resource — **when the configured model is a cross-region inference profile, the grant scopes the
   account-and-region-qualified `inference-profile` ARN AND each underlying regional
   `foundation-model` ARN the profile routes to** — all with **no wildcard `Resource`**; the query
-  Lambda SG keeps the established **no-egress-path** guarantee (no NAT, VPC-endpoint-only) now that
-  it sits behind a public ingress; a stack-managed log group removed on destroy; and the Budgets value
+  Lambda SG **allows outbound** (in-VPC compute initiating calls to Neptune/OpenSearch/Bedrock,
+  like the Fargate + smoke SGs) — the no-internet posture is the **no-NAT topology**, not a closed
+  SG (a closed SG silently hangs the first Bedrock call; guarded by a synth egress assertion); a
+  stack-managed log group removed on destroy; and the Budgets value
   asserted **unchanged at the literal `150`** (no new standing cost — the Lambda is scale-to-zero).
   Per ADR-0002. *(goal-based synth, CDK-env-gated)*
-- [ ] **AC9 — Live deploy + hybrid-query smoke (in-VPC).** (deferred: hybrid-orchestration-live-deploy)
-  Against the deployed stack with the corpus dual-written, a **SigV4-signed call to the Function
-  URL** runs a curated entity-led question through live OpenSearch + Neptune + Bedrock Claude and
-  returns an answer with citations and a seed/hop trace whose seeds include the question-linked
-  entity; recorded in `deployment-and-verification.md`, then the stack is destroyed. **Partially
-  verified live (2026-06-24):** the stack deployed (`CREATE_COMPLETE`), the Fargate **dual-write
-  passed end-to-end** (graph 22 nodes/28 edges incl. `person:thockin`/`sig:sig-network` + vector
-  13 chunks via live Bedrock Titan; Neptune smoke probe `ok:true`), and `cdk synth` validated the
-  `AWS_IAM` Function URL + scoped Bedrock grant. **The live hybrid query itself is deferred** —
-  the query Lambda **times out at its 120s budget** because `expand_neighborhood` makes hundreds of
-  sequential `neighbors()` openCypher round-trips per hop against Neptune Serverless (instant
-  in-memory, too slow live). Unblocked by the batched-neighbor perf fix in backlog
-  `hybrid-orchestration-live-deploy`, then a redeploy + the SigV4 Function-URL invocation. *(live
-  smoke)*
+- [x] **AC9 — Live deploy + hybrid-query smoke (in-VPC).** Against the deployed stack with the
+  corpus dual-written, a **SigV4-signed call to the Function URL** ran the curated entity-led
+  question through live OpenSearch + Neptune + Bedrock Claude and returned an answer with citations
+  and a seed/hop trace whose seeds include the question-linked entity, then the stack was destroyed.
+  **Verified live (2026-06-24):** the query returned in **22.7 s** with `seeds: question:
+  person:thockin` (the `@thockin` handle) + vector-owner seeds, a 2-hop expansion reaching the owned
+  KEPs (kep-1880, kep-1287, …) via `OWNS`/`TECH_LEADS`, real citations, and a Bedrock Claude answer
+  — full trace in `deployment-and-verification.md`; stack torn down (teardown-first, no billable
+  resource remains). The live run also surfaced and fixed two infra bugs (the `deploy.sh`
+  `InvokerRoleArn` gap and the `QuerySg` outbound block) and one quality follow-up (the synthesis
+  context lists graph nodes without their typed edges, so Claude hedges on the ownership chain —
+  backlog `hybrid-orchestration-synthesis-edges`). *(live smoke)*
 - [x] **AC10 — Consolidated showcase set + presenter script (every stage narratable).** One
   curated showcase query set (`≥5–6 per mode`, each labeled with its intended winning mode and
   the trace highlight) is the single home for the demo's queries; a loader/test asserts it parses
@@ -325,16 +325,15 @@ Already wired into `tools/hooks/pre-pr.py`.
   VPC-private Neptune/OpenSearch are unreachable from a laptop, so the CLI's live mode is a thin
   SigV4 client to the Function URL, mirroring the slice-1/2 in-VPC-compute posture (source:
   design doc D2; `apps/infra/stacks/graphrag_stack.py`).
-- Technical/Process: the slice was **deployed and verified live** on 2026-06-24 (AWS creds, CDK
-  bootstrap, Docker, and Bedrock access to `us.anthropic.claude-sonnet-4-6` all present): the stack
-  reached `CREATE_COMPLETE`, the Fargate **dual-write passed end-to-end** (graph + vector populated
-  with live Bedrock Titan), and the Neptune smoke probe returned `ok:true`. The live hybrid query
-  (AC9) is **deferred** to a perf fix, not blocked on infra: the query Lambda times out at its 120s
-  budget because `expand_neighborhood` issues hundreds of sequential `neighbors()` openCypher
-  round-trips per hop against Neptune Serverless — a real finding only the live run surfaced
-  (backlog `hybrid-orchestration-live-deploy`: batch the neighbor fetch, then redeploy + invoke).
-  The `deploy.sh` `InvokerRoleArn` gap found in the same run is fixed in this PR (source: live
-  deploy 2026-06-24; CloudWatch `Duration`=120000ms; `deployment-and-verification.md`).
+- Technical/Process: the slice was **deployed and the full hybrid path verified live** on
+  2026-06-24 (AWS creds, CDK bootstrap, Docker, Bedrock access to `us.anthropic.claude-sonnet-4-6`):
+  `CREATE_COMPLETE`; Fargate dual-write end-to-end (graph + vector via live Bedrock Titan); the
+  SigV4 Function-URL hybrid query returned in 22.7 s with the dual-seed trace + a Claude answer
+  (AC9). The live run surfaced + fixed two infra bugs (the `deploy.sh` `InvokerRoleArn` gap; the
+  `QuerySg` outbound block — the actual cause of the initial 120s hang) and a batched-neighbor perf
+  improvement, and recorded one quality follow-up (synthesis context lacks typed edges — backlog
+  `hybrid-orchestration-synthesis-edges`). Stack torn down; no billable resource remains (source:
+  live deploy 2026-06-24; `deployment-and-verification.md`).
 - Process: this spec is full work-loop mode — security boundary (Bedrock + Neptune + OpenSearch
   network I/O; an IAM-auth public Function URL; untrusted retrieved content → Claude), structural
   (new modules + new infra), constrained by ADR-0001/0002/0003 + the design doc; derived from

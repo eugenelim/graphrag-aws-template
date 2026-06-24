@@ -37,6 +37,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wildcard); a stack-managed log group; the Function URL exported. Scale-to-zero — the
   Budgets limit holds at $150 (no new standing cost). No new runtime dependency (the
   `boto3` floor moves `>=1.34 → >=1.35` for `bedrock-runtime.converse`).
+- **Slice 3 verified live + torn down (2026-06-24).** Deployed end-to-end; the SigV4
+  Function-URL hybrid query returned in **22.7 s** with the dual-seed trace (`question:
+  person:thockin` + vector owners → 2-hop expansion to the owned KEPs) + a Bedrock Claude
+  answer (AC9). The live run found + fixed two infra bugs — the `deploy.sh`
+  `InvokerRoleArn` gap and the `QuerySg` outbound block — and added a **batched
+  `neighbors_batch`** (one openCypher query/hop, default fan-out keeps the trace
+  identical) so the expansion is demo-fast against Neptune Serverless. Stack torn down;
+  no billable resource remains.
 - **Graph ingestion + cross-source entity resolution (slice 1).** Parse Markdown +
   YAML from the Kubernetes `community` and `enhancements` repos, extract
   SIG/Person/KEP/Subproject entities and their edges, and resolve shared entities

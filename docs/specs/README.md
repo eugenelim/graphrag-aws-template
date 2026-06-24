@@ -20,7 +20,6 @@ docs/specs/<feature>/
 | Spec | Status | Constrained by | Notes |
 | --- | --- | --- | --- |
 | [`graph-ingestion-resolution`](graph-ingestion-resolution/spec.md) | Implementing | ADR-0001, ADR-0002, ADR-0003 | Slice 1 (lead). Graph ingest + cross-source resolution + CLI + slice-1 IaC. AC9 (live deploy) deferred. |
-| [`hybrid-orchestration`](hybrid-orchestration/spec.md) | Implementing | ADR-0001, ADR-0002, ADR-0003 | Slice 3. Seed-and-expand hybrid in the in-VPC query Lambda (IAM-auth Function URL) + three-mode comparison runner + consolidated showcase set + presenter script; Bedrock Claude synthesis via boto3 Converse. Offline ACs (1–8, 10) met + reviewed; `cdk synth` validates the IaC; AC9 (live smoke) deferred — `hybrid-orchestration-live-deploy` (Docker not available to build the ingestion image). |
 
 ## Shipped specs (archived)
 
@@ -30,6 +29,7 @@ docs/specs/<feature>/
 | Spec | Status | Constrained by | Notes |
 | --- | --- | --- | --- |
 | [`vector-rag-baseline`](vector-rag-baseline/spec.md) | Shipped | ADR-0001, ADR-0002, ADR-0003 | Slice 2. Chunk → Titan v2 embed → OpenSearch k-NN + `vector-query` CLI with retrieval trace; credible-baseline query set (hit@5=1.0 + honest misses); live retrieve probe verified + torn down. |
+| [`hybrid-orchestration`](hybrid-orchestration/spec.md) | Shipped | ADR-0001, ADR-0002, ADR-0003 | Slice 3. Seed-and-expand hybrid in the in-VPC query Lambda (IAM-auth Function URL) + three-mode comparison runner + consolidated showcase + presenter script; Bedrock Claude synthesis via boto3 Converse; batched neighbor fetch. All 10 ACs met incl. **AC9 verified live** (22.7 s end-to-end, then torn down). Quality follow-up: `hybrid-orchestration-synthesis-edges`. |
 
 ## Adding a new spec
 
