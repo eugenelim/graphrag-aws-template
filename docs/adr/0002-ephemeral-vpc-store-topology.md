@@ -1,6 +1,11 @@
 # ADR-0002: The demo stack is an ephemeral, teardown-first VPC topology
 
 - **Status:** Accepted
+- **Correction (2026-06):** The Context rationale "Neptune is VPC-only — no public
+  endpoint" is over-absolute; since engine 1.4.6.0 an optional public endpoint
+  exists (off by default, IAM-enforceable). The decision (private, in-VPC topology)
+  is unchanged — only the wording overstates the constraint. See
+  [`docs/rfc/0001-notes/aws-feasibility.md`](../rfc/0001-notes/aws-feasibility.md) § 6.
 - **Date:** 2026-06-23
 - **Decision-makers:** eugenelim
 - **Supersedes:** none
