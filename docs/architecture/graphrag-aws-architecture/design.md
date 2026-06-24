@@ -33,9 +33,12 @@ Constraints:
 - **AWS-managed-only:** Amazon OpenSearch (vector), Amazon Neptune (graph), Amazon
   Bedrock — Titan Text Embeddings v2 (embeddings) and a Claude model (synthesis).
   *Titan v2 is embeddings-only; answer synthesis needs a generative model.*
-- **Non-obvious edge #1 — Neptune is VPC-only.** No public endpoint, so a laptop
-  CLI cannot reach it directly. Query and ingestion compute must run *inside the
-  VPC*; this shapes the whole topology.
+- **Non-obvious edge #1 — Neptune is VPC-only by default, IAM-enforceable.** Since
+  engine 1.4.6.0 an *optional* public endpoint exists (off by default, IAM-auth),
+  but the private, in-VPC posture remains the default and is IAM-enforceable, so a
+  laptop CLI does not reach it directly here. Query and ingestion compute run
+  *inside the VPC*; this shapes the whole topology. (See
+  [`docs/rfc/0001-notes/aws-feasibility.md`](../../rfc/0001-notes/aws-feasibility.md) § 6.)
 - **Non-obvious edge #2 — neither Neptune nor OpenSearch truly scales to zero.**
   A cloned-and-forgotten demo accrues standing cost. Teardown is a first-class
   feature, not an afterthought.
