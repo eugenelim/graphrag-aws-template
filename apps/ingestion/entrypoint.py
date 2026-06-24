@@ -12,6 +12,10 @@ Env:
 - ``CORPUS_PREFIX`` (optional) — key prefix; the snapshot must contain
   ``community/`` and ``enhancements/`` trees.
 - ``NEPTUNE_ENDPOINT`` (required) — ``https://`` Neptune cluster endpoint.
+- ``OPENSEARCH_ENDPOINT`` (optional) — ``https://`` OpenSearch domain endpoint; when
+  set, the same run **dual-writes** the vector index (chunk -> embed -> index) so the
+  graph and vector stores never diverge (charter pattern 2). Absent, only the graph
+  is written (a slice-1-only deploy).
 - ``AWS_REGION`` (optional, default ``us-east-1``) — region for SigV4 signing.
 """
 
@@ -24,8 +28,10 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Protocol
 
+from graphrag.embed import Embedder
 from graphrag.ingest import IngestReport, ingest
 from graphrag.store.base import GraphStore
+from graphrag.store.vector_base import VectorStore
 
 
 class S3Client(Protocol):
@@ -66,11 +72,52 @@ def _build_store(endpoint: str, region: str) -> GraphStore:
     return NeptuneGraphStore(endpoint, region)
 
 
+def _vector_dual_write(
+    env: Mapping[str, str],
+    community: Path,
+    enhancements: Path,
+    vector_store: VectorStore | None,
+    embedder: Embedder | None,
+) -> int:
+    """Write the vector half from the same corpus read. Returns the chunk count.
+
+    The same Fargate run reads one immutable S3 snapshot, so the graph and vector
+    writes can't diverge (charter pattern 2). A no-op when neither an injected store
+    (tests) nor ``OPENSEARCH_ENDPOINT`` (deploy) is present.
+    """
+    endpoint = env.get("OPENSEARCH_ENDPOINT")
+    if vector_store is None and not endpoint:
+        return 0
+    region = env.get("AWS_REGION", "us-east-1")
+    if embedder is None:  # pragma: no cover - exercised only in the deployed task
+        from graphrag.embed import BedrockTitanEmbedder
+
+        embedder = BedrockTitanEmbedder(region=region)
+    if vector_store is None:  # pragma: no cover - exercised only in the deployed task
+        from graphrag.store.opensearch import OpenSearchVectorStore
+
+        vector_store = OpenSearchVectorStore(endpoint or "", region)
+
+    from graphrag.chunk import chunk_corpus
+    from graphrag.sources import load_corpus
+    from graphrag.store.vector_base import EmbeddedChunk
+
+    vector_store.create_index()  # no-op for in-memory; creates the k-NN index on OpenSearch
+    chunks = chunk_corpus(load_corpus(community, enhancements))
+    vectors = embedder.embed([c.text for c in chunks])
+    for chunk, vector in zip(chunks, vectors, strict=True):
+        vector_store.index_chunk(EmbeddedChunk(chunk, vector))
+    print(f"vector dual-write: indexed {len(chunks)} chunks")
+    return len(chunks)
+
+
 def run(
     env: Mapping[str, str],
     *,
     s3_client: S3Client | None = None,
     store: GraphStore | None = None,
+    vector_store: VectorStore | None = None,
+    embedder: Embedder | None = None,
 ) -> IngestReport:
     bucket = env["CORPUS_BUCKET"]
     prefix = env.get("CORPUS_PREFIX", "")
@@ -86,6 +133,7 @@ def run(
     with tempfile.TemporaryDirectory() as tmp:
         community, enhancements = download_corpus(bucket, prefix, Path(tmp), s3_client)
         report = ingest(community, enhancements, store)
+        _vector_dual_write(env, community, enhancements, vector_store, embedder)
 
     print(report.render())
     return report

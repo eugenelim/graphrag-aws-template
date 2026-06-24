@@ -8,5 +8,14 @@ against pushing traversal into openCypher).
 
 from .base import GraphStore
 from .memory import MemoryGraphStore
+from .vector_base import EmbeddedChunk, VectorHit, VectorStore
+from .vector_memory import MemoryVectorStore
 
-__all__ = ["GraphStore", "MemoryGraphStore"]
+__all__ = [
+    "EmbeddedChunk",
+    "GraphStore",
+    "MemoryGraphStore",
+    "MemoryVectorStore",
+    "VectorHit",
+    "VectorStore",
+]

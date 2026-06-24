@@ -1,0 +1,5 @@
+title: In-place Update of Pod Resources
+kep-number: 1287
+owning-sig: sig-node
+authors: ["@vinaykul"]
+approvers: ["@thockin", "@dchen1107"]

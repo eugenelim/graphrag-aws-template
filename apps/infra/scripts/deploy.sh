@@ -16,6 +16,15 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # The User governance tag = the deploying identity (last ARN segment, e.g. email).
 DEPLOY_USER="${DEPLOY_USER:-$(aws sts get-caller-identity --query Arn --output text | awk -F/ '{print $NF}')}"
 
+# OpenSearch needs the VPC-access service-linked role pre-created, or a VPC domain
+# fails to create ("you must enable a service-linked role ... to access your VPC").
+# CDK does not create it. Idempotent: ignore the "has been taken" error if it exists.
+# Both names are created — the provisioned (es-engine) domain uses the legacy
+# es.amazonaws.com SLR for VPC access.
+for svc in opensearchservice.amazonaws.com es.amazonaws.com; do
+  aws iam create-service-linked-role --aws-service-name "$svc" 2>/dev/null || true
+done
+
 cdk bootstrap "aws://${CDK_DEFAULT_ACCOUNT}/${CDK_DEFAULT_REGION}" --app "$CDK_APP"
 cdk deploy "$STACK" --app "$CDK_APP" --require-approval never \
   --parameters "BudgetAlarmEmail=${BUDGET_EMAIL}" \

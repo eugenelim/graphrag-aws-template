@@ -31,6 +31,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `s3`/`ecr.api`/`ecr.dkr`/`logs`/`sts` VPC endpoints, Neptune Serverless, an
   encrypted private S3 corpus bucket, a least-privilege Fargate ingestion task, and
   a Budgets cost alarm. Live deploy/destroy verification is tracked in the backlog.
+- **Vector RAG baseline (slice 2).** Chunk the prose-rich doc subset (SIG/KEP
+  READMEs) → Amazon Titan Text Embeddings v2 (256-dim) → single-node Amazon
+  OpenSearch k-NN. New CLI verbs: `vector-ingest`, `vector-query` (top-k chunks with
+  a legible retrieval trace + source provenance + owning entity), and `vector-eval`.
+  The baseline is **credible, not a strawman** (charter principle 2): a curated
+  query set clears **hit@5 = 1.0** on semantic-led questions against real Titan v2
+  embeddings (reproducible from committed frozen vectors) while honestly **missing**
+  the entity-scoping questions the slice-3 graph mode will win.
+- **Slice-2 AWS topology (CDK).** Adds a single-node, VPC-private, encrypted
+  OpenSearch domain (k-NN) and the `bedrock-runtime` VPC endpoint to the same
+  teardown-first stack, with least-privilege `es:ESHttp*` + `bedrock:InvokeModel`
+  roles; an in-VPC vector smoke probe verifies live index→retrieve; ingestion now
+  single-parse dual-writes the graph and vector stores. Budgets limit raised to
+  `$150/mo` for the second standing store.
 
 ### Changed
 

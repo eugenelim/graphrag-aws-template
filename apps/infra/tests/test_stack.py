@@ -8,6 +8,7 @@ ADR-0002 topology and the security controls. Skipped where aws-cdk-lib is absent
 
 from __future__ import annotations
 
+import json
 import os
 import re
 
@@ -32,10 +33,22 @@ def test_vpc_has_no_nat_gateway(template: Template) -> None:
     template.resource_count_is("AWS::EC2::NatGateway", 0)  # no NAT — egress via endpoints
 
 
-def test_has_the_five_required_vpc_endpoints(template: Template) -> None:
-    # 1 gateway (S3) + 4 interface (ecr.api, ecr.dkr, logs, sts). bedrock-runtime
-    # is deliberately NOT here (slice 2).
-    template.resource_count_is("AWS::EC2::VPCEndpoint", 5)
+def test_has_the_required_vpc_endpoints(template: Template) -> None:
+    # 1 gateway (S3) + 5 interface (ecr.api, ecr.dkr, logs, sts, bedrock-runtime).
+    # bedrock-runtime arrived with slice 2 (Titan v2 embeddings, no NAT).
+    template.resource_count_is("AWS::EC2::VPCEndpoint", 6)
+
+
+def test_bedrock_runtime_endpoint_present(template: Template) -> None:
+    # ServiceName is an Fn::Join intrinsic (com.amazonaws.<region>.bedrock-runtime),
+    # so match against the serialized form rather than a bare string.
+    endpoints = [
+        r
+        for r in _resources(template).values()
+        if r["Type"] == "AWS::EC2::VPCEndpoint"
+        and "bedrock-runtime" in json.dumps(r["Properties"].get("ServiceName"))
+    ]
+    assert len(endpoints) == 1, "expected the bedrock-runtime interface endpoint"
 
 
 def test_neptune_serverless_vpc_resident(template: Template) -> None:
@@ -250,6 +263,90 @@ def test_corpus_bucket_enforces_tls(template: Template) -> None:
             if stmt.get("Effect") == "Deny" and cond.get("aws:SecureTransport") in ("false", False):
                 deny_insecure = True
     assert deny_insecure, "expected a Deny statement on aws:SecureTransport=false"
+
+
+# --- slice 2: OpenSearch + Bedrock + vector probe ----------------------------------
+
+
+def test_opensearch_domain_is_single_node_encrypted_and_vpc_private(template: Template) -> None:
+    template.resource_count_is("AWS::OpenSearchService::Domain", 1)
+    template.has_resource_properties(
+        "AWS::OpenSearchService::Domain",
+        {
+            "ClusterConfig": Match.object_like(
+                {"InstanceCount": 1, "ZoneAwarenessEnabled": False, "DedicatedMasterEnabled": False}
+            ),
+            "EncryptionAtRestOptions": {"Enabled": True},
+            "NodeToNodeEncryptionOptions": {"Enabled": True},
+            "DomainEndpointOptions": Match.object_like({"EnforceHTTPS": True}),
+            "VPCOptions": Match.any_value(),  # VPC-resident -> no public endpoint
+        },
+    )
+
+
+def test_opensearch_access_policy_is_scoped_not_all_principals(template: Template) -> None:
+    # For a VPC domain, CDK applies the access policy via an AwsCustomResource
+    # (updateDomainConfig), not the inline AccessPolicies property — so assert against
+    # the serialized template. The policy must name the specific role ARNs and the
+    # scoped domain resource, never AllPrincipals or a wildcard resource.
+    blob = json.dumps(template.to_json())
+    assert "AccessPolicies" in blob
+    assert "es:ESHttp*" in blob
+    assert "domain/graphrag-vectors/*" in blob  # scoped to the one domain, not "*"
+    assert "IngestionTaskRole" in blob and "VectorProbeRole" in blob  # named principals
+    # no AllPrincipals wildcard in the access policy (either escaping form)
+    assert '"Principal":"*"' not in blob
+    assert '\\"Principal\\":\\"*\\"' not in blob
+
+
+def test_vector_actions_are_scoped_no_wildcard_resource(template: Template) -> None:
+    saw_bedrock = saw_opensearch = False
+    for stmt in _iam_statements(template):
+        actions = _as_list(stmt["Action"])
+        resources = _as_list(stmt["Resource"])
+        if any(a == "bedrock:InvokeModel" for a in actions):
+            assert resources != ["*"], "bedrock:InvokeModel must be scoped to the model ARN"
+            # Scoped to the one Titan model specifically — so the grant can't silently
+            # widen to another model in a future edit.
+            assert "amazon.titan-embed-text-v2:0" in json.dumps(resources), (
+                "bedrock:InvokeModel must be scoped to the Titan v2 model ARN"
+            )
+            saw_bedrock = True
+        if any(a.startswith("es:ESHttp") for a in actions):
+            assert resources != ["*"], "es:ESHttp* must be scoped to the domain ARN"
+            saw_opensearch = True
+    assert saw_bedrock, "expected a scoped bedrock:InvokeModel grant"
+    assert saw_opensearch, "expected a scoped es:ESHttp* grant"
+
+
+def test_vector_smoke_probe_is_in_vpc_with_no_public_url(template: Template) -> None:
+    fns = [r for r in _resources(template).values() if r["Type"] == "AWS::Lambda::Function"]
+    vector = [
+        f
+        for f in fns
+        if "OPENSEARCH_ENDPOINT" in f["Properties"].get("Environment", {}).get("Variables", {})
+    ]
+    assert len(vector) == 1, "expected exactly one OpenSearch vector smoke Lambda"
+    assert "VpcConfig" in vector[0]["Properties"], "vector probe must be VPC-attached"
+    assert "LoggingConfig" in vector[0]["Properties"], (
+        "vector probe needs a stack-managed log group"
+    )
+    template.resource_count_is("AWS::Lambda::Url", 0)  # still no public function URL
+
+
+def test_budget_limit_re_evaluated_for_two_standing_stores(template: Template) -> None:
+    # Slice 2 adds standing OpenSearch + the bedrock-runtime endpoint on top of
+    # Neptune; the monthly limit was raised so the "forgotten deploy" alarm stays
+    # meaningful (threshold % is still asserted by the slice-1 test).
+    template.has_resource_properties(
+        "AWS::Budgets::Budget",
+        {"Budget": Match.object_like({"BudgetLimit": {"Amount": 150, "Unit": "USD"}})},
+    )
+
+
+def test_opensearch_endpoint_is_exported(template: Template) -> None:
+    outputs = set(template.find_outputs("*").keys())
+    assert {"OpenSearchEndpoint", "VectorSmokeProbeName"} <= outputs
 
 
 def _resources(template: Template) -> dict:

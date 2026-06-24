@@ -33,15 +33,25 @@ cluster with `--neptune-endpoint https://… --region …`.
 
 ## Deploy on AWS
 
-The slice-1 topology (no-NAT VPC, Neptune Serverless, Fargate ingestion, Budgets
+The topology (no-NAT VPC, Neptune Serverless, single-node OpenSearch k-NN, the
+`bedrock-runtime` endpoint, Fargate ingestion, two in-VPC smoke probes, Budgets
 alarm) is an AWS CDK app. The full **deploy → verify → teardown** runbook with
 steps is in [`apps/infra/README.md`](apps/infra/README.md) (deploy/destroy scripts,
-the in-VPC smoke probe that verifies the live graph store, and the teardown), and
-the rationale + verification ladder is in
-[`docs/architecture/deployment-and-verification.md`](docs/architecture/deployment-and-verification.md).
-**Teardown is a feature:** Neptune does not scale to zero, so `scripts/destroy.sh`
-removes every billable resource and a Budgets alarm guards the cloned-and-forgotten
-footgun.
+the in-VPC smoke probes that verify the live graph + vector stores, and the
+teardown); the rationale + verification ladder is in
+[`docs/architecture/deployment-and-verification.md`](docs/architecture/deployment-and-verification.md),
+and the live inventory + idle-cost view is the
+[infrastructure lens](docs/architecture/infrastructure.md).
+
+**Teardown is a feature — mind the idle cost.** Two managed stores carry **standing
+cost even while idle** (neither scales to zero): **Neptune Serverless** (the
+min-NCU floor is the dominant idle line) and the **single-node OpenSearch domain**
+(`t3.small.search` + a small EBS volume); the `bedrock-runtime` interface endpoint
+also bills hourly per AZ. There is **no NAT gateway** (egress is via VPC endpoints),
+so that hourly cost is avoided. `scripts/destroy.sh` removes every billable
+resource, and a `$150/mo` Budgets alarm guards the cloned-and-forgotten footgun.
+Verify the exact figures against current AWS pricing (it drifts) — see the
+[infrastructure lens](docs/architecture/infrastructure.md#standing-idle-cost-posture).
 
 ## Develop
 
