@@ -20,6 +20,7 @@ docs/specs/<feature>/
 | Spec | Status | Constrained by | Notes |
 | --- | --- | --- | --- |
 | [`graph-ingestion-resolution`](graph-ingestion-resolution/spec.md) | Implementing | ADR-0001, ADR-0002, ADR-0003 | Slice 1 (lead). Graph ingest + cross-source resolution + CLI + slice-1 IaC. AC9 (live deploy) deferred. |
+| [`hybrid-orchestration`](hybrid-orchestration/spec.md) | Implementing | ADR-0001, ADR-0002, ADR-0003 | Slice 3. Seed-and-expand hybrid in the in-VPC query Lambda (IAM-auth Function URL) + three-mode comparison runner + consolidated showcase set + presenter script; Bedrock Claude synthesis via boto3 Converse. Offline ACs (1–8, 10) met + reviewed; `cdk synth` validates the IaC; AC9 (live smoke) deferred — `hybrid-orchestration-live-deploy` (Docker not available to build the ingestion image). |
 
 ## Shipped specs (archived)
 
