@@ -5,6 +5,7 @@ installed-version = "0.4.14"
 source = "agent-ready-repo"
 install-route = "cli"
 scope = "repo"
+target-file = "~/.claude/settings.json"
 primitives = ["skill", "agent", "hook-body", "hook-wiring", "command"]
 
 [pack.core.files]
@@ -75,3 +76,29 @@ primitives = ["skill", "agent", "hook-body", "hook-wiring", "command"]
 "tools/hooks/pre-pr.py" = { from-pack-version = "0.4.14", sha = "454c9e7569c469366bbcae169d76a11a7318b416f03f44a4f97f7bc75e69218f" }
 "tools/hooks/session-start.py" = { from-pack-version = "0.4.14", sha = "7b8f7cea36c299a5e95cd6b7b921584a923c8fc2ca0ef1392a5af0af65275148" }
 "tools/hooks/work-loop-check.py" = { from-pack-version = "0.4.14", sha = "4eb8ac550f8b253318b374feb277a2060825d428e39a098180891eeaa89906db" }
+
+[pack.governance-extras]
+installed-version = "0.3.1"
+source = "agent-ready-repo"
+install-route = "cli"
+scope = "repo"
+primitives = ["skill"]
+
+[pack.governance-extras.files]
+".claude/skills/new-adr/SKILL.md" = { from-pack-version = "0.3.1", sha = "29b5a2ff471c52ad75c6ee576f0241766988f323183edce6f4774a62d02ed0e5" }
+".claude/skills/new-adr/assets/adr.md" = { from-pack-version = "0.3.1", sha = "2c70e2753c08f0132e85e2cb14558236c1b609a527090a719b9755ed7a9568e1" }
+".claude/skills/new-adr/evals/eval_queries.json" = { from-pack-version = "0.3.1", sha = "1e456a2d7425acda17f612674e6006a51e9ca5376b08ee9765ce2e2428082ff5" }
+".claude/skills/new-adr/evals/evals.json" = { from-pack-version = "0.3.1", sha = "2a5b3174f4a0921feada060ba68a591c9a35c7d8e5e6c54a9d6b343ab185a2ac" }
+".claude/skills/new-adr/scripts/next-ordinal.py" = { from-pack-version = "0.3.1", sha = "8e2ff7e94d0539664bb63c44b9fbc97829247b6c687e48af94615c1110e2e6d5" }
+".claude/skills/new-adr/scripts/test_next_ordinal.py" = { from-pack-version = "0.3.1", sha = "6da9bc63bf96fa363db232faf200357737ed9f4427b81972ce1d99c527ba61c4" }
+".claude/skills/new-rfc/SKILL.md" = { from-pack-version = "0.3.1", sha = "d2176b6929b92cecc48f9a48bf1d2c5c6f19a4f75fb82a784636d79dd7409c9d" }
+".claude/skills/new-rfc/assets/rfc.md" = { from-pack-version = "0.3.1", sha = "00aa73eb6ef34aa9714fdfbb5437e51cdb442fff43be01c245133079e492a94f" }
+".claude/skills/new-rfc/evals/eval_queries.json" = { from-pack-version = "0.3.1", sha = "966d1f696d28bfd2017fd79a1a9ea0f35fa837a4c5fba59b7e9c09103c4bc33b" }
+".claude/skills/new-rfc/evals/evals.json" = { from-pack-version = "0.3.1", sha = "3aa10de130bf562127ed36de49b1b764ba770ac8c31cbf2786cb66841c46bc20" }
+".claude/skills/new-rfc/scripts/next-ordinal.py" = { from-pack-version = "0.3.1", sha = "8e2ff7e94d0539664bb63c44b9fbc97829247b6c687e48af94615c1110e2e6d5" }
+".claude/skills/new-rfc/scripts/test_next_ordinal.py" = { from-pack-version = "0.3.1", sha = "6da9bc63bf96fa363db232faf200357737ed9f4427b81972ce1d99c527ba61c4" }
+".claude/skills/update-conventions/SKILL.md" = { from-pack-version = "0.3.1", sha = "18c1e9c50949929bab8d577e8f4c376247c0544070991b0a649a64e2923b0b24" }
+".claude/skills/update-conventions/evals/eval_queries.json" = { from-pack-version = "0.3.1", sha = "eaded1c461f7d1973d81be822fad4eafbdb531e6859db2309d891fab061251e0" }
+".claude/skills/update-conventions/evals/evals.json" = { from-pack-version = "0.3.1", sha = "fb6977c38c24e8cbe00e2617bcd2dc85ac74b680bcb89a210e00e0776110bed9" }
+"docs/adr/README.md" = { from-pack-version = "0.3.1", sha = "352675373ba14082dcb9fc09fa6d6a2a779525e788366d1562df739e9c8a0ee9" }
+"docs/rfc/README.md" = { from-pack-version = "0.3.1", sha = "ca57880a10e58d3913e8788d6e5a773a9ec49961cbc24efc0d140d40d99e07a7" }
