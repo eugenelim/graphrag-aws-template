@@ -19,7 +19,7 @@ docs/specs/<feature>/
 
 | Spec | Status | Constrained by | Notes |
 | --- | --- | --- | --- |
-<!-- no specs yet -->
+| [`graph-ingestion-resolution`](graph-ingestion-resolution/spec.md) | Implementing | ADR-0001, ADR-0002, ADR-0003 | Slice 1 (lead). Graph ingest + cross-source resolution + CLI + slice-1 IaC. AC9 (live deploy) deferred. |
 
 ## Shipped specs (archived)
 

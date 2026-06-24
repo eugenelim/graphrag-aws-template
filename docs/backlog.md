@@ -30,7 +30,24 @@ rots. See `CONVENTIONS.md` § 4 (Spec metadata contract).
 
 ---
 
-<!-- no deferred items yet -->
+## graph-ingestion-resolution
+
+- <a id="graph-ingestion-resolution-live-deploy"></a>**AC9 (deferred:
+  graph-ingestion-resolution-live-deploy):** Live-AWS verification of one-command
+  `deploy`/`destroy` — that `cdk deploy` provisions the slice-1 stack, uploads the
+  corpus snapshot, and runs the ingestion task once; that `cdk destroy` leaves **no
+  billable resource**; and that the Budgets alarm actually fires. Blocked on a live
+  AWS account (this PR ships and synth-tests the IaC, but cannot deploy from CI).
+  Unblocked by a maintainer running the documented deploy/destroy on a clean
+  account and recording the teardown smoke-check result.
+- <a id="graph-ingestion-resolution-full-corpus-eval"></a>**AC5 follow-on
+  (deferred: graph-ingestion-resolution-full-corpus-eval):** Run the resolver eval
+  over a *full* clone of `kubernetes/community` + `kubernetes/enhancements` (not the
+  pinned real-excerpt sample committed for CI) and record the precision/recall on
+  the complete shared-entity set. The committed CI eval (AC5) already runs over
+  real, pinned repo excerpts — this extends the open confirmation to the whole
+  corpus. Unblocked by `graphrag resolve-eval --corpus <full-clone>` with a labeled
+  sample of the full handle/slug set.
 
 <!-- Add one section per spec with open work, e.g.:
 

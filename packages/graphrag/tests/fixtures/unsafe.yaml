@@ -1,0 +1,4 @@
+# Security negative fixture (AC1 / Sec-1): a YAML payload with a Python object
+# tag. yaml.safe_load must refuse to construct it; the unsafe yaml.load/FullLoader
+# would instantiate an object at parse time — RCE inside the Fargate task.
+danger: !!python/object/apply:os.system ["echo pwned"]

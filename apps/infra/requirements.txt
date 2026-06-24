@@ -1,0 +1,3 @@
+# IaC toolchain for the CDK app (also available via the root `infra` extra).
+aws-cdk-lib>=2.140
+constructs>=10.3

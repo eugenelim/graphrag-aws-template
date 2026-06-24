@@ -1,0 +1,20 @@
+# Real excerpt — kubernetes/enhancements KEP-1287 (author list trimmed).
+# Owned by sig-node, so it must NOT appear in "KEPs the SIG @thockin tech-leads
+# owns" (thockin tech-leads sig-network, not sig-node) — even though @thockin
+# approves it. The negative case that proves the traversal scopes correctly.
+title: In-place Update of Pod Resources
+kep-number: 1287
+authors:
+  - "@vinaykul"
+  - "@tallclair"
+owning-sig: sig-node
+status: implemented
+reviewers:
+  - "@dchen1107"
+  - "@derekwaynecarr"
+approvers:
+  - "@dchen1107"
+  - "@derekwaynecarr"
+  - "@thockin"
+stage: stable
+latest-milestone: "v1.35"

@@ -1,0 +1,15 @@
+# Real excerpt — kubernetes/enhancements KEP-1880. Author @aojea is also a
+# sig-network tech_lead in community/sigs.yaml — a cross-source shared entity.
+title: Multiple Service CIDRs
+kep-number: 1880
+authors:
+  - "@aojea"
+owning-sig: sig-network
+status: implementable
+reviewers:
+  - "@thockin"
+approvers:
+  - "@thockin"
+  - "@lavalamp"
+stage: beta
+latest-milestone: "v1.31"

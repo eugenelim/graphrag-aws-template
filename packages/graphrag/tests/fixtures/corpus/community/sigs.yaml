@@ -1,0 +1,47 @@
+# Trimmed real excerpt of kubernetes/community sigs.yaml (sig-network + sig-node).
+# See ../../README.md for provenance. Leadership handles + subproject names are
+# verbatim from the source; the file is cut to two SIGs for a deterministic test.
+sigs:
+  - dir: sig-network
+    name: Network
+    label: network
+    leadership:
+      chairs:
+        - github: bowei
+          name: Bowei Du
+        - github: guicassolato
+          name: Guilherme Cassolato
+      tech_leads:
+        - github: aojea
+          name: Antonio Ojea
+        - github: danwinship
+          name: Dan Winship
+        - github: thockin
+          name: Tim Hockin
+    subprojects:
+      - name: external-dns
+        owners:
+          - https://raw.githubusercontent.com/kubernetes-sigs/external-dns/master/OWNERS
+      - name: kube-proxy
+        owners:
+          - https://raw.githubusercontent.com/kubernetes/kubernetes/master/pkg/proxy/OWNERS
+  - dir: sig-node
+    name: Node
+    label: node
+    leadership:
+      chairs:
+        - github: SergeyKanzhelev
+          name: Sergey Kanzhelev
+        - github: mrunalp
+          name: Mrunal Patel
+      tech_leads:
+        - github: dchen1107
+          name: Dawn Chen
+        - github: derekwaynecarr
+          name: Derek Carr
+        - github: mrunalp
+          name: Mrunal Patel
+    subprojects:
+      - name: cri-api
+        owners:
+          - https://raw.githubusercontent.com/kubernetes/cri-api/master/OWNERS
