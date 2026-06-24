@@ -44,10 +44,28 @@ npm install -g aws-cdk      # the cdk CLI (Node)
 # AWS credentials reachable (env vars, SSO, or a profile). Region defaults to us-east-1.
 ```
 
+### Configuration: parameters vs. logic
+
+The scripts hold only **logic**; every tunable lives in
+[`scripts/config.env`](scripts/config.env) — the single declarative source of build
+parameters and resource names (stack name, region, governance-tag defaults, the SLR
+service list, operational knobs). Per-deployer values that must **not** be committed (the
+required `BUDGET_EMAIL`, an optional account-specific `INVOKER_ROLE_ARN`) go in a
+**gitignored** `scripts/config.local.env`:
+
+```bash
+cp scripts/config.local.env.example scripts/config.local.env   # then edit BUDGET_EMAIL
+```
+
+Precedence is **explicit env var > `config.local.env` > `config.env`**, so a one-off
+override still works: `BUDGET_EMAIL=you@example.com scripts/deploy.sh`. (The `config.local.env`
+is *sourced* — treat it as trusted shell, like the scripts themselves.)
+
 ### 1. Deploy
 
 ```bash
-BUDGET_EMAIL=you@example.com DEPLOY_ENV=demo DEPLOY_DEPARTMENT=<dept> \
+# BUDGET_EMAIL from config.local.env, or inline as a one-off:
+BUDGET_EMAIL=you@example.com DEPLOY_DEPARTMENT=<dept> \
   scripts/deploy.sh          # cdk bootstrap (idempotent) + deploy; blocks until done
 
 scripts/status.sh            # optional: ONE status check (expect CREATE_COMPLETE) — never loop
