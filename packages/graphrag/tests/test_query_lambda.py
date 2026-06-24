@@ -20,6 +20,7 @@ import pytest
 from graphrag import query_lambda
 from graphrag.chunk import Chunk
 from graphrag.model import Direction, Edge, EdgeKind, EntityKind, Node
+from graphrag.store.base import GraphStore
 from graphrag.store.vector_base import EmbeddedChunk, VectorHit
 
 
@@ -61,7 +62,7 @@ class _FakeVectorStore:
     def delete(self, ids: list[str]) -> None: ...
 
 
-class _FakeGraphStore:
+class _FakeGraphStore(GraphStore):
     def __init__(self, *a: Any, **k: Any) -> None:
         self._nodes = {
             "person:thockin": Node("person:thockin", EntityKind.PERSON),

@@ -151,13 +151,18 @@ def expand_neighborhood(
 
     The graph-side twin of ``traverse``: where ``traverse`` follows a fixed
     edge-kind/direction path, this gathers the whole neighborhood (every ``EdgeKind`` ×
-    ``Direction`` over ``neighbors()``), so seed-and-expand collects structural facts
-    around a seed without naming the path. It runs in the application layer over
-    ``neighbors()`` so the in-memory and Neptune backends produce an identical trace.
+    ``Direction``), so seed-and-expand collects structural facts around a seed without
+    naming the path. It expands over the ``GraphStore.neighbors_batch`` seam — a default
+    app-layer fan-out over ``neighbors()`` (in-memory) or a backend-batched query
+    (Neptune) — and **sorts** the reached set + edge kinds each hop, so the trace is
+    identical regardless of which backend or what order the store returns edges in.
 
     Bounds (ADR-0001): a hop whose newly-reached frontier exceeds ``frontier_cap`` is
-    truncated and the truncation recorded; an empty seed set expands to nothing.
-    Returns the reached node IDs (cumulative, excluding the seeds) and the per-hop trace.
+    truncated and the truncation recorded. Because the reached set is **sorted before**
+    the cap, the surviving nodes are the lexicographically-smallest IDs (a deterministic
+    set), not the first-discovered ones — the price of a backend-independent trace. An
+    empty seed set expands to nothing. Returns the reached node IDs (cumulative,
+    excluding the seeds) and the per-hop trace.
     """
     seeds = _dedupe(seed_ids)
     result = NeighborhoodResult(seed_ids=seeds)
@@ -167,21 +172,19 @@ def expand_neighborhood(
     for hop in range(1, max_hops + 1):
         if not frontier:
             break
-        reached: list[str] = []
-        contributing: list[EdgeKind] = []
-        for node_id in frontier:
-            for edge_kind in EdgeKind:
-                for direction in (Direction.OUT, Direction.IN):
-                    for neighbor in store.neighbors(node_id, edge_kind, direction):
-                        if neighbor.id not in visited and neighbor.id not in reached:
-                            reached.append(neighbor.id)
-                            if edge_kind not in contributing:
-                                contributing.append(edge_kind)
-                        elif neighbor.id in reached and edge_kind not in contributing:
-                            contributing.append(edge_kind)
-        truncated = len(reached) > frontier_cap
-        if truncated:
-            reached = reached[:frontier_cap]
+        # One batched fetch per hop (Neptune: two openCypher queries; in-memory: a
+        # fan-out over neighbors()). The reached set + contributing edge kinds are
+        # sorted before recording, so the trace is deterministic and identical across
+        # backends regardless of the order the store returns edges in.
+        edges = store.neighbors_batch(frontier)
+        newly = {e.neighbor.id for e in edges if e.neighbor.id not in visited}
+        truncated = len(newly) > frontier_cap
+        reached = sorted(newly)[:frontier_cap]
+        reached_set = set(reached)
+        contributing = sorted(
+            {e.edge_kind for e in edges if e.neighbor.id in reached_set},
+            key=lambda k: k.value,
+        )
         result.trace.append(
             NeighborhoodTrace(
                 hop=hop,

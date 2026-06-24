@@ -95,9 +95,13 @@ failure & resilience, dependencies & integration. Stack derived from the establi
   (`get_node`), recording dropped candidates. *Rejected:* loading a full `all_nodes()` catalog
   per call — `get_node` membership is cheaper and the dropped-candidate record makes a misseed
   visible (ADR-0001 mitigation).
-- **Expansion is undirected-over-all-edge-kinds, in the app layer.** `expand_neighborhood`
-  iterates `EdgeKind` × `Direction` over `neighbors()`. *Rejected:* a new openCypher path — it
-  would diverge the backends (slice-1 invariant) and isn't needed at demo scale.
+- **Expansion is undirected-over-all-edge-kinds, behind the `GraphStore.neighbors_batch` seam.**
+  `expand_neighborhood` calls `neighbors_batch(frontier)` once per hop; the **default** fans out
+  `EdgeKind` × `Direction` over `neighbors()` (in-memory) and Neptune **overrides** it with one
+  batched openCypher query per direction. *(Revised post-live-deploy: the original per-edge-kind
+  fan-out over `neighbors()` timed out against Neptune Serverless — backlog
+  `hybrid-orchestration-live-deploy`; the override is safe because `expand_neighborhood` sorts the
+  reached set + edge kinds, keeping the trace byte-identical across backends.)*
 - **Three modes run independently in the runner; hybrid alone dual-seeds.** Matches ADR-0001's
   boundary (pedagogy vs. internal orchestration).
 - **Configurable synthesis model id.** Resolves the design-doc open question as a *default*
@@ -421,8 +425,12 @@ Per the design doc's phased rollout, slice 3 extends the **same** IaC stack:
 
 - **Declined:** the `anthropic` SDK — boto3 `bedrock-runtime` Converse already does synthesis, and
   the SDK is absent from the Lambda runtime / pure-Python bundle ("dependencies are forever").
-- **Declined:** pushing expansion into openCypher — it would diverge the in-memory/Neptune traces
-  (slice-1 invariant).
+- **Reversed post-live-deploy (was "Declined"):** a batched openCypher expansion. Originally
+  declined to keep the backends trace-identical, but the per-edge-kind fan-out over `neighbors()`
+  timed out against Neptune Serverless at demo time (backlog `hybrid-orchestration-live-deploy`).
+  Resolved by `GraphStore.neighbors_batch` (default fan-out + Neptune-batched override) with
+  `expand_neighborhood` **sorting** the reached set, so the trace stays byte-identical — the
+  invariant is preserved by sort, not by forbidding the override.
 - **Declined:** a public unauthenticated Function URL for demo convenience — IAM auth is the only
   acceptable ingress (ADR-0002).
 - **Surfaced assumption:** the exact Bedrock Claude model/inference-profile string + model access

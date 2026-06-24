@@ -43,3 +43,17 @@ def test_get_node_and_all() -> None:
     assert s.get_node("missing") is None
     assert len(s.all_nodes()) == 3
     assert len(s.all_edges()) == 2
+
+
+def test_neighbors_batch_default_fanout_all_kinds_both_directions() -> None:
+    s = _store()
+    # sig:sig-network has an OUT OWNS->kep-2086 and an IN TECH_LEADS<-person:thockin.
+    edges = s.neighbors_batch(["sig:sig-network"])
+    seen = {(e.direction, e.edge_kind, e.neighbor.id) for e in edges}
+    assert (Direction.OUT, EdgeKind.OWNS, "kep-2086") in seen
+    assert (Direction.IN, EdgeKind.TECH_LEADS, "person:thockin") in seen
+    assert all(e.src_id == "sig:sig-network" for e in edges)
+
+
+def test_neighbors_batch_empty_frontier() -> None:
+    assert _store().neighbors_batch([]) == []
