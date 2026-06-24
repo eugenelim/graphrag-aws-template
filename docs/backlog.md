@@ -60,17 +60,30 @@ handle/slug set.
 
 ### hybrid-orchestration-live-deploy
 
-**AC9 (deferred).** Corpus-backed live hybrid-query smoke — deploy the stack, run the Fargate
-dual-write to index the corpus into the live Neptune + OpenSearch, then SigV4-POST a curated
-entity-led question to the IAM-auth Function URL and assert an answer + citations + a seed/hop
-trace whose seeds include the question-linked entity; then `cdk destroy`. AWS creds, CDK
-bootstrap, and Bedrock access to `us.anthropic.claude-sonnet-4-6` are all confirmed, and the IaC
-**`cdk synth`-validates** (the real template carries the `AWS_IAM` Function URL, the
-named-principal invoke grant, and the Bedrock grant scoped to the `inference-profile` +
-`foundation-model` ARNs). Blocked **only** on building the Fargate ingestion image, which needs a
-**Docker daemon not available in the build environment**. Unblocked by a maintainer running
-`apps/infra/scripts/deploy.sh` on a host with Docker, the documented dual-write + Function-URL
-invocation, and recording the result in `deployment-and-verification.md`.
+**AC9 (deferred) — blocked on a live perf fix, not on infra.** The stack was deployed live
+(2026-06-24, `CREATE_COMPLETE`) and the **Fargate dual-write passed end-to-end** — graph
+(22 nodes / 28 edges / 6 cross-source merges incl. `person:thockin`, `sig:sig-network`) + vector
+(13 chunks via live Bedrock Titan); the slice-1 Neptune smoke probe returned `{"ok": true}`; and
+`cdk synth` validated the `AWS_IAM` Function URL + named-principal invoke grant + the Bedrock
+grant scoped to the `inference-profile` + `foundation-model` ARNs. **What's left:** the live
+hybrid query itself — the query Lambda **times out at its 120s budget** (CloudWatch `Duration`
+max = 120000 ms) running *successful* work, because `query.expand_neighborhood` makes
+`O(frontier × 6 edge-kinds × 2 directions)` **sequential** `neighbors()` openCypher round-trips
+per hop — instant in-memory, but hundreds of slow sequential queries against **Neptune Serverless
+at minimum NCU**. Unblocked by the perf fix below, then a redeploy + the SigV4 Function-URL
+invocation recorded in `deployment-and-verification.md`. (The `deploy.sh` `InvokerRoleArn`
+parameter gap found during this run is **already fixed** in the slice-3 PR.)
+
+**Fix — batch the neighbor fetch (the unblocker).** Add a batched neighbor method to `GraphStore`
+(one openCypher query per hop for the whole frontier — the `all_edges()` MATCH shape with a
+parameterized `$ids` list, both directions), with a **default app-layer fan-out over `neighbors()`**
+so `MemoryGraphStore` and the per-hop trace stay byte-identical; refactor `expand_neighborhood` to
+consume it; give the CLI's `--function-url` client a longer, configurable read timeout (it
+currently inherits the Neptune adapter's hard-coded 30s, too short for a multi-step hybrid query).
+This is a structural change to the store seam (Neptune openCypher = injection surface) and warrants
+its own adversarial + security review before merge. Then redeploy, run the dual-write, SigV4-POST
+*"Which KEPs does the SIG @thockin tech-leads own?"* to the `QueryFunctionUrl`, confirm an answer +
+citations + a dual-seed trace whose `question` seeds include `person:thockin`, and `cdk destroy`.
 
 <!-- Add one section per spec with open work, e.g.:
 
