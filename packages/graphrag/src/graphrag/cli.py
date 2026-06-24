@@ -22,14 +22,22 @@ from .store.base import GraphStore
 from .store.memory import MemoryGraphStore
 
 
-def _build_store(args: argparse.Namespace) -> GraphStore:
-    """Build the target store — Neptune if an endpoint is given, else in-memory."""
+def _target_store(args: argparse.Namespace) -> GraphStore:
+    """The destination store — a Neptune adapter if an endpoint is given, else a
+    fresh in-memory store. (One place owns the lazy, deploy-only Neptune import.)"""
     if getattr(args, "neptune_endpoint", None):
         from .store.neptune import NeptuneGraphStore  # imported lazily (deploy-only path)
 
         return NeptuneGraphStore(args.neptune_endpoint, args.region)
-    store = MemoryGraphStore()
-    ingest(Path(args.community), Path(args.enhancements), store)
+    return MemoryGraphStore()
+
+
+def _populated_store(args: argparse.Namespace) -> GraphStore:
+    """A store ready to query — Neptune as-is (already ingested), or in-memory
+    populated by ingesting the corpus now."""
+    store = _target_store(args)
+    if isinstance(store, MemoryGraphStore):
+        ingest(Path(args.community), Path(args.enhancements), store)
     return store
 
 
@@ -58,19 +66,14 @@ def _parse_steps(spec: str) -> list[Step]:
 
 
 def _cmd_ingest(args: argparse.Namespace) -> int:
-    store = MemoryGraphStore()
-    if getattr(args, "neptune_endpoint", None):
-        from .store.neptune import NeptuneGraphStore
-
-        store = NeptuneGraphStore(args.neptune_endpoint, args.region)  # type: ignore[assignment]
-    report = ingest(Path(args.community), Path(args.enhancements), store)
+    report = ingest(Path(args.community), Path(args.enhancements), _target_store(args))
     print(report.render())
     return 0
 
 
 def _cmd_graph_query(args: argparse.Namespace) -> int:
     aliases = load_aliases()
-    store = _build_store(args)
+    store = _populated_store(args)
     seed = _seed_id(args.start, args.start_kind, aliases)
     steps = _parse_steps(args.steps)
     result = traverse(store, [seed], steps, max_hops=args.max_hops)

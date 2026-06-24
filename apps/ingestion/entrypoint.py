@@ -35,6 +35,7 @@ class S3Client(Protocol):
 
 def download_corpus(bucket: str, prefix: str, dest: Path, s3_client: S3Client) -> tuple[Path, Path]:
     """Download every object under ``prefix`` into ``dest``, preserving layout."""
+    dest_root = dest.resolve()
     token: str | None = None
     while True:
         kwargs: dict[str, Any] = {"Bucket": bucket, "Prefix": prefix}
@@ -46,7 +47,11 @@ def download_corpus(bucket: str, prefix: str, dest: Path, s3_client: S3Client) -
             if key.endswith("/"):
                 continue
             rel = key[len(prefix) :].lstrip("/")
-            target = dest / rel
+            # Confine the write to dest: a poisoned snapshot key like
+            # "snap/../../etc/x" must not escape the temp dir (CWE-22/CWE-23).
+            target = (dest_root / rel).resolve()
+            if not rel or not target.is_relative_to(dest_root):
+                raise ValueError(f"refusing S3 key that escapes the corpus dir: {key!r}")
             target.parent.mkdir(parents=True, exist_ok=True)
             s3_client.download_file(bucket, key, str(target))
         if not resp.get("IsTruncated"):

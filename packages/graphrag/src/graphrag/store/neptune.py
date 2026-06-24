@@ -76,7 +76,11 @@ def _scalar_props(props: dict[str, object]) -> dict[str, object]:
 
 
 def _node_from_result(obj: dict[str, Any]) -> Node:
+    # sources/edge-props are intentionally not round-tripped from Neptune — the
+    # live local≡Neptune trace-identity claim is the deferred AC9, not this slice.
     props = dict(obj.get("~properties", {}))
+    if "id" not in props or "kind" not in props:
+        raise RuntimeError(f"Neptune node result missing id/kind: {obj!r}")
     node_id = str(props.pop("id"))
     kind = EntityKind(str(props.pop("kind")))
     return Node(id=node_id, kind=kind, props=props)

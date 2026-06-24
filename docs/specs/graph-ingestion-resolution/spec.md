@@ -222,8 +222,18 @@ Gates: `ruff` (lint+format, with the `S` security ruleset), `mypy` (typecheck),
 
 ## Changelog
 
-- 2026-06-23 — Spec authored (slice 1, lead). Revised after spec-stage adversarial
-  + security review (ADR-0003 added; AC9/full-corpus deferrals anchored in backlog;
-  `yaml.safe_load`, least-privilege role, no-public-Neptune, S3-block-public,
-  Budgets-threshold, parameterized-openCypher + TLS/credential controls pinned as
-  ACs; AC10 tightened to trace structure). Status: Approved.
+- 2026-06-23 — Spec authored (slice 1, lead), then `Approved` after spec-stage
+  adversarial + security review (ADR-0003 added; AC9/full-corpus deferrals anchored
+  in backlog; `yaml.safe_load`, least-privilege role, no-public-Neptune,
+  S3-block-public, Budgets-threshold, parameterized-openCypher + TLS/credential
+  controls pinned as ACs; AC10 tightened to trace structure).
+- 2026-06-23 — `Implementing`: slice built; AC1–AC8 and AC10 met (53 tests + ruff/
+  mypy green); diff-stage review fixes applied (S3-key path-traversal guard,
+  Neptune malformed-result guard, IaC no-public-ingress / TLS-bucket-policy /
+  wildcard-resource synth assertions).
+
+**Why Status stays `Implementing`, not `Shipped`:** every offline-verifiable AC is
+met, but the slice's product *is* a deployable stack and AC9 (live `cdk
+deploy`/`destroy` + teardown smoke check) cannot be verified from CI — it is
+deferred to `graph-ingestion-resolution-live-deploy`. The spec moves to `Shipped`
+when a maintainer records that live verification.

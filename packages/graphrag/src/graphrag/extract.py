@@ -131,7 +131,10 @@ def _extract_kep_readme(
 ) -> None:
     p = doc.payload
     md = doc.markdown
-    kid = kep_id(str(p["dir_number"]))
+    number = p.get("dir_number")
+    if number is None:  # one malformed doc must not fail the whole ingest (AC1)
+        return
+    kid = kep_id(str(number))
     title = md.headings[0].lstrip("# ").strip() if md and md.headings else None
     nodes.append(Node(kid, EntityKind.KEP, props={"title": title}, sources={ENHANCEMENTS}))
 

@@ -63,6 +63,33 @@ def test_trace_structure_is_ordered_seed_hop_result(
     assert rendered.index("hop 1") < rendered.index("hop 2") < rendered.index("result:")
 
 
+def test_frontier_cap_truncates_and_records_it() -> None:
+    from graphrag.model import Edge, EntityKind, Node
+    from graphrag.store import MemoryGraphStore
+
+    store = MemoryGraphStore()
+    store.upsert_node(Node("sig:x", EntityKind.SIG))
+    for i in range(5):
+        store.upsert_node(Node(f"kep-{i}", EntityKind.KEP))
+        store.upsert_edge(Edge("sig:x", f"kep-{i}", EdgeKind.OWNS))
+
+    result = traverse(store, ["sig:x"], [(EdgeKind.OWNS, Direction.OUT)], frontier_cap=3)
+    assert len(result.result_ids) == 3
+    assert result.trace[-1].truncated is True
+    assert "[frontier truncated]" in result.render()
+
+
+def test_missing_seed_yields_legible_empty_result(
+    community_root: Path, enhancements_root: Path
+) -> None:
+    store = _store(community_root, enhancements_root)
+    result = traverse(store, ["person:nobody"], [(EdgeKind.TECH_LEADS, Direction.OUT)])
+    assert result.result_ids == []
+    rendered = result.render()
+    assert "seeds: person:nobody" in rendered
+    assert "result: (none)" in rendered  # nothing-matched stays legible, not blank
+
+
 def test_hop_cap_enforced(community_root: Path, enhancements_root: Path) -> None:
     store = _store(community_root, enhancements_root)
     with pytest.raises(ValueError, match="exceeds max_hops"):

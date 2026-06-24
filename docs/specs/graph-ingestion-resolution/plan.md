@@ -78,8 +78,9 @@ out of scope here (a Boundaries rail).
   the run (a real corpus has messy docs — de-risk verdict noted pre-`kep.yaml`
   KEPs carry prose-only metadata).
 - A KEP whose `owning-sig` slug has no matching SIG node → create the edge to a
-  thin SIG node (forward reference), logged; resolution still single-nodes it when
-  the SIG is seen.
+  thin SIG node (forward reference); resolution single-nodes it when the SIG is
+  seen, and a typo'd slug surfaces as a SIG node absent from the ingest report's
+  cross-source-merge list (visible, not silently swallowed).
 - Neptune adapter: non-2xx → raise with the response body in the message (loud,
   per ADR-0002's "fail loudly, not silent timeouts"); retries are out of scope.
 

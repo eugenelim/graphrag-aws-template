@@ -133,3 +133,12 @@ def test_non_2xx_raises_loudly_with_body() -> None:
     store = _store(http)
     with pytest.raises(RuntimeError, match="Neptune openCypher 400: BadRequest"):
         store.get_node("x")
+
+
+def test_malformed_node_result_raises_with_context() -> None:
+    # A row missing id/kind must fail loudly (naming the shape), not KeyError.
+    bad = {"results": [{"n": {"~properties": {"name": "no id or kind here"}}}]}
+    http = RecordingHttp([HttpResponse(200, json.dumps(bad))])
+    store = _store(http)
+    with pytest.raises(RuntimeError, match="missing id/kind"):
+        store.get_node("x")

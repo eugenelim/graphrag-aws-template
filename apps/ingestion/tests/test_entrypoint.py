@@ -29,6 +29,22 @@ class FakeS3:
         shutil.copyfile(self._files[Key], Filename)
 
 
+def test_download_rejects_keys_that_escape_dest(tmp_path: Path) -> None:
+    import pytest
+
+    from ingestion.entrypoint import download_corpus
+
+    class EvilS3:
+        def list_objects_v2(self, **kwargs: Any) -> dict[str, Any]:
+            return {"Contents": [{"Key": "snap/../../../../tmp/evil.txt"}], "IsTruncated": False}
+
+        def download_file(self, Bucket: str, Key: str, Filename: str) -> None:  # noqa: N803
+            raise AssertionError("must not download a path-traversal key")
+
+    with pytest.raises(ValueError, match="escapes the corpus dir"):
+        download_corpus("b", "snap/", tmp_path, EvilS3())
+
+
 def test_entrypoint_downloads_and_ingests() -> None:
     store = MemoryGraphStore()
     report = run(

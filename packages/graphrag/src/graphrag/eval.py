@@ -46,8 +46,19 @@ def _predicted_id(raw: str, kind: str, aliases: dict[str, str]) -> str:
 
 
 def load_labeled_sample(path: Path) -> list[dict[str, str]]:
+    """Load mentions from a labeled-sample YAML, validating required keys.
+
+    Each mention needs ``raw`` and ``gold`` (``kind`` defaults to ``person``;
+    ``source`` is provenance annotation only, not scored). Raises a row-numbered
+    ``ValueError`` so a hand-edited sample fails legibly, not with a bare KeyError.
+    """
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    return list(data.get("mentions", []))
+    mentions = list(data.get("mentions", []))
+    for i, m in enumerate(mentions):
+        missing = {"raw", "gold"} - set(m)
+        if missing:
+            raise ValueError(f"labeled sample row {i} missing {sorted(missing)}: {m!r}")
+    return mentions
 
 
 def evaluate(mentions: list[dict[str, str]], aliases: dict[str, str]) -> EvalResult:

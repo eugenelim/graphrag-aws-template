@@ -9,6 +9,9 @@
 # "Bowei Du") that the alias table does NOT cover — so the resolver genuinely
 # misses them (false negatives) and the metric has teeth rather than being a
 # constructed 1.0. The de-risk verdict's bar is ≥0.80, not perfection.
+#
+# `source` is provenance annotation (which repo the form came from); it is NOT an
+# eval input — scoring uses only `raw`, `kind`, and `gold`.
 mentions:
   # --- thockin: handle in both sources, plus capitalized + prose (aliased) ---
   - { raw: "@thockin", source: enhancements, gold: thockin }      # KEP approver

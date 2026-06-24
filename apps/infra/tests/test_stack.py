@@ -91,23 +91,69 @@ def test_budget_alarm_has_threshold_and_subscriber(template: Template) -> None:
     )
 
 
-def test_task_role_is_least_privilege_no_wildcard_resource(template: Template) -> None:
-    # The app's permissions (neptune-db:connect, s3 read) must be scoped to the
-    # specific cluster/bucket — never Resource "*". (The execution role's
-    # ecr:GetAuthorizationToken legitimately needs "*" and is out of this check.)
-    policies = [
-        r["Properties"] for r in _resources(template).values() if r["Type"] == "AWS::IAM::Policy"
-    ]
-    scoped_actions = {"neptune-db:connect", "s3:GetObject", "s3:GetObject*", "s3:GetBucket*"}
+# ecr:GetAuthorizationToken is the one AWS action that legitimately requires
+# Resource "*" (it grants nothing data-plane). Every other action must be scoped.
+_WILDCARD_RESOURCE_ALLOWLIST = {"ecr:GetAuthorizationToken"}
+
+
+def test_no_iam_statement_grants_app_actions_on_wildcard_resource(template: Template) -> None:
+    # Catches a *newly added* wildcard grant, not just the known scoped ones —
+    # any Resource "*" statement may only carry allowlisted actions.
     found_scoped = False
-    for props in policies:
-        for stmt in props["PolicyDocument"]["Statement"]:
-            actions = stmt["Action"] if isinstance(stmt["Action"], list) else [stmt["Action"]]
-            if scoped_actions & set(actions):
-                assert stmt["Resource"] != "*", f"least-privilege violated: {actions} on '*'"
-                found_scoped = True
+    for stmt in _iam_statements(template):
+        actions = _as_list(stmt["Action"])
+        resources = _as_list(stmt["Resource"])
+        if "neptune-db:connect" in actions or any(a.startswith("s3:Get") for a in actions):
+            assert resources != ["*"], f"least-privilege violated: {actions} on '*'"
+            found_scoped = True
+        if "*" in resources:
+            assert set(actions) <= _WILDCARD_RESOURCE_ALLOWLIST, (
+                f"unexpected wildcard-resource grant: {actions}"
+            )
     assert found_scoped, "expected scoped neptune-db:connect / s3 read statements"
+
+
+def test_no_security_group_allows_public_ingress(template: Template) -> None:
+    public = {"0.0.0.0/0", "::/0"}
+
+    def _not_public(value: object) -> None:
+        # Intrinsic (dict/token) CIDRs are not literal public CIDRs; only flag strings.
+        assert not (isinstance(value, str) and value in public), f"public ingress: {value}"
+
+    for res in _resources(template).values():
+        if res["Type"] == "AWS::EC2::SecurityGroup":
+            for rule in res["Properties"].get("SecurityGroupIngress", []):
+                _not_public(rule.get("CidrIp"))
+                _not_public(rule.get("CidrIpv6"))
+        if res["Type"] == "AWS::EC2::SecurityGroupIngress":
+            _not_public(res["Properties"].get("CidrIp"))
+            _not_public(res["Properties"].get("CidrIpv6"))
+
+
+def test_corpus_bucket_enforces_tls(template: Template) -> None:
+    # enforce_ssl=True must synthesize a Deny-on-insecure-transport bucket policy.
+    deny_insecure = False
+    for res in _resources(template).values():
+        if res["Type"] != "AWS::S3::BucketPolicy":
+            continue
+        for stmt in res["Properties"]["PolicyDocument"]["Statement"]:
+            cond = stmt.get("Condition", {}).get("Bool", {})
+            if stmt.get("Effect") == "Deny" and cond.get("aws:SecureTransport") in ("false", False):
+                deny_insecure = True
+    assert deny_insecure, "expected a Deny statement on aws:SecureTransport=false"
 
 
 def _resources(template: Template) -> dict:
     return template.to_json()["Resources"]
+
+
+def _iam_statements(template: Template) -> list[dict]:
+    out: list[dict] = []
+    for res in _resources(template).values():
+        if res["Type"] == "AWS::IAM::Policy":
+            out.extend(res["Properties"]["PolicyDocument"]["Statement"])
+    return out
+
+
+def _as_list(value: object) -> list:
+    return value if isinstance(value, list) else [value]
