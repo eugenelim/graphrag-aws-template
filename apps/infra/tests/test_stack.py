@@ -406,6 +406,27 @@ def test_query_lambda_sg_reaches_neptune_and_opensearch(template: Template) -> N
     assert 443 in ports, "query Lambda SG must reach OpenSearch 443"
 
 
+def test_query_lambda_sg_allows_outbound(template: Template) -> None:
+    # Regression guard (live-deploy finding): the query Lambda is in-VPC COMPUTE that
+    # must initiate outbound to Neptune + OpenSearch + the Bedrock VPC endpoint. A
+    # closed SG (allow_all_outbound=False) silently blocks the first Bedrock call and
+    # hangs the function to its 120s timeout. With no NAT, allow-all egress can only
+    # reach VPC endpoints + in-VPC stores — there is no internet path.
+    query_sgs = [
+        r
+        for r in _resources(template).values()
+        if r["Type"] == "AWS::EC2::SecurityGroup"
+        and "query lambda" in str(r["Properties"].get("GroupDescription", "")).lower()
+    ]
+    assert len(query_sgs) == 1, "expected exactly one query-Lambda SG"
+    egress = query_sgs[0]["Properties"].get("SecurityGroupEgress", [])
+    # allow_all_outbound=True renders as a single 0.0.0.0/0 / protocol -1 allow rule;
+    # the closed shape renders as a 255.255.255.255/32 disallow sentinel.
+    assert any(
+        e.get("CidrIp") == "0.0.0.0/0" and str(e.get("IpProtocol")) == "-1" for e in egress
+    ), f"query Lambda SG must allow outbound (egress={egress})"
+
+
 def test_bedrock_claude_grant_scopes_profile_and_foundation_no_wildcard(
     template: Template,
 ) -> None:
