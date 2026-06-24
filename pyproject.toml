@@ -57,6 +57,9 @@ warn_redundant_casts = true
 no_implicit_optional = true
 disallow_untyped_defs = true
 files = ["packages/graphrag/src", "apps"]
+# cdk synth copies the graphrag package into apps/infra/cdk.out/asset.*/ (the
+# Lambda bundle); exclude it so mypy doesn't see a duplicate `graphrag` module.
+exclude = "(^|/)cdk\\.out/"
 
 [[tool.mypy.overrides]]
 module = ["yaml", "boto3", "boto3.*", "botocore", "botocore.*", "aws_cdk", "aws_cdk.*", "constructs"]

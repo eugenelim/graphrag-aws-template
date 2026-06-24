@@ -262,6 +262,14 @@ class GraphragStack(Stack):
         sg = ec2.SecurityGroup(self, "SmokeSg", vpc=vpc, description="Neptune smoke probe")
         neptune_sg.add_ingress_rule(sg, ec2.Port.tcp(8182), "smoke probe to neptune 8182")
 
+        # Stack-managed log group so `cdk destroy` removes it -- a Lambda's default
+        # /aws/lambda/<fn> group is auto-created and would otherwise survive teardown.
+        log_group = logs.LogGroup(
+            self,
+            "SmokeProbeLogs",
+            retention=logs.RetentionDays.ONE_WEEK,
+            removal_policy=RemovalPolicy.DESTROY,
+        )
         fn = lambda_.Function(
             self,
             "SmokeProbe",
@@ -272,6 +280,7 @@ class GraphragStack(Stack):
             vpc=vpc,
             vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED),
             security_groups=[sg],
+            log_group=log_group,  # not the auto-created /aws/lambda/<fn> group
             environment={"NEPTUNE_ENDPOINT": f"https://{cluster.attr_endpoint}:8182"},
         )
         fn.add_to_role_policy(self._neptune_data_access(cluster))  # scoped; no public URL

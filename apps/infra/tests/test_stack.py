@@ -200,7 +200,18 @@ def test_smoke_probe_is_in_vpc_with_no_public_url(template: Template) -> None:
     ]
     assert len(smoke) == 1, "expected exactly one Neptune smoke Lambda"
     assert "VpcConfig" in smoke[0]["Properties"], "smoke Lambda must be VPC-attached"
+    # LoggingConfig => points at the stack-managed log group, not /aws/lambda/<fn>.
+    assert "LoggingConfig" in smoke[0]["Properties"], "smoke Lambda needs a stack-managed log group"
     template.resource_count_is("AWS::Lambda::Url", 0)  # no public function URL
+
+
+def test_log_groups_are_stack_managed_and_destroyed(template: Template) -> None:
+    # Both explicit log groups (ingestion + smoke probe) must be torn down with the
+    # stack, so destroy leaves nothing behind.
+    groups = {k: r for k, r in _resources(template).items() if r["Type"] == "AWS::Logs::LogGroup"}
+    assert len(groups) >= 2, "expected stack-managed log groups for ingestion + smoke probe"
+    for k, r in groups.items():
+        assert r.get("DeletionPolicy") == "Delete", f"log group {k} must be deleted on destroy"
 
 
 def test_neptune_data_access_actions_present_and_scoped(template: Template) -> None:
