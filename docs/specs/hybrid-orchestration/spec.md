@@ -263,13 +263,16 @@ Already wired into `tools/hooks/pre-pr.py`.
   Against the deployed stack with the corpus dual-written, a **SigV4-signed call to the Function
   URL** runs a curated entity-led question through live OpenSearch + Neptune + Bedrock Claude and
   returns an answer with citations and a seed/hop trace whose seeds include the question-linked
-  entity; recorded in `deployment-and-verification.md`, then the stack is destroyed. The IaC is
-  **`cdk synth`-validated** (the real template carries the `AWS_IAM` Function URL, the named-principal
-  invoke grant, and the Bedrock grant scoped to the `inference-profile` + `foundation-model` ARNs),
-  and Bedrock access to `us.anthropic.claude-sonnet-4-6` is confirmed in the target account; the
-  corpus-backed live run is **blocked only on building the Fargate ingestion image, which needs a
-  Docker daemon not available in this environment** — so it is deferred to the maintainer's
-  deploy/verify/destroy window. *(live smoke)*
+  entity; recorded in `deployment-and-verification.md`, then the stack is destroyed. **Partially
+  verified live (2026-06-24):** the stack deployed (`CREATE_COMPLETE`), the Fargate **dual-write
+  passed end-to-end** (graph 22 nodes/28 edges incl. `person:thockin`/`sig:sig-network` + vector
+  13 chunks via live Bedrock Titan; Neptune smoke probe `ok:true`), and `cdk synth` validated the
+  `AWS_IAM` Function URL + scoped Bedrock grant. **The live hybrid query itself is deferred** —
+  the query Lambda **times out at its 120s budget** because `expand_neighborhood` makes hundreds of
+  sequential `neighbors()` openCypher round-trips per hop against Neptune Serverless (instant
+  in-memory, too slow live). Unblocked by the batched-neighbor perf fix in backlog
+  `hybrid-orchestration-live-deploy`, then a redeploy + the SigV4 Function-URL invocation. *(live
+  smoke)*
 - [x] **AC10 — Consolidated showcase set + presenter script (every stage narratable).** One
   curated showcase query set (`≥5–6 per mode`, each labeled with its intended winning mode and
   the trace highlight) is the single home for the demo's queries; a loader/test asserts it parses
@@ -312,15 +315,16 @@ Already wired into `tools/hooks/pre-pr.py`.
   VPC-private Neptune/OpenSearch are unreachable from a laptop, so the CLI's live mode is a thin
   SigV4 client to the Function URL, mirroring the slice-1/2 in-VPC-compute posture (source:
   design doc D2; `apps/infra/stacks/graphrag_stack.py`).
-- Technical/Process: AWS credentials, CDK bootstrap, and Bedrock access to
-  `us.anthropic.claude-sonnet-4-6` **are available in this environment**, and the IaC
-  **`cdk synth`-validates** to a real template with the correct security posture — but the
-  corpus-backed live hybrid query (AC9) needs the Fargate **ingestion image**, whose build
-  requires a **Docker daemon that is not available here**, so AC9's live smoke is **deferred** to
-  the maintainer's deploy/verify/destroy window (backlog anchor
-  `hybrid-orchestration-live-deploy`), matching the slice-1 AC9 deferral pattern. Everything
-  testable without a live corpus is met offline (source: `cdk synth` output; `docker info`
-  unavailable; slice-1 backlog precedent; user direction 2026-06-24).
+- Technical/Process: the slice was **deployed and verified live** on 2026-06-24 (AWS creds, CDK
+  bootstrap, Docker, and Bedrock access to `us.anthropic.claude-sonnet-4-6` all present): the stack
+  reached `CREATE_COMPLETE`, the Fargate **dual-write passed end-to-end** (graph + vector populated
+  with live Bedrock Titan), and the Neptune smoke probe returned `ok:true`. The live hybrid query
+  (AC9) is **deferred** to a perf fix, not blocked on infra: the query Lambda times out at its 120s
+  budget because `expand_neighborhood` issues hundreds of sequential `neighbors()` openCypher
+  round-trips per hop against Neptune Serverless — a real finding only the live run surfaced
+  (backlog `hybrid-orchestration-live-deploy`: batch the neighbor fetch, then redeploy + invoke).
+  The `deploy.sh` `InvokerRoleArn` gap found in the same run is fixed in this PR (source: live
+  deploy 2026-06-24; CloudWatch `Duration`=120000ms; `deployment-and-verification.md`).
 - Process: this spec is full work-loop mode — security boundary (Bedrock + Neptune + OpenSearch
   network I/O; an IAM-auth public Function URL; untrusted retrieved content → Claude), structural
   (new modules + new infra), constrained by ADR-0001/0002/0003 + the design doc; derived from
