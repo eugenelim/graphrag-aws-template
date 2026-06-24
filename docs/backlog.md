@@ -71,6 +71,44 @@ dst) in the context `synthesize()` builds — `hybrid_query` already has the hop
 kinds — so the model can ground the relationship, not just the node set. Verify by re-running the
 live entity-led query and confirming the answer names KEP-1880/2086 as `sig-network`-owned.
 
+## vector-rag-baseline
+
+### opensearch-create-index-idempotency
+
+**Bug (surfaced by the infra-config-separation live re-verification, 2026-06-24).** The
+OpenSearch `create_index()` docstring promises idempotency ("an already-exists 400 is
+fine"), but the guard only catches a `RuntimeError` carrying `resource_already_exists`.
+The default `_UrllibClient.request` uses `urllib.request.urlopen`, which **raises
+`urllib.error.HTTPError` on any 4xx** — so an already-exists 400 never reaches the
+status-check / `RuntimeError` path, and the `except RuntimeError` in `create_index` never
+fires. Result: if the index already exists (e.g. the slice-2 vector smoke probe ran first
+and left it behind — the probe deletes its *doc*, not the index), the **Fargate ingestion
+task aborts at `create_index` with an uncaught `HTTPError 400`** before any chunk is
+written to OpenSearch. Latent today because the slice-2 probe and the corpus ingestion
+were never run in the same deploy cycle; the live re-verification did, and hit it. Not a
+regression from the config-separation refactor (app store code, untouched by it).
+**Fix:** make `_UrllibClient.request` return an `HttpResponse(status, text)` for HTTP-error
+responses (catch `HTTPError`, read `e.code`/`e.read()`) instead of raising, so `_request`
+handles status uniformly and the documented already-exists tolerance in `create_index`
+actually works. Verify by running the slice-2 vector probe, then the Fargate ingestion, in
+one deploy and confirming the corpus chunks land in OpenSearch (a live `vector-query`
+returns them). Blocked on nothing; a small store-layer fix + a unit test on the urllib
+client's 4xx handling.
+
+## infra-config-separation
+
+### infra-secret-scan-ci
+
+**AC7 follow-on (deferred).** Wire a repo-wide secret scanner (gitleaks / detect-secrets)
+**and** `shellcheck -x` into a real CI / pre-commit pipeline. This PR ships the proportionate
+in-scope control — a fail-closed `tools/hooks/pre-pr.py` guard over exactly the committed
+`config*.env` files it introduces (rejects email-shaped `BUDGET_EMAIL=` and
+`arn:aws:iam::<digits>:role/` literals), with a pinned unit test — but the repo has **no CI
+at all**, so a repo-wide scanner and a `shellcheck` gate on every later change are a separate
+infrastructure concern. Blocked on the repo gaining a CI surface (`.github/workflows` or a
+committed pre-commit config). Unblocked by adding a `gitleaks`/`detect-secrets` job + a
+`shellcheck` job that runs on push/PR.
+
 <!-- Add one section per spec with open work, e.g.:
 
 ## <spec-name>

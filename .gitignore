@@ -43,6 +43,10 @@ venv/
 .coverage
 htmlcov/
 
+# Per-deployer infra config (BUDGET_EMAIL / role ARN etc.) -- never committed.
+# Anchored path: the committed config.env and config.local.env.example stay tracked.
+apps/infra/scripts/config.local.env
+
 # AWS CDK synth output.
 apps/infra/cdk.out/
 cdk.out/

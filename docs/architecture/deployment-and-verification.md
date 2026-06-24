@@ -109,6 +109,42 @@ Lambda, which is **slice 3**; the Fargate dual-write (AC9) writes the corpus to 
 live domain, but a live corpus-backed `vector-query` is a manual check, not a
 slice-2 acceptance criterion.
 
+## Config / logic separation (the `scripts/` layout)
+
+The `scripts/` hold **only logic**; every tunable lives in
+[`scripts/config.env`](../../apps/infra/scripts/config.env) — the single declarative source
+of build parameters and resource names (stack name, region, governance-tag defaults, the
+SLR service list, cred-cache + venv + outputs knobs). Per-deployer values that must not be
+committed (the required `BUDGET_EMAIL`; an optional account-specific `INVOKER_ROLE_ARN`) go
+in a **gitignored** `scripts/config.local.env` (template: `config.local.env.example`).
+`_aws-env.sh` sources `config.local.env` (absence-guarded) then `config.env` before the
+credential logic, then re-`export`s the subprocess-consumed vars. Precedence is **explicit
+env var > `config.local.env` > committed `config.env`** (both files use the assign-if-unset
+`: "${VAR:=…}"` form), so the one-off `BUDGET_EMAIL=… scripts/deploy.sh` workflow is
+unchanged. A `tools/hooks/pre-pr.py` guard fails closed on a real email / IAM-role-ARN in
+any tracked `config*.env`. The deploy *behavior* is byte-unchanged — `cdk synth` is
+identical to the pre-refactor template (spec
+[`infra-config-separation`](../specs/infra-config-separation/spec.md)).
+
+> **Live three-slice re-verification: PASS (2026-06-24).** The refactored, config-separated
+> scripts were exercised end-to-end on account `<redacted>` (`us-east-1`), with
+> `config.local.env` **absent** (so the committed-defaults path ran): `scripts/deploy.sh` →
+> `CREATE_COMPLETE` (18 min); `scripts/status.sh` → `CREATE_COMPLETE`; **slice-1** Neptune
+> smoke probe `{"ok": true, …}`; **slice-2** vector smoke probe `{"ok": true, …, "dims":
+> 256}`; **slice-3** SigV4 hybrid query via the IAM-auth Function URL returned a real Bedrock
+> Claude answer (KEP-1880 / KEP-2086 as @thockin/SIG-Network-owned) with citations and the
+> dual-seed trace (`question: person:thockin` + a 2-hop live Neptune `TECH_LEADS`/`OWNS`
+> expansion); `scripts/destroy.sh` → `DOES_NOT_EXIST`. Confirms the config/logic split drives
+> the full deploy unchanged. Two notes, neither a refactor regression: (1) the Fargate
+> *vector* dual-write hit a pre-existing `opensearch.create_index` idempotency bug (the
+> urllib client raises `HTTPError` on a 4xx, so the documented already-exists tolerance never
+> fires) — surfaced by running the slice-2 probe before ingestion, which leaves the index;
+> backlog `opensearch-create-index-idempotency`. (2) `destroy.sh` left two CDK
+> custom-resource provider Lambda log groups (created by those providers running *during*
+> `cdk destroy`, after the pre-destroy name capture) — a sweep-timing gap **now fixed**:
+> `destroy.sh` adds an `/aws/lambda/<STACK>-` prefix scan *after* destroy (alongside the
+> pre-destroy name capture) so the provider log groups are swept too.
+
 ## Deploy / destroy operations
 
 `scripts/` bake in two operational lessons (see below):
