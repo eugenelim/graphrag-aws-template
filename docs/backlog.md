@@ -73,27 +73,53 @@ live entity-led query and confirming the answer names KEP-1880/2086 as `sig-netw
 
 ## vector-rag-baseline
 
-### opensearch-create-index-idempotency
+### opensearch-create-index-idempotency-live-confirm
 
-**Bug (surfaced by the infra-config-separation live re-verification, 2026-06-24).** The
-OpenSearch `create_index()` docstring promises idempotency ("an already-exists 400 is
-fine"), but the guard only catches a `RuntimeError` carrying `resource_already_exists`.
-The default `_UrllibClient.request` uses `urllib.request.urlopen`, which **raises
-`urllib.error.HTTPError` on any 4xx** — so an already-exists 400 never reaches the
-status-check / `RuntimeError` path, and the `except RuntimeError` in `create_index` never
-fires. Result: if the index already exists (e.g. the slice-2 vector smoke probe ran first
-and left it behind — the probe deletes its *doc*, not the index), the **Fargate ingestion
-task aborts at `create_index` with an uncaught `HTTPError 400`** before any chunk is
-written to OpenSearch. Latent today because the slice-2 probe and the corpus ingestion
-were never run in the same deploy cycle; the live re-verification did, and hit it. Not a
-regression from the config-separation refactor (app store code, untouched by it).
-**Fix:** make `_UrllibClient.request` return an `HttpResponse(status, text)` for HTTP-error
-responses (catch `HTTPError`, read `e.code`/`e.read()`) instead of raising, so `_request`
-handles status uniformly and the documented already-exists tolerance in `create_index`
-actually works. Verify by running the slice-2 vector probe, then the Fargate ingestion, in
-one deploy and confirming the corpus chunks land in OpenSearch (a live `vector-query`
-returns them). Blocked on nothing; a small store-layer fix + a unit test on the urllib
-client's 4xx handling.
+**Deferred live re-confirm (from the `opensearch-create-index-idempotency` fix, spec
+`docs/specs/opensearch-create-index-idempotency/`).** The unit regression test
+(`test_urllib_client_returns_http_response_on_http_error`) pins the client-level contract
+that was the root cause, so the fix ships unit-verified. The full end-to-end re-confirm of
+the originally-observed live failure — **deploy** (`apps/infra/scripts/deploy.sh`) → run the
+**slice-2 vector smoke probe** (leaves the index behind) → run the **Fargate ingestion task**
+(must now complete past `create_index` and write the corpus) → a live `graphrag hybrid-query
+--function-url …` returns non-empty `vector:` seeds → **teardown** (`destroy.sh`) — costs a
+deploy cycle and is deferred. Blocked on nothing; run when a deploy cycle is otherwise warranted.
+
+### neptune-urllib-http-error-idempotency
+
+**Sibling latent bug (sibling of `opensearch-create-index-idempotency`, deferred from that
+fix).** `store/neptune.py`'s `_UrllibClient.request` has the **identical** pattern: it uses
+`urllib.request.urlopen`, which raises `urllib.error.HTTPError` on any 4xx/5xx instead of
+returning, so `NeptuneGraphStore._request` never applies its uniform status check on an
+HTTP-error response. No observed impact today — Neptune has no idempotency-tolerance path (no
+`create_index`-style "already-exists is fine" guard) that depends on return-not-raise — so it
+was scoped out of the opensearch fix. It matters more here than for opensearch: the neptune
+`_UrllibClient` is the **CLI's live Function-URL POST client** and `NeptuneGraphStore`'s
+default, i.e. closer to the public boundary. **Fix (when picked up):** mirror the opensearch
+fix exactly — catch `urllib.error.HTTPError` **only** (never the broader `URLError`, or TLS /
+connection failures get swallowed into a fabricated response) and return
+`HttpResponse(status=e.code, text=e.read().decode("utf-8", errors="replace"))`. Add the same
+unit test (urllib client returns-not-raises on a 4xx; transport `URLError` still propagates).
+
+### opensearch-urllib-success-decode-and-observability
+
+**Deferred quality findings (from the `opensearch-create-index-idempotency` fix —
+quality-engineer review).** Two non-blocking reliability/observability items, both outside that
+fix's spec scope (which deliberately scoped the decode tolerance to the *error* path):
+
+1. **Success-path strict decode.** `_UrllibClient.request`'s 2xx branch still does
+   `resp.read().decode("utf-8")` (strict). A pathological non-UTF-8 2xx body (a proxy error page
+   served as 200, a truncated frame) would raise a bare `UnicodeDecodeError` that bypasses
+   `_request`'s uniform `RuntimeError` — the same class of status-masking the error-path
+   `errors="replace"` exists to prevent. Effectively never happens (OpenSearch returns UTF-8 JSON),
+   hence deferred. **Fix (when picked up):** either apply `errors="replace"` symmetrically on the
+   success path, or wrap the success decode so a malformed 2xx surfaces as a `RuntimeError` carrying
+   method/URL/status. Same applies to `store/neptune.py`'s client.
+2. **No trace on the tolerated already-exists 400.** `create_index`'s swallowed already-exists 400
+   leaves no breadcrumb, so an index that "already exists" for the wrong reason is invisible. The
+   store layer has no logging today. **Fix (when picked up):** if the store grows debug logging,
+   emit a `debug`-level line on `create_index`'s tolerated-4xx branch (not the client) so the
+   tolerance is observable without changing the error contract.
 
 ## infra-config-separation
 
