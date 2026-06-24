@@ -114,7 +114,9 @@ def test_no_iam_statement_grants_app_actions_on_wildcard_resource(template: Temp
     for stmt in _iam_statements(template):
         actions = _as_list(stmt["Action"])
         resources = _as_list(stmt["Resource"])
-        if "neptune-db:connect" in actions or any(a.startswith("s3:Get") for a in actions):
+        if any(a.startswith("neptune-db:") for a in actions) or any(
+            a.startswith("s3:Get") for a in actions
+        ):
             assert resources != ["*"], f"least-privilege violated: {actions} on '*'"
             found_scoped = True
         if "*" in resources:
@@ -186,6 +188,29 @@ def test_governance_tags_on_taggable_resources(template: Template) -> None:
             keys = {t["Key"] for t in tags}
             missing = _GOVERNANCE_TAG_KEYS - keys
             assert not missing, f"{rtype} missing governance tags: {sorted(missing)}"
+
+
+def test_smoke_probe_is_in_vpc_with_no_public_url(template: Template) -> None:
+    # The smoke Lambda must run in-VPC (private subnets) and expose no public URL.
+    fns = [r for r in _resources(template).values() if r["Type"] == "AWS::Lambda::Function"]
+    smoke = [
+        f
+        for f in fns
+        if "NEPTUNE_ENDPOINT" in f["Properties"].get("Environment", {}).get("Variables", {})
+    ]
+    assert len(smoke) == 1, "expected exactly one Neptune smoke Lambda"
+    assert "VpcConfig" in smoke[0]["Properties"], "smoke Lambda must be VPC-attached"
+    template.resource_count_is("AWS::Lambda::Url", 0)  # no public function URL
+
+
+def test_neptune_data_access_actions_present_and_scoped(template: Template) -> None:
+    # connect alone can't read/write under IAM auth — the data actions must be granted.
+    data_actions = {"neptune-db:ReadDataViaQuery", "neptune-db:WriteDataViaQuery"}
+    for stmt in _iam_statements(template):
+        if data_actions & set(_as_list(stmt["Action"])):
+            assert _as_list(stmt["Resource"]) != ["*"], "neptune data actions must be scoped"
+            return
+    raise AssertionError("expected Neptune data-access actions (Read/WriteDataViaQuery)")
 
 
 def test_run_task_handles_are_exported_as_outputs(template: Template) -> None:

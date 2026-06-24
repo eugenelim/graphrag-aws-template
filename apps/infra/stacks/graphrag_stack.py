@@ -12,11 +12,13 @@ feature — charter principle 4).
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from aws_cdk import (
     CfnOutput,
     CfnParameter,
+    Duration,
     RemovalPolicy,
     Stack,
     Tags,
@@ -35,6 +37,9 @@ from aws_cdk import (
 )
 from aws_cdk import (
     aws_iam as iam,
+)
+from aws_cdk import (
+    aws_lambda as lambda_,
 )
 from aws_cdk import (
     aws_logs as logs,
@@ -67,6 +72,20 @@ _GOVERNANCE_TAG_DEFAULTS = {
     "User": "unspecified",
 }
 
+# The graphrag package source, zipped as-is into the smoke Lambda (pure-Python; no
+# bundling/docker — boto3/botocore are in the Lambda runtime).
+_GRAPHRAG_SRC = str(Path(__file__).resolve().parents[3] / "packages" / "graphrag" / "src")
+
+# Neptune IAM-auth data access: `connect` alone is NOT enough to read/write via
+# openCypher under IAM auth -- the data-plane actions are required too. Scoped to
+# the specific cluster resource (no wildcard).
+_NEPTUNE_DATA_ACTIONS = [
+    "neptune-db:connect",
+    "neptune-db:ReadDataViaQuery",
+    "neptune-db:WriteDataViaQuery",
+    "neptune-db:DeleteDataViaQuery",
+]
+
 
 class GraphragStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs: Any) -> None:
@@ -83,8 +102,22 @@ class GraphragStack(Stack):
         bucket = self._corpus_bucket()
         cluster, neptune_sg = self._neptune(vpc)
         self._ingestion_task(vpc, bucket, cluster, neptune_sg)
+        self._smoke_lambda(vpc, cluster, neptune_sg)
         self._budget_alarm(budget_email.value_as_string)
         self._apply_governance_tags()
+
+    # --- Scoped Neptune IAM-auth data-access statement (shared) -------------------
+    def _neptune_data_access(self, cluster: neptune.CfnDBCluster) -> iam.PolicyStatement:
+        return iam.PolicyStatement(
+            actions=_NEPTUNE_DATA_ACTIONS,
+            resources=[
+                self.format_arn(
+                    service="neptune-db",
+                    resource=cluster.attr_cluster_resource_id,
+                    resource_name="*",
+                )
+            ],
+        )
 
     # --- Governance tags on every taggable resource -------------------------------
     def _apply_governance_tags(self) -> None:
@@ -188,20 +221,10 @@ class GraphragStack(Stack):
         task_role = iam.Role(
             self, "IngestionTaskRole", assumed_by=iam.ServicePrincipal("ecs-tasks.amazonaws.com")
         )
-        # Least privilege: read only the corpus bucket; connect only to this cluster.
+        # Least privilege: read only the corpus bucket; Neptune data access scoped
+        # to this cluster only.
         bucket.grant_read(task_role)
-        task_role.add_to_policy(
-            iam.PolicyStatement(
-                actions=["neptune-db:connect"],
-                resources=[
-                    self.format_arn(
-                        service="neptune-db",
-                        resource=cluster.attr_cluster_resource_id,
-                        resource_name="*",
-                    )
-                ],
-            )
-        )
+        task_role.add_to_policy(self._neptune_data_access(cluster))
 
         task_def = ecs.FargateTaskDefinition(
             self, "IngestionTask", cpu=512, memory_limit_mib=1024, task_role=task_role
@@ -231,6 +254,28 @@ class GraphragStack(Stack):
         CfnOutput(self, "IngestionSecurityGroupId", value=task_sg.security_group_id)
         CfnOutput(self, "PrivateSubnetId", value=private_subnets.subnet_ids[0])
         CfnOutput(self, "IngestionRepoUri", value=repo.repository_uri)
+
+    # --- In-VPC smoke probe: a scale-to-zero Lambda for live insert+retrieve ------
+    def _smoke_lambda(
+        self, vpc: ec2.Vpc, cluster: neptune.CfnDBCluster, neptune_sg: ec2.SecurityGroup
+    ) -> None:
+        sg = ec2.SecurityGroup(self, "SmokeSg", vpc=vpc, description="Neptune smoke probe")
+        neptune_sg.add_ingress_rule(sg, ec2.Port.tcp(8182), "smoke probe to neptune 8182")
+
+        fn = lambda_.Function(
+            self,
+            "SmokeProbe",
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            handler="graphrag.smoke_lambda.lambda_handler",
+            code=lambda_.Code.from_asset(_GRAPHRAG_SRC),  # zipped as-is, no docker
+            timeout=Duration.seconds(60),  # VPC cold start + Neptune client init
+            vpc=vpc,
+            vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED),
+            security_groups=[sg],
+            environment={"NEPTUNE_ENDPOINT": f"https://{cluster.attr_endpoint}:8182"},
+        )
+        fn.add_to_role_policy(self._neptune_data_access(cluster))  # scoped; no public URL
+        CfnOutput(self, "SmokeProbeName", value=fn.function_name)
 
     # --- Budgets cost alarm: threshold + a notification subscriber -----------------
     def _budget_alarm(self, email: str) -> None:
