@@ -18,6 +18,7 @@ from aws_cdk import (
     CfnParameter,
     RemovalPolicy,
     Stack,
+    Tags,
 )
 from aws_cdk import (
     aws_budgets as budgets,
@@ -54,6 +55,17 @@ _INTERFACE_ENDPOINTS = {
     "Sts": ec2.InterfaceVpcEndpointAwsService.STS,
 }
 
+# Org governance tags applied to every taggable resource (via Tags.of(self), which
+# propagates through the construct tree). Defaults are overridable per deploy with
+# `cdk deploy -c <key-lowercased>=<value>`; the deploy script fills `user`.
+_GOVERNANCE_TAG_DEFAULTS = {
+    "Environment": "demo",
+    "Project": "graphrag-aws-template",
+    "Department": "unspecified",
+    "Application": "graphrag",
+    "User": "unspecified",
+}
+
 
 class GraphragStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs: Any) -> None:
@@ -71,6 +83,13 @@ class GraphragStack(Stack):
         cluster, neptune_sg = self._neptune(vpc)
         self._ingestion_task(vpc, bucket, cluster, neptune_sg)
         self._budget_alarm(budget_email.value_as_string)
+        self._apply_governance_tags()
+
+    # --- Governance tags on every taggable resource -------------------------------
+    def _apply_governance_tags(self) -> None:
+        for key, default in _GOVERNANCE_TAG_DEFAULTS.items():
+            value = self.node.try_get_context(key.lower()) or default
+            Tags.of(self).add(key, str(value))
 
     # --- VPC: private, no NAT, with exactly the endpoints ingestion needs ---------
     def _vpc(self) -> ec2.Vpc:
@@ -118,7 +137,7 @@ class GraphragStack(Stack):
             self,
             "NeptuneSg",
             vpc=vpc,
-            description="Neptune — VPC-internal only",
+            description="Neptune - VPC-internal only",  # ASCII only (EC2 rejects non-ASCII)
             allow_all_outbound=False,
         )
         cluster = neptune.CfnDBCluster(
@@ -198,7 +217,7 @@ class GraphragStack(Stack):
 
         # The task's ENI sits in the private subnets; Neptune accepts it on 8182.
         task_sg = ec2.SecurityGroup(self, "IngestionSg", vpc=vpc, description="Fargate ingestion")
-        neptune_sg.add_ingress_rule(task_sg, ec2.Port.tcp(8182), "ingestion -> neptune")
+        neptune_sg.add_ingress_rule(task_sg, ec2.Port.tcp(8182), "ingestion to neptune 8182")
         _ = cluster_compute  # cluster is referenced by the task definition at run time
 
     # --- Budgets cost alarm: threshold + a notification subscriber -----------------

@@ -31,7 +31,7 @@ graphrag = "graphrag.cli:main"
 where = ["packages/graphrag/src"]
 
 [tool.setuptools.package-data]
-graphrag = ["aliases.yaml"]
+graphrag = ["aliases.yaml", "py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["packages/graphrag/tests", "apps/ingestion/tests", "apps/infra/tests"]

@@ -9,6 +9,7 @@ ADR-0002 topology and the security controls. Skipped where aws-cdk-lib is absent
 from __future__ import annotations
 
 import os
+import re
 
 import pytest
 
@@ -140,6 +141,51 @@ def test_no_security_group_allows_public_ingress(template: Template) -> None:
         if res["Type"] == "AWS::EC2::SecurityGroupIngress":
             _not_public(res["Properties"].get("CidrIp"))
             _not_public(res["Properties"].get("CidrIpv6"))
+
+
+# EC2 restricts SG group AND ingress-rule descriptions to this charset (the rule
+# rejected both a non-ASCII em-dash and an ASCII '>'); `cdk synth` doesn't validate
+# it, only a live deploy does — so guard the whole class here.
+_EC2_DESC = re.compile(r"^[A-Za-z0-9 ._\-:/()#,@\[\]+=&;{}!$*]*$")
+
+
+def test_security_group_descriptions_use_ec2_charset(template: Template) -> None:
+    def _ok(desc: object, where: str) -> None:
+        # Only literal strings are ours to validate; CDK auto-generates some rule
+        # descriptions as Fn::Join intrinsics (dicts) that are valid at deploy.
+        if isinstance(desc, str):
+            assert _EC2_DESC.match(desc), f"invalid EC2 description in {where}: {desc!r}"
+
+    for res in _resources(template).values():
+        if res["Type"] == "AWS::EC2::SecurityGroup":
+            _ok(res["Properties"].get("GroupDescription", ""), "SecurityGroup.GroupDescription")
+            for rule in res["Properties"].get("SecurityGroupIngress", []):
+                if "Description" in rule:
+                    _ok(rule["Description"], "inline SecurityGroupIngress.Description")
+        if res["Type"] == "AWS::EC2::SecurityGroupIngress" and "Description" in res["Properties"]:
+            _ok(res["Properties"]["Description"], "SecurityGroupIngress.Description")
+
+
+_GOVERNANCE_TAG_KEYS = {"Environment", "Project", "Department", "Application", "User"}
+
+
+def test_governance_tags_on_taggable_resources(template: Template) -> None:
+    # All five org tags must propagate to every taggable resource; check a
+    # representative spread of resource types.
+    for rtype in (
+        "AWS::EC2::VPC",
+        "AWS::S3::Bucket",
+        "AWS::Neptune::DBCluster",
+        "AWS::ECS::TaskDefinition",
+        "AWS::ECR::Repository",
+    ):
+        resources = [r for r in _resources(template).values() if r["Type"] == rtype]
+        assert resources, f"expected at least one {rtype}"
+        for res in resources:
+            tags = res["Properties"].get("Tags", [])
+            keys = {t["Key"] for t in tags}
+            missing = _GOVERNANCE_TAG_KEYS - keys
+            assert not missing, f"{rtype} missing governance tags: {sorted(missing)}"
 
 
 def test_corpus_bucket_enforces_tls(template: Template) -> None:
