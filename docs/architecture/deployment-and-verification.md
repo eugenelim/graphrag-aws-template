@@ -1,10 +1,12 @@
 # Deployment & verification
 
-> How the slice-1 infrastructure is deployed, torn down, and **verified end-to-end**
-> against the real cluster. Current-state architecture doc (for contributors).
+> How the demo's infrastructure is deployed, torn down, and **verified end-to-end**
+> against the real stores. Current-state architecture doc (for contributors).
 > Binding decisions live in [ADR-0002](../adr/0002-ephemeral-vpc-store-topology.md)
-> (topology) and [ADR-0003](../adr/0003-iac-tool-aws-cdk-python.md) (CDK); this file
-> is the *how it's wired today* snapshot, including the live-deploy findings.
+> (topology) and [ADR-0003](../adr/0003-iac-tool-aws-cdk-python.md) (CDK); the
+> rolled-up *what's provisioned + why-shaped-this-way* view is the
+> [infrastructure lens](infrastructure.md); this file is the *how to deploy / verify*
+> mechanics, including the live-deploy findings.
 
 ## Layout
 
@@ -25,7 +27,9 @@ Four layers, cheapest first; each catches what the layer below can't:
 | Unit / construction tests | parse → extract → resolve → multi-hop **insert+retrieve round-trip** | in-memory store | `packages/graphrag/tests` |
 | Neptune adapter test | the adapter emits **parameterized** openCypher; responses parse | a **mock** | `test_store_neptune.py` |
 | Synth assertions | topology + security posture + tags | `cdk synth` (no data) | `apps/infra/tests` |
-| **Deploy-time smoke probe** | the **real** openCypher works against the **real** cluster | live Neptune, in-VPC | the probe Lambda (below) |
+| **Deploy-time graph probe** | the **real** openCypher works against the **real** cluster | live Neptune, in-VPC | the Neptune probe Lambda (below) |
+| **Deploy-time vector probe** | **real** Titan v2 embed → **real** OpenSearch index → k-NN retrieve | live OpenSearch + Bedrock, in-VPC | the vector probe Lambda (below) |
+| Credible-baseline eval | the vector baseline is fair (hit@5=1.0 + honest misses) | frozen real Titan v2 vectors | `test_vector_eval.py` |
 
 The first two run offline; the synth layer runs in CI without an account; the probe
 runs against a deployed stack. The mock layer is honest but cannot prove Neptune
@@ -61,6 +65,49 @@ the live graph store is a **scale-to-zero Lambda inside the VPC**:
 
 This is the in-VPC realization of AC9's "active end-to-end smoke" and the
 work-loop's infra/deploy verification mode.
+
+## The in-VPC vector smoke probe (slice 2, deploy-time verification)
+
+OpenSearch is VPC-private too, so the vector store gets the **same** probe pattern
+(`graphrag.vector_smoke_lambda`):
+
+- **What it does:** embeds a unique string with **Titan v2** (via the
+  `bedrock-runtime` VPC endpoint), indexes it as a chunk into the **live** OpenSearch
+  domain through the same `OpenSearchVectorStore` the CLI uses, **retrieves it back
+  via k-NN**, asserts the ingested chunk is returned, and deletes it. A green result
+  (`{"ok": true, "retrieved_id": "smoke-…"}`) proves the real Bedrock→OpenSearch
+  round-trip — embeddings, the `es` SigV4 path, the `knn_vector` mapping, and
+  response parsing — not a reimplementation.
+- **Security:** private isolated subnets; a dedicated SG into OpenSearch on 443 only;
+  an execution role scoped to the domain (`es:ESHttp*`) and the one Titan model
+  (`bedrock:InvokeModel`); **no public function URL**; TLS verified; creds from the
+  role via the botocore chain.
+- **How to run it:**
+  ```bash
+  aws lambda invoke --function-name "$(aws cloudformation describe-stacks \
+    --stack-name GraphragSlice1 --query \
+    "Stacks[0].Outputs[?OutputKey=='VectorSmokeProbeName'].OutputValue" --output text)" \
+    /dev/stdout
+  ```
+
+> **Live vector-probe status: PASS (2026-06-24).** Deployed to account `<redacted>`
+> (`us-east-1`) and invoked end-to-end against the live single-node OpenSearch domain:
+> ```json
+> {"ok": true, "run": "14573ad2", "retrieved_id": "smoke-14573ad2", "hits": ["smoke-14573ad2"], "dims": 256}
+> ```
+> The probe embedded text with Titan v2 (256-dim) via the `bedrock-runtime` endpoint,
+> indexed it as a chunk into OpenSearch, retrieved it back via k-NN through the real
+> `OpenSearchVectorStore`, then cleaned up — confirming the `es` SigV4 path (no
+> `AccessDenied`), the `bedrock:InvokeModel` grant, the `knn_vector` mapping, and
+> correct response parsing. The stack was then torn down with `scripts/destroy.sh`.
+> Offline layers (110 tests + synth, incl. the credible-baseline `vector-eval`) are
+> green; this is the slice-2 live confirmation (AC7).
+
+A note on scope: the probe proves a *synthetic* index→retrieve round-trip. Making
+the *deployed corpus* queryable from a live `vector-query` needs the in-VPC query
+Lambda, which is **slice 3**; the Fargate dual-write (AC9) writes the corpus to the
+live domain, but a live corpus-backed `vector-query` is a manual check, not a
+slice-2 acceptance criterion.
 
 ## Deploy / destroy operations
 
