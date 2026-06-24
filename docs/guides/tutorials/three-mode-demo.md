@@ -102,91 +102,13 @@ graphrag hybrid-query --community "$COMMUNITY" --enhancements "$ENHANCEMENTS" \
 The deploy + live smoke is recorded in
 [`docs/architecture/deployment-and-verification.md`](../../architecture/deployment-and-verification.md).
 
-## From the demo to your own corpus — what to ingest, and how to slice it
+## Applying this to your own corpus
 
-The demo's thesis is that **whether a knowledge graph earns its keep depends on your
-query shapes**, and your query shapes are bounded by **how you slice and route your
-data at ingest** — what you don't extract, no retrieval mode can return. Before
-cloning the pipeline onto your own data, work these decisions in order.
-
-### Step 1 — Decide per *data shape*, not per file
-
-Sort each kind of source by asking *what carries the answer*:
-
-| Data shape | Examples | Answer lives in… | Route to |
-| --- | --- | --- | --- |
-| **Prose-rich** | design docs, charters, READMEs, runbooks, wiki pages, ticket/PR descriptions | meaning in free text | **vector** (chunk → embed → k-NN) |
-| **Structure-rich** | YAML/JSON config, ownership manifests, org charts, frontmatter, CODEOWNERS, API specs, tables | named entities + their relationships | **graph** (extract nodes/edges) |
-| **Mixed** (the common case) | a doc with a prose body *and* structured frontmatter / a known path | both | **both**, in one parse (single-parse dual-write) |
-
-The demo corpus is exactly this split: `sigs.yaml` / `kep.yaml` are structure-rich
-(→ graph: SIG / Person / KEP nodes + `CHAIRS` / `OWNS` / `APPROVES` edges); the SIG and
-KEP `README.md` bodies are prose-rich (→ vector chunks); and a KEP README is *mixed* —
-its prose is embedded while its path + frontmatter contribute the **owning-entity IDs**
-that join it to the graph.
-
-> **Litmus test:** *Could a human answer this by reading one passage, or must they
-> cross-reference a list / table / hierarchy?* The first is vector's job; the second is
-> the graph's.
-
-### Step 2 — Pick your entities, and check they have stable IDs
-
-The graph is only as good as the entities you can resolve. For each candidate entity
-type (team, person, service, decision, component…):
-
-- **Stable, controlled-vocabulary ID** (a slug, a handle, a ticket key, a URN)? Then
-  resolution is **mechanical** — normalize to a canonical ID + a small hand-authored
-  alias table, exactly as `normalize.py` + `aliases.yaml` do here. Cheap, and narratable
-  (no trained model).
-- **Only named in free prose** ("the platform team", "Tim's group")? Then resolution is
-  **hard** — you need fuzzy matching / NER, and the graph's value drops unless you invest
-  there. The honest move is to **narrow the graph to the entities you can resolve well**
-  and let vector carry the rest.
-
-This is the single biggest predictor of whether graph mode pays off on your corpus. The
-K8s corpus was chosen *because* SIG slugs and GitHub `@handles` are a controlled
-vocabulary; yours may not be so lucky — decide with eyes open.
-
-### Step 3 — Slice for the questions you must answer
-
-Ingestion is lossy by choice:
-
-- **Embed the prose-rich subset only.** Don't embed a config table — graph it. Structured
-  dumps and boilerplate pollute k-NN recall.
-- **Extract the edges your entity-led questions need.** "Which KEPs does this SIG own?" is
-  answerable *only* because the `OWNS` edge was emitted at ingest. List your target
-  entity-led questions first, then ensure every relationship they traverse is an edge you
-  emit.
-- **Keep the join key on every chunk.** Each embedded chunk carries its provenance
-  (source, path, heading) **and its owning-entity IDs, byte-identical to the graph node
-  IDs** — that shared ID is what lets seed-and-expand jump from a vector hit into the
-  graph. Skip it and hybrid degrades to two disconnected stores.
-- **Chunk heading-aware, bounded + overlapping** — so a hit is a coherent passage and the
-  trace stays legible.
-
-### The routing decision, in one picture
-
-```mermaid
-flowchart TD
-    D["A source doc / record"] --> Q1{"Prose-rich body?"}
-    Q1 -->|yes| V["Chunk → embed → vector store<br/>(keep provenance + owning-entity IDs)"]
-    Q1 -->|no| Q2{"Names entities with<br/>stable IDs + relationships?"}
-    D --> Q2
-    Q2 -->|yes| G["Extract nodes + edges → graph store<br/>(normalize IDs; alias table for prose↔handle)"]
-    Q2 -->|"only free-prose names"| H["Invest in fuzzy resolution,<br/>or leave it to vector + narrow the graph"]
-    V -. same parse .-> G
-```
-
-The dotted line is the **single-parse dual-write**: one read of each source feeds both
-stores from the same pass, so they can never drift (charter pattern 2).
-
-### Where the deeper reasoning lives
-
-This is the *Corpus & cross-source entity resolution* and *Single-parse dual-write*
-spine of the project. The ordered considerations + trade-offs are in
-[`docs/CHARTER.md` § Architecture patterns](../../CHARTER.md), the seed-and-expand
-rationale in [ADR-0001](../../adr/0001-hybrid-orchestration-seed-and-expand.md), and the
-concrete parse → extract → resolve code in `packages/graphrag/`.
+Once the divergence above makes sense, the next question is how to slice and route
+*your* data so the graph earns its keep — what to embed, what to extract as nodes and
+edges, and how entity-ID stability decides whether graph mode pays off. That's a
+design model, not a demo step, so it lives next door:
+[**Choosing what to ingest, and how to slice your corpus**](../explanation/choosing-what-to-ingest.md).
 
 ## The showcase set at a glance
 
