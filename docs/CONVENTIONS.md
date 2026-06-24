@@ -127,6 +127,16 @@ RFC. Trivial edits (typos, broken links) can be a normal PR.
   a request is out of bounds.
 - **Principles.** Five to seven values that resolve ties. Each principle
   has a one-sentence elaboration with a concrete example.
+- **Architecture patterns & approaches** — *reference-template projects only.*
+  An ordered spine of the architectural considerations the project teaches: the
+  *pattern + the consideration a team must weigh*, each with a pointer to where it
+  is resolved. Permitted **only** when the documentation is itself a key
+  deliverable (a reference template or teaching repo). It must stay at
+  *considerations* altitude — the current-state snapshot still lives in
+  `architecture/` and the binding choice in an ADR, which the spine **cites rather
+  than copies**; if a pattern entry starts duplicating ADR/`architecture/` detail
+  it has drifted out of charter altitude. A generic single-app repo keeps this
+  section out and follows the standard hierarchy below. (Added by RFC-0001.)
 
 **What does NOT go here:**
 
