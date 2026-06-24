@@ -66,9 +66,11 @@ proceeding; *Never do* is a hard rule.
   `graph-only` execute as standalone paths for honest side-by-side contrast — that is the
   demo's pedagogy, distinct from the hybrid mode's internal dual-seed orchestration
   (ADR-0001 boundary; design D1 note).
-- **Keep traversal in the application layer over `neighbors()`.** Graph expansion builds
-  on `GraphStore.neighbors()` so the in-memory and Neptune backends produce an identical
-  trace (slice-1 invariant; `packages/graphrag/AGENTS.md`).
+- **Keep the expansion *logic* in the application layer, behind the `GraphStore` seam.** Graph
+  expansion builds on `GraphStore.neighbors_batch()` (default: an app-layer fan-out over
+  `neighbors()`); a backend may override it with a batched query for live perf, but the in-memory
+  and Neptune backends must produce an **identical trace** — guaranteed by sorting the reached set
+  + edge kinds so order is backend-independent (slice-1 invariant; `packages/graphrag/AGENTS.md`).
 - **Treat retrieved Markdown as untrusted content at the Claude boundary.** The corpus
   text routed into synthesis is external untrusted input (OWASP LLM01/LLM08). It is placed
   as **data, not instructions**, in the Converse request (isolate-and-no-instruction), and
@@ -115,8 +117,13 @@ proceeding; *Never do* is a hard rule.
   `packages/graphrag/`, `apps/ingestion/`, `apps/infra/`, `docs/guides/` surfaces**
   (AGENTS.md: top-level directories need an RFC). New code lands as modules/docs inside
   those.
-- **Never push graph traversal into openCypher** for the expansion — keep it in the app
-  layer over `neighbors()` so the backends stay trace-identical (slice-1 Boundaries rail).
+- **Never let a backend's expansion diverge the trace.** The expansion *logic* stays in the app
+  layer over the `GraphStore` seam; a backend **may** implement `neighbors_batch` with a batched
+  openCypher query for live perf (the Neptune override — backlog `hybrid-orchestration-live-deploy`,
+  added because the per-edge-kind fan-out times out against Neptune Serverless), but **only**
+  because `expand_neighborhood` **sorts** the reached set + edge kinds, so the trace is
+  byte-identical to the in-memory fan-out. A backend change that made the trace backend-dependent
+  would violate this rail.
 
 ## Testing Strategy
 
@@ -191,11 +198,13 @@ Already wired into `tools/hooks/pre-pr.py`.
   no caller evaluates, shells out on, or feeds it back into a tool call. *(TDD with mock)*
 - [x] **AC3 — Bounded neighborhood expansion with a trace.** `expand_neighborhood(store,
   seed_ids, *, max_hops, frontier_cap)` expands the seed set up to `max_hops` (1–2) hops over
-  **all** edge kinds in both directions via `neighbors()`, returning the reached node IDs and an
+  **all** edge kinds in both directions via the `neighbors_batch` seam, returning the reached node IDs and an
   ordered per-hop trace (the frontier in, the nodes reached, the edge kinds that contributed);
   a hop whose frontier exceeds `frontier_cap` is **truncated and the truncation recorded**; an
-  empty seed set expands to nothing. Backends produce an identical trace (built on
-  `neighbors()`). The entity-led exemplar's path is pinned: from `person:thockin` the expansion
+  empty seed set expands to nothing. Backends produce an identical trace (built on the
+  `neighbors_batch` seam — a default app-layer fan-out over `neighbors()` plus a Neptune-batched
+  override — with the reached set + edge kinds **sorted** so order is backend-independent). The
+  entity-led exemplar's path is pinned: from `person:thockin` the expansion
   reaches `sig:sig-network` at hop 1 (`TECH_LEADS`) and the SIG's owned KEPs at hop 2 (`OWNS`),
   so the win requires `max_hops >= 2`. *(TDD)*
 - [x] **AC4 — Seed-and-expand orchestration with a dual-seed, bounded trace.** `hybrid_query`
@@ -307,10 +316,11 @@ Already wired into `tools/hooks/pre-pr.py`.
   `aliases.yaml` on the controlled-vocabulary corpus (SIG slugs, `@handles`, KEP numbers); a
   linked candidate becomes a seed only if its ID resolves to a real graph node, so a misseed is
   filtered and recorded, not silently expanded (source: ADR-0001; `normalize.py`; `resolve.py`).
-- Technical: graph expansion stays in the application layer over `GraphStore.neighbors()` (new
-  `expand_neighborhood` reusing the slice-1 traversal seam), so the in-memory and Neptune
-  backends produce an identical trace (source: `query.py`; `packages/graphrag/AGENTS.md`
-  invariant).
+- Technical: the graph-expansion *logic* stays in the application layer (`expand_neighborhood`)
+  behind the `GraphStore.neighbors_batch` seam — a default app-layer fan-out over `neighbors()`
+  (in-memory) plus a Neptune-batched openCypher override (added post-live-deploy for perf) — with
+  the reached set + edge kinds sorted so the in-memory and Neptune backends produce an identical
+  trace (source: `query.py`; `store/base.py`; `packages/graphrag/AGENTS.md` invariant).
 - Technical: the live query path is the **in-VPC Lambda behind an IAM-auth Function URL**; the
   VPC-private Neptune/OpenSearch are unreachable from a laptop, so the CLI's live mode is a thin
   SigV4 client to the Function URL, mirroring the slice-1/2 in-VPC-compute posture (source:

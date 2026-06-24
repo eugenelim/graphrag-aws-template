@@ -31,7 +31,7 @@ from botocore.awsrequest import AWSRequest
 from botocore.session import Session
 
 from ..model import Direction, Edge, EdgeKind, EntityKind, Node
-from .base import GraphStore
+from .base import GraphStore, NeighborEdge
 
 NEPTUNE_SERVICE = "neptune-db"
 _NODE_LABEL = "Entity"
@@ -51,7 +51,14 @@ class HttpClient(Protocol):
 
 
 class _UrllibClient:
-    """Default HTTP client over urllib (TLS verified unless ``verify=False``)."""
+    """Default HTTP client over urllib (TLS verified unless ``verify=False``).
+
+    ``timeout`` is the per-request read timeout in seconds. It defaults to 30 (a
+    single Neptune openCypher hop), but a multi-step caller — e.g. the CLI's live
+    Function-URL hybrid query — constructs it with a longer timeout."""
+
+    def __init__(self, timeout: int = 30) -> None:
+        self._timeout = timeout
 
     def post(self, url: str, *, data: bytes, headers: dict[str, str], verify: bool) -> HttpResponse:
         # The endpoint scheme is validated as https:// in NeptuneGraphStore.__init__,
@@ -61,7 +68,7 @@ class _UrllibClient:
         if not verify:  # opt-in only; never the default
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE
-        with urllib.request.urlopen(req, context=context, timeout=30) as resp:  # noqa: S310
+        with urllib.request.urlopen(req, context=context, timeout=self._timeout) as resp:  # noqa: S310
             return HttpResponse(status=resp.status, text=resp.read().decode("utf-8"))
 
 
@@ -153,6 +160,39 @@ class NeptuneGraphStore(GraphStore):
             )
         res = self._run(f"MATCH {pattern} RETURN b", {"id": node_id, "kind": edge_kind.value})
         return [_node_from_result(row["b"]) for row in res.get("results", [])]
+
+    def neighbors_batch(self, node_ids: list[str]) -> list[NeighborEdge]:
+        """Batched neighborhood for the whole frontier in **two** openCypher queries
+        (one per direction), instead of the default fan-out's O(nodes x kinds x 2)
+        round-trips — the live-perf path for seed-and-expand against Neptune.
+
+        Parameterized exactly like ``neighbors()``: the frontier ids ride the
+        ``$ids`` list parameter; the node label and single ``REL`` type are fixed
+        constants (never interpolated), so there is no injection surface. The edge's
+        ``kind`` is a bound property, returned and re-typed to ``EdgeKind``.
+        """
+        if not node_ids:
+            return []
+        out: list[NeighborEdge] = []
+        patterns = {
+            Direction.OUT: f"(a:{_NODE_LABEL})-[r:{_REL_TYPE}]->(b:{_NODE_LABEL})",
+            Direction.IN: f"(a:{_NODE_LABEL})<-[r:{_REL_TYPE}]-(b:{_NODE_LABEL})",
+        }
+        for direction, pattern in patterns.items():
+            res = self._run(
+                f"MATCH {pattern} WHERE a.id IN $ids RETURN a.id AS src, r.kind AS kind, b AS node",
+                {"ids": node_ids},
+            )
+            for row in res.get("results", []):
+                out.append(
+                    NeighborEdge(
+                        src_id=str(row["src"]),
+                        edge_kind=EdgeKind(str(row["kind"])),
+                        direction=direction,
+                        neighbor=_node_from_result(row["node"]),
+                    )
+                )
+        return out
 
     def all_nodes(self) -> list[Node]:
         res = self._run(f"MATCH (n:{_NODE_LABEL}) RETURN n", {})

@@ -51,6 +51,9 @@ from .vector_eval import (
 # Default region for SigV4 signing when a Function URL doesn't encode one.
 _DEFAULT_REGION = "us-east-1"
 _LAMBDA_SERVICE = "lambda"
+# Read timeout (s) for the live Function-URL client — long enough for a cold VPC
+# Lambda + the full hybrid path, not the single-hop 30s default.
+_FUNCTION_URL_TIMEOUT = 150
 # Region embedded in a Function URL host: <id>.lambda-url.<region>.on.aws
 _FUNCTION_URL_REGION = re.compile(r"\.lambda-url\.([a-z0-9-]+)\.on\.aws")
 
@@ -124,8 +127,12 @@ def _synthesizer(args: argparse.Namespace) -> Synthesizer:
 
 
 def _make_http_client() -> HttpClient:
-    """The HTTP client seam for the live Function-URL path (monkeypatched in tests)."""
-    return _UrllibClient()
+    """The HTTP client seam for the live Function-URL path (monkeypatched in tests).
+
+    A longer read timeout than a single Neptune hop: the hybrid query runs vector
+    search + multi-hop expansion + Bedrock Claude synthesis, and a VPC Lambda cold
+    start adds seconds — cover the function's full budget rather than the 30s default."""
+    return _UrllibClient(timeout=_FUNCTION_URL_TIMEOUT)
 
 
 def _function_url_query(url: str, question: str, region: str) -> dict[str, Any]:

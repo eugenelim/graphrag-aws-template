@@ -27,7 +27,7 @@ for the contract and the module map.
 | `vector_smoke_lambda.py` | (slice 2) In-VPC probe: embed → index → k-NN-retrieve an ingested chunk → cleanup. |
 | `entity_link.py` | (slice 3) Pure question→entity-ID linking over the controlled vocabulary, built on `normalize` (`@handles`/slugs/KEP numbers + the display-name alias table). |
 | `synthesize.py` | (slice 3) `Synthesizer` seam — `BedrockClaudeSynthesizer` (Bedrock Claude via the Converse API) + offline deterministic `TemplateSynthesizer`; `DEFAULT_SYNTHESIS_MODEL_ID`. |
-| `query.py` | Bounded multi-hop `traverse` **and** (slice 3) `expand_neighborhood` (undirected-over-all-edge-kinds neighborhood expansion for seed-and-expand), both over `neighbors()` with a trace. |
+| `query.py` | Bounded multi-hop `traverse` (over `neighbors()`) **and** (slice 3) `expand_neighborhood` (undirected-over-all-edge-kinds neighborhood expansion for seed-and-expand) over the `neighbors_batch` seam (default fan-out; Neptune-batched override), with a sorted, backend-identical trace. |
 | `hybrid.py` | (slice 3) The seed-and-expand orchestration: dual-seed (vector-owners ∪ question-links) → cap → expand → merge → synthesize → `HybridResult.render()` trace. |
 | `compare.py` | (slice 3) The three-mode runner — `vector-only` / `graph-only` / `hybrid` independently, with a side-by-side `ComparisonResult.render()`. |
 | `query_lambda.py` | (slice 3) In-VPC query Lambda handler behind an IAM-auth Function URL; reuses the same `hybrid_query`; PyYAML-free import graph; entity-links with `aliases={}` (mechanical normalizers only — no display-name table in the bundle). |
@@ -78,9 +78,13 @@ Adding a runtime dependency beyond these is an "Ask first" rail in the spec.
 - **The merge is upsert-by-normalized-ID, not a model.** Two mentions that
   normalize to the same ID become one node; the alias table (`aliases.yaml`) is the
   only non-mechanical step and is small, hand-authored data.
-- **Traversal runs in the app layer over `neighbors()`**, so the in-memory and
-  Neptune backends produce an identical trace. Do not push traversal into
-  openCypher without re-reading the spec's Boundaries rail (it would diverge the
-  backends; deferred to slice 3).
+- **Traversal logic runs in the app layer behind the `GraphStore` seam, and the trace is
+  backend-identical.** `traverse` (typed steps) is over `neighbors()`; `expand_neighborhood`
+  (seed-and-expand) is over `neighbors_batch()` — whose **default** fans out over `neighbors()`
+  and whose **Neptune override** issues one batched openCypher query per direction (added in
+  slice 3 because the per-edge-kind fan-out timed out against Neptune Serverless). The override is
+  trace-safe **only** because `expand_neighborhood` sorts the reached set + edge kinds, so order is
+  backend-independent. Any new backend method must preserve that identical-trace property (sort, do
+  not rely on store result order).
 - **The fixture corpus is real, pinned excerpts** (see
   `tests/fixtures/corpus/README.md`) so the resolver eval is empirical.
