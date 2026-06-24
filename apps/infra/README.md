@@ -30,18 +30,37 @@ python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 npm install -g aws-cdk            # the cdk CLI (Node)
 
+cdk bootstrap                     # one-time per account/region (the stack uses a
+                                  # custom resource to auto-empty the S3 bucket)
 cdk deploy --parameters BudgetAlarmEmail=you@example.com
-# then build + push the ingestion image to the created ECR repo and run the task:
+
+# Upload the corpus snapshot as `community/` and `enhancements/` trees at the
+# BUCKET ROOT (the task defaults CORPUS_PREFIX="" — a non-root prefix silently
+# ingests nothing). Then build + push the ingestion image and run the task. The
+# task def carries NEPTUNE_ENDPOINT + CORPUS_BUCKET; AWS_REGION is injected by the
+# Fargate agent — so run-task needs no env overrides:
+#   aws s3 cp --recursive ./corpus s3://<corpus-bucket>/   # community/ + enhancements/ at root
 #   docker build -f ../ingestion/Dockerfile -t <ecr-repo-uri>:latest ../..
 #   docker push <ecr-repo-uri>:latest
-#   aws ecs run-task --cluster <cluster> --task-definition <task> --launch-type FARGATE ...
+#   aws ecs run-task --cluster <cluster> --task-definition <task> --launch-type FARGATE \
+#     --network-configuration 'awsvpcConfiguration={subnets=[<private-subnet>],securityGroups=[<ingestion-sg>]}'
 
 cdk destroy                       # removes every billable resource
 ```
 
+> The VPC spans **2 AZs** because a Neptune DB subnet group requires ≥2 AZs — but
+> the serverless cluster still runs a single instance, so this is an API
+> requirement, not added HA cost (subnets are free).
+
 ## Verification
 
 The topology + security posture is asserted in-process (no AWS account, no `cdk`
-CLI) by `tests/test_stack.py` — run `pytest apps/infra/tests`. **Live-AWS**
-deploy/destroy verification (that destroy leaves nothing billable, that the alarm
-fires) is deferred: backlog `graph-ingestion-resolution-live-deploy`.
+CLI) by `tests/test_stack.py` — run `pytest apps/infra/tests`.
+
+**Live ingestion smoke check (the deferred AC9 pass condition):** after `run-task`,
+confirm the ingestion CloudWatch log stream shows **non-zero** parsed/resolved
+counts (an empty-corpus run exits 0 with zero counts — a silent no-op). The
+`== ingest ==` report prints `parsed docs:` and `cross-source resolved nodes` — a
+healthy run shows both > 0. **Live-AWS** deploy/destroy verification (that destroy
+leaves nothing billable, that the alarm fires) is deferred: backlog
+`graph-ingestion-resolution-live-deploy`.

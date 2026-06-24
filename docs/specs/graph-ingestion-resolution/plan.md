@@ -106,6 +106,11 @@ the ADR-0002 stack behind the same IaC app:
 - **Provisions:** VPC (private subnets, no NAT) + endpoints (`s3`, `ecr.api`,
   `ecr.dkr`, `logs`, `sts`) + Neptune Serverless (min capacity) + S3 snapshot
   bucket + Fargate ingestion task def + Budgets alarm.
+- **VPC spans 2 AZs (Neptune API requirement, not HA).** A Neptune DB subnet
+  group requires subnets in ≥2 AZs or `cdk deploy` fails; the serverless cluster
+  still runs a single instance, so this is consistent with ADR-0002's single-node
+  posture (subnets are free — only running compute costs). The deploy requires a
+  one-time `cdk bootstrap` (the bucket's auto-empty uses a custom resource).
 - **Deliberately deferred to later slices:** `bedrock-runtime` endpoint,
   OpenSearch, the query Lambda + Function URL (slices 2–3 add them to the same
   stack).

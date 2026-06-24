@@ -77,7 +77,11 @@ class GraphragStack(Stack):
         vpc = ec2.Vpc(
             self,
             "Vpc",
-            max_azs=1,  # single-AZ by choice (ADR-0002 non-goal: HA)
+            # 2 AZs because a Neptune DB subnet group *requires* >=2 AZs — but the
+            # serverless cluster still runs a single instance, so this is an API
+            # requirement, not an HA choice (ADR-0002 single-instance posture holds;
+            # subnets are free, only running compute costs).
+            max_azs=2,
             nat_gateways=0,  # no NAT — all egress via VPC endpoints
             subnet_configuration=[
                 ec2.SubnetConfiguration(
@@ -182,7 +186,14 @@ class GraphragStack(Stack):
             "ingestion",
             image=ecs.ContainerImage.from_ecr_repository(repo),
             logging=ecs.LogDriver.aws_logs(stream_prefix="ingestion", log_group=log_group),
-            environment={"NEPTUNE_ENDPOINT": f"https://{cluster.attr_endpoint}:8182"},
+            # Self-configured: the deployed task knows its endpoint + bucket, so
+            # `aws ecs run-task` needs no env overrides. AWS_REGION is NOT set here
+            # — it is a reserved variable the Fargate agent injects automatically,
+            # and the entrypoint/botocore read it from there.
+            environment={
+                "NEPTUNE_ENDPOINT": f"https://{cluster.attr_endpoint}:8182",
+                "CORPUS_BUCKET": bucket.bucket_name,
+            },
         )
 
         # The task's ENI sits in the private subnets; Neptune accepts it on 8182.

@@ -6,6 +6,13 @@
   exists (off by default, IAM-enforceable). The decision (private, in-VPC topology)
   is unchanged — only the wording overstates the constraint. See
   [`docs/rfc/0001-notes/aws-feasibility.md`](../rfc/0001-notes/aws-feasibility.md) § 6.
+- **Correction (2026-06):** "Single-AZ" describes the *compute/instance* posture,
+  not the VPC. The slice-1 stack spans **2 AZs** because a Neptune DB subnet group
+  requires subnets in ≥2 AZs (or `cdk deploy` fails); the cluster still runs a
+  single serverless instance, so the no-HA, single-node decision is unchanged —
+  subnets are free, only running compute costs. See the
+  [`graph-ingestion-resolution`](../specs/graph-ingestion-resolution/plan.md) plan
+  Rollout note.
 - **Date:** 2026-06-23
 - **Decision-makers:** eugenelim
 - **Supersedes:** none

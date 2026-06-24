@@ -49,6 +49,16 @@ def test_neptune_serverless_vpc_resident(template: Template) -> None:
         },
     )
     template.resource_count_is("AWS::Neptune::DBSubnetGroup", 1)
+    # Neptune requires a subnet group spanning >=2 AZs, or `cdk deploy` fails — a
+    # deploy-time rule synth alone won't catch. The load-bearing assertion is that
+    # the group references >=2 subnets; with one subnet-config per AZ that means
+    # >=2 AZs. (The subnet-count line is a faithful proxy: one subnet per AZ here.)
+    subnets = [r for r in _resources(template).values() if r["Type"] == "AWS::EC2::Subnet"]
+    assert len(subnets) >= 2, "expected one private subnet per AZ (>=2)"
+    group = next(
+        r for r in _resources(template).values() if r["Type"] == "AWS::Neptune::DBSubnetGroup"
+    )
+    assert len(group["Properties"]["SubnetIds"]) >= 2
 
 
 def test_corpus_bucket_is_private_and_encrypted(template: Template) -> None:
