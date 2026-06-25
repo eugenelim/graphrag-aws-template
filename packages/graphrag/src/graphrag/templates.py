@@ -98,7 +98,14 @@ class Template:
         return {p.name for p in self.params}
 
     def is_read_only(self) -> bool:
-        """True iff the cypher contains no mutating clause or procedure call (AC1)."""
+        """True iff the cypher contains no mutating clause or procedure call (AC1).
+
+        A blocklist over upper-cased text — adequate because templates are PR-reviewed
+        Python literals, not attacker input. Known limit: it would not catch a write verb
+        hidden in a back-tick-quoted identifier or behind a non-``CALL`` procedure alias;
+        if the library ever grows beyond hand-authored literals, prefer an allowlist of
+        permitted read clauses. ``execute_template`` also calls this at the execution seam,
+        so a non-read-only template is refused at runtime, not only by the CI lint."""
         upper = self.cypher.upper()
         return not any(re.search(rf"\b{kw}\b", upper) for kw in _MUTATING_KEYWORDS)
 
@@ -175,6 +182,19 @@ TEMPLATES: tuple[Template, ...] = (
 )
 
 TEMPLATE_BY_ID: dict[str, Template] = {t.id: t for t in TEMPLATES}
+
+# Fail at import if any template violates the governance contract — read-only, and declared
+# params exactly matching the cypher's $placeholders. This makes the contract load-bearing at
+# the seam (a template added without a corresponding test entry still can't ship a write verb
+# or an unbound value), not only enforced by the CI lint in test_templates.py.
+for _t in TEMPLATES:
+    if not _t.is_read_only():
+        raise ValueError(f"governed template {_t.id!r} is not read-only")
+    if _t.placeholders() != _t.param_names():
+        raise ValueError(
+            f"governed template {_t.id!r} placeholders {_t.placeholders()} "
+            f"!= declared params {_t.param_names()}"
+        )
 
 
 def get_template(template_id: str) -> Template | None:
