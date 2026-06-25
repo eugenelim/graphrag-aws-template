@@ -260,6 +260,18 @@ class NeptuneGraphStore(GraphStore):
                 )
         return out
 
+    def run_template_query(self, query: str, params: dict[str, object]) -> list[Node]:
+        """Run a governed openCypher *template* and decode its ``RETURN n`` rows to nodes.
+
+        The live half of the ``opencypher-templates`` dual form: ``query`` is an
+        expert-authored, parameterized, read-only template string (``templates.py``) and
+        ``params`` is the validated parameter map (``params.py``) — bound through the same
+        ``_run`` parameter map as every other method, never interpolated. Every template
+        returns its rows under the alias ``n``; the app-layer evaluator returns the same
+        set, and ``governed.execute_template`` sorts both so the backends are identical."""
+        res = self._run(query, params)
+        return [_node_from_result(row["n"]) for row in res.get("results", [])]
+
     def all_nodes(self) -> list[Node]:
         res = self._run(f"MATCH (n:{_NODE_LABEL}) RETURN n", {})
         return [_node_from_result(row["n"]) for row in res.get("results", [])]

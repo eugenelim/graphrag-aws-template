@@ -521,3 +521,32 @@ def test_slice4_permission_filter_adds_no_new_infra(template: Template) -> None:
         "AWS::Budgets::Budget",
         {"Budget": Match.object_like({"BudgetLimit": {"Amount": 150, "Unit": "USD"}})},
     )
+
+
+# --- opencypher-templates: governed Cypher-Templates path adds NO new infra (AC8) ------
+def test_governed_templates_adds_no_new_infra(template: Template) -> None:
+    # The governed path rides the existing query Lambda via an additive `mode` field and
+    # reuses the already-granted Neptune data-access + synthesis-model Converse action
+    # (selection uses the same model). So it provisions nothing new: the product Lambda set,
+    # the single IAM-auth Function URL, the OpenSearch domain, and the Budgets value all
+    # hold from slices 3-4.
+    fns = [r for r in _resources(template).values() if r["Type"] == "AWS::Lambda::Function"]
+    product = [f for f in fns if str(f["Properties"].get("Handler", "")).startswith("graphrag.")]
+    assert len(product) == 3  # smoke + vector-smoke + query — no new governed function
+    template.resource_count_is("AWS::Lambda::Url", 1)  # still only the IAM-auth query URL
+    template.resource_count_is("AWS::OpenSearchService::Domain", 1)
+    template.has_resource_properties(
+        "AWS::Budgets::Budget",
+        {"Budget": Match.object_like({"BudgetLimit": {"Amount": 150, "Unit": "USD"}})},
+    )
+    # the bedrock grant is unchanged: Converse on the synthesis model, no wildcard resource
+    # (selection reuses it). Re-assert the no-wildcard invariant across every bedrock grant.
+    saw_converse = False
+    for stmt in _iam_statements(template):
+        actions = _as_list(stmt["Action"])
+        if not any(a.startswith("bedrock:") for a in actions):
+            continue
+        assert "*" not in _as_list(stmt["Resource"]), "bedrock grant must not be wildcard resource"
+        if "bedrock:Converse" in actions:
+            saw_converse = True
+    assert saw_converse, "governed selection reuses the existing bedrock:Converse grant"
