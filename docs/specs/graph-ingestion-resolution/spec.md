@@ -208,11 +208,10 @@ Gates: `ruff` (lint+format, with the `S` security ruleset), `mypy` (typecheck),
   resource, scoped CloudWatch `logs` — no wildcard `Resource`); and an AWS
   **Budgets** alarm with a concrete threshold and a notification subscriber — per
   ADR-0002. *(goal-based: `cdk synth` + template assertions; CDK-env-gated)*
-- [ ] **AC9 — One-command deploy/destroy.** `deploy` provisions the stack, uploads
+- [ ] **AC9 — One-command deploy/destroy** *(deferred: graph-ingestion-resolution-live-deploy)*. `deploy` provisions the stack, uploads
   the corpus snapshot, and runs the ingestion task once; `destroy` removes every
-  billable resource. Entrypoints + documented procedure ship here; **live-AWS
-  verification is** *(deferred: graph-ingestion-resolution-live-deploy)*. *(manual
-  QA)*
+  billable resource. Entrypoints + documented procedure ship here; the **live-AWS
+  verification** is the deferred part. *(manual QA)*
 - [x] **AC10 — Every stage is narratable (ordered trace).** `ingest`,
   `graph-query`, and `resolve-eval` each emit a human-readable trace whose
   **structure** is asserted: parsed counts → resolved merges (before/after) for
