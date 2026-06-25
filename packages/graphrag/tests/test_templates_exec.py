@@ -60,33 +60,46 @@ def test_app_layer_evaluator_returns_sorted_owned_keps(
     assert ids == ["kep-1880", "kep-2086"]  # sorted, deduped
 
 
-# Every template, with a param that has rows in the fixture — the four most likely to drift
-# between cypher and evaluator (incoming edge, two edge kinds + a node-kind filter, inbound).
+# Every template, with a param + the **independent, hardcoded** rows it should return in the
+# fixture — the four most likely to drift between cypher and evaluator (incoming edge, two
+# edge kinds + a node-kind filter, inbound). The hardcoded `expected` is the ground truth both
+# the app-layer evaluator AND the Neptune-decoded result must equal, so a real
+# evaluator-vs-cypher divergence (plan Risk #1) surfaces — neither side is derived from the other.
 _TEMPLATE_CASES = [
-    ("sig_owned_keps", {"sig": "sig:sig-network"}),
-    ("sig_tech_leads", {"sig": "sig:sig-network"}),
-    ("person_led_sigs", {"person": "person:thockin"}),
-    ("kep_owning_sig", {"kep": "kep-2086"}),
+    ("sig_owned_keps", {"sig": "sig:sig-network"}, ["kep-1880", "kep-2086"]),
+    (
+        "sig_tech_leads",
+        {"sig": "sig:sig-network"},
+        ["person:aojea", "person:danwinship", "person:thockin"],
+    ),
+    ("person_led_sigs", {"person": "person:thockin"}, ["sig:sig-network"]),
+    ("kep_owning_sig", {"kep": "kep-2086"}, ["sig:sig-network"]),
 ]
 
 
-@pytest.mark.parametrize(("template_id", "params"), _TEMPLATE_CASES)
+@pytest.mark.parametrize(("template_id", "params", "expected"), _TEMPLATE_CASES)
 def test_neptune_path_matches_app_layer_for_every_template(
-    community_root: Path, enhancements_root: Path, template_id: str, params: dict[str, str]
+    community_root: Path,
+    enhancements_root: Path,
+    template_id: str,
+    params: dict[str, str],
+    expected: list[str],
 ) -> None:
     template = get_template(template_id)
     assert template is not None
-    # The app-layer result is the ground truth the openCypher form must equal (the dual-form
-    # identity, AC2 — covers each evaluator's edge direction / kind filter, not just one).
-    app_rows = execute_template(_mem_store(community_root, enhancements_root), template, params)
-    app_ids = [n.id for n in app_rows]
-    assert app_ids, f"{template_id} produced no rows for {params} — bad test fixture"
+    # (a) the app-layer evaluator independently returns the known-correct rows (AC2, the side
+    # most likely to drift from the cypher's intent — edge direction / kind filter).
+    app_ids = [
+        n.id
+        for n in execute_template(_mem_store(community_root, enhancements_root), template, params)
+    ]
+    assert app_ids == expected
 
-    # Neptune returns the same nodes under alias ``n``, unsorted on the wire; execute_template
-    # sorts both backends so the result is byte-identical. Feed the rows reversed to prove the sort.
+    # (b) the Neptune path, fed the *independent* expected rows (reversed, kind irrelevant to the
+    # id-identity check), decodes + sorts to the same set — both backends land on `expected`.
     neptune_rows = {
         "results": [
-            {"n": {"~properties": {"id": n.id, "kind": n.kind.value}}} for n in reversed(app_rows)
+            {"n": {"~properties": {"id": nid, "kind": "KEP"}}} for nid in reversed(expected)
         ]
     }
     http = _RecordingHttp([HttpResponse(200, json.dumps(neptune_rows))])
@@ -95,7 +108,7 @@ def test_neptune_path_matches_app_layer_for_every_template(
     )
     rows = execute_template(store, template, params)
 
-    assert [n.id for n in rows] == app_ids  # identical sorted set across backends
+    assert [n.id for n in rows] == expected  # identical sorted set across backends
     # the governed (parameterized) cypher ran: the value is bound, not interpolated.
     assert http.last_query() == template.cypher
     assert http.last_params() == params
