@@ -67,6 +67,18 @@ class GraphStore(ABC):
     @abstractmethod
     def all_edges(self) -> list[Edge]: ...
 
+    @abstractmethod
+    def delete_node(self, node_id: str) -> None:
+        """Delete a node and its incident edges (slice-5 orphan removal)."""
+
+    @abstractmethod
+    def delete_edge(self, src_id: str, kind: EdgeKind, dst_id: str) -> None:
+        """Delete one edge by its ``(src, kind, dst)`` identity (slice-5 orphan removal)."""
+
+    @abstractmethod
+    def clear(self) -> None:
+        """Remove every node and edge — the ``--rebuild`` ground-truth reset (slice 5)."""
+
     def neighbors_batch(
         self, node_ids: list[str], *, allowed_labels: frozenset[str] | None = None
     ) -> list[NeighborEdge]:

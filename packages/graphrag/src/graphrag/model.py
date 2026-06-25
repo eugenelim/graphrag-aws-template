@@ -120,5 +120,21 @@ class Graph:
             existing.props.setdefault(k, v)
         return existing
 
+    def remove_node(self, node_id: str) -> None:
+        """Delete a node and every edge incident to it (slice-5 orphan removal).
+
+        A dangling edge to a removed node would be a stale-reference orphan, so node removal
+        cascades to its incident edges in both directions."""
+        self.nodes.pop(node_id, None)
+        self._edges = {
+            key: edge
+            for key, edge in self._edges.items()
+            if edge.src_id != node_id and edge.dst_id != node_id
+        }
+
+    def remove_edge(self, src_id: str, kind: EdgeKind, dst_id: str) -> None:
+        """Delete one edge by its ``(src, kind, dst)`` identity (slice-5 orphan removal)."""
+        self._edges.pop((src_id, kind.value, dst_id), None)
+
     def get_node(self, node_id: str) -> Node | None:
         return self.nodes.get(node_id)

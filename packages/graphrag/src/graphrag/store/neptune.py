@@ -244,3 +244,26 @@ class NeptuneGraphStore(GraphStore):
         for row in res.get("results", []):
             edges.append(Edge(str(row["src"]), str(row["dst"]), EdgeKind(str(row["kind"]))))
         return edges
+
+    def delete_node(self, node_id: str) -> None:
+        """Delete a node and its incident edges (slice-5 orphan removal).
+
+        ``DETACH DELETE`` removes the node and every relationship it touches in one statement,
+        so no dangling edge survives. Parameterized on ``$id`` (the label/type are fixed
+        constants, never interpolated)."""
+        self._run(f"MATCH (n:{_NODE_LABEL} {{id: $id}}) DETACH DELETE n", {"id": node_id})
+
+    def delete_edge(self, src_id: str, kind: EdgeKind, dst_id: str) -> None:
+        """Delete one edge by its full ``(src, kind, dst)`` identity (slice-5 orphan removal).
+
+        Every leg is bound (``$src``/``$kind``/``$dst``) so exactly the identified edge is
+        deleted — never all edges of a kind."""
+        self._run(
+            f"MATCH (a:{_NODE_LABEL} {{id: $src}})-[r:{_REL_TYPE} {{kind: $kind}}]->"
+            f"(b:{_NODE_LABEL} {{id: $dst}}) DELETE r",
+            {"src": src_id, "kind": kind.value, "dst": dst_id},
+        )
+
+    def clear(self) -> None:
+        """Remove every node and edge — the ``--rebuild`` ground-truth reset (slice 5)."""
+        self._run(f"MATCH (n:{_NODE_LABEL}) DETACH DELETE n", {})

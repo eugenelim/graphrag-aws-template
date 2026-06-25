@@ -55,3 +55,15 @@ class VectorStore(ABC):
 
     @abstractmethod
     def delete(self, ids: list[str]) -> None: ...
+
+    @abstractmethod
+    def delete_by_doc(self, doc_ids: list[str]) -> None:
+        """Delete every chunk belonging to the named documents (slice-5 orphan removal).
+
+        Each ``doc_id`` is the source-qualified ``{source}/{path}`` key; because a chunk's
+        ``doc_path`` is source-less, the match is on **source AND doc_path together** — never
+        ``doc_path`` alone, which would cross-delete a same-named doc in the other source."""
+
+    @abstractmethod
+    def clear(self) -> None:
+        """Remove every chunk — the ``--rebuild`` ground-truth reset (slice 5)."""

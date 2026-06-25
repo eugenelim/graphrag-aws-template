@@ -57,3 +57,22 @@ def test_neighbors_batch_default_fanout_all_kinds_both_directions() -> None:
 
 def test_neighbors_batch_empty_frontier() -> None:
     assert _store().neighbors_batch([]) == []
+
+
+def test_delete_node_removes_node_and_incident_edges() -> None:
+    s = _store()
+    s.delete_node("sig:sig-network")
+    assert s.get_node("sig:sig-network") is None
+    assert s.all_edges() == []  # both fixture edges were incident to the SIG
+
+
+def test_delete_edge_removes_one_edge() -> None:
+    s = _store()
+    s.delete_edge("sig:sig-network", EdgeKind.OWNS, "kep-2086")
+    assert {(e.src_id, e.dst_id) for e in s.all_edges()} == {("person:thockin", "sig:sig-network")}
+
+
+def test_clear_empties_the_store() -> None:
+    s = _store()
+    s.clear()
+    assert s.all_nodes() == [] and s.all_edges() == []
