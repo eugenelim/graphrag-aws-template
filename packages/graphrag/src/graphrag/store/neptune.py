@@ -89,6 +89,11 @@ def _visibility_predicate(params: dict[str, object], allowed_labels: frozenset[s
     return "r.visibility IN $allowed AND b.visibility IN $allowed"
 
 
+# The slice-5 document-provenance set rides a single JSON-string scalar property (Neptune has
+# no native set property), so it round-trips losslessly through _scalar_props' string passthrough.
+_DOC_PATHS_PROP = "doc_paths"
+
+
 def _scalar_props(props: dict[str, object]) -> dict[str, object]:
     """Neptune properties must be scalars; drop ``None`` and stringify the rest."""
     out: dict[str, object] = {}
@@ -99,15 +104,36 @@ def _scalar_props(props: dict[str, object]) -> dict[str, object]:
     return out
 
 
+def _write_props(props: dict[str, object], doc_paths: set[str]) -> dict[str, object]:
+    """The scalar property bag written to Neptune, with ``doc_paths`` encoded as a JSON string
+    (slice-5 provenance round-trip)."""
+    out = _scalar_props(props)
+    out[_DOC_PATHS_PROP] = json.dumps(sorted(doc_paths))
+    return out
+
+
+def _decode_doc_paths(props: dict[str, Any]) -> set[str]:
+    """Pop and decode the JSON-string ``doc_paths`` property (empty set if absent — a
+    pre-slice-5 row)."""
+    raw = props.pop(_DOC_PATHS_PROP, None)
+    if not raw:
+        return set()
+    try:
+        return {str(p) for p in json.loads(raw)}
+    except (TypeError, ValueError):
+        return set()
+
+
 def _node_from_result(obj: dict[str, Any]) -> Node:
-    # sources/edge-props are intentionally not round-tripped from Neptune — the
-    # live local≡Neptune trace-identity claim is the deferred AC9, not this slice.
+    # sources is intentionally not round-tripped from Neptune; doc_paths (slice 5) IS — the
+    # delta's orphan reconciliation reads it back on the live path.
     props = dict(obj.get("~properties", {}))
     if "id" not in props or "kind" not in props:
         raise RuntimeError(f"Neptune node result missing id/kind: {obj!r}")
     node_id = str(props.pop("id"))
     kind = EntityKind(str(props.pop("kind")))
-    return Node(id=node_id, kind=kind, props=props)
+    doc_paths = _decode_doc_paths(props)
+    return Node(id=node_id, kind=kind, props=props, doc_paths=doc_paths)
 
 
 class NeptuneGraphStore(GraphStore):
@@ -146,7 +172,11 @@ class NeptuneGraphStore(GraphStore):
     def upsert_node(self, node: Node) -> None:
         self._run(
             f"MERGE (n:{_NODE_LABEL} {{id: $id}}) SET n.kind = $kind, n += $props",
-            {"id": node.id, "kind": node.kind.value, "props": _scalar_props(node.props)},
+            {
+                "id": node.id,
+                "kind": node.kind.value,
+                "props": _write_props(node.props, node.doc_paths),
+            },
         )
 
     def upsert_edge(self, edge: Edge) -> None:
@@ -157,7 +187,7 @@ class NeptuneGraphStore(GraphStore):
                 "src": edge.src_id,
                 "dst": edge.dst_id,
                 "kind": edge.kind.value,
-                "props": _scalar_props(edge.props),
+                "props": _write_props(edge.props, edge.doc_paths),
             },
         )
 
@@ -237,12 +267,19 @@ class NeptuneGraphStore(GraphStore):
     def all_edges(self) -> list[Edge]:
         res = self._run(
             f"MATCH (a:{_NODE_LABEL})-[r:{_REL_TYPE}]->(b:{_NODE_LABEL}) "
-            "RETURN a.id AS src, b.id AS dst, r.kind AS kind",
+            "RETURN a.id AS src, b.id AS dst, r.kind AS kind, r.doc_paths AS doc_paths",
             {},
         )
         edges: list[Edge] = []
         for row in res.get("results", []):
-            edges.append(Edge(str(row["src"]), str(row["dst"]), EdgeKind(str(row["kind"]))))
+            edges.append(
+                Edge(
+                    str(row["src"]),
+                    str(row["dst"]),
+                    EdgeKind(str(row["kind"])),
+                    doc_paths=_decode_doc_paths({_DOC_PATHS_PROP: row.get("doc_paths")}),
+                )
+            )
         return edges
 
     def delete_node(self, node_id: str) -> None:
