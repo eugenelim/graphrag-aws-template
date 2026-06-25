@@ -488,3 +488,21 @@ def _iam_statements(template: Template) -> list[dict]:
 
 def _as_list(value: object) -> list:
     return value if isinstance(value, list) else [value]
+
+
+# --- slice 4: permission-filtered-retrieval adds NO new infra resource ----------------
+def test_slice4_permission_filter_adds_no_new_infra(template: Template) -> None:
+    # The persona rides the existing query Lambda's request body and the only store change
+    # is the OpenSearch index mapping (app code, applied at create_index on a fresh index).
+    # So slice 4 provisions nothing new: the Lambda set, the single IAM-auth Function URL,
+    # the OpenSearch domain, and the Budgets value are all unchanged from slice 3.
+    fns = [r for r in _resources(template).values() if r["Type"] == "AWS::Lambda::Function"]
+    product = [f for f in fns if str(f["Properties"].get("Handler", "")).startswith("graphrag.")]
+    # smoke + vector-smoke + query Lambda — slice 4 adds no new product function.
+    assert len(product) == 3
+    template.resource_count_is("AWS::Lambda::Url", 1)  # still only the IAM-auth query URL
+    template.resource_count_is("AWS::OpenSearchService::Domain", 1)
+    template.has_resource_properties(
+        "AWS::Budgets::Budget",
+        {"Budget": Match.object_like({"BudgetLimit": {"Amount": 150, "Unit": "USD"}})},
+    )

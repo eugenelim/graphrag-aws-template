@@ -88,3 +88,42 @@ def test_vector_eval_exits_nonzero_on_fail(
     )
     assert capsys.readouterr().out.strip().endswith("FAIL")
     assert rc == 1  # FAIL -> non-zero exit (CI gate)
+
+
+# --- slice 4: vector-query --persona (AC6) --------------------------------------------
+
+
+def _vquery(extra: list[str]) -> list[str]:
+    return [
+        "vector-query",
+        *_corpus_args(GRAPH_CORPUS),
+        "--q",
+        "in-place pod resize",
+        "--k",
+        "5",
+        *extra,
+    ]
+
+
+def test_vector_query_persona_filters_restricted_chunk(capsys: pytest.CaptureFixture[str]) -> None:
+    # KEP-1287's prose chunk is restricted; a public-reader must not see it surface.
+    rc = main(_vquery(["--persona", "public-reader"]))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "persona: public-reader" in out
+    assert "not real authz" in out
+    assert "1287" not in out  # the restricted KEP-1287 chunk is filtered out of k-NN
+
+
+def test_vector_query_no_persona_unfiltered(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(_vquery([]))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "persona:" not in out  # byte-identical to pre-slice-4 output
+
+
+def test_vector_query_unknown_persona_exits_nonzero() -> None:
+    import pytest as _pytest
+
+    with _pytest.raises(SystemExit):
+        main(_vquery(["--persona", "root"]))

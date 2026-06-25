@@ -72,6 +72,23 @@ class _UrllibClient:
             return HttpResponse(status=resp.status, text=resp.read().decode("utf-8"))
 
 
+def _visibility_predicate(params: dict[str, object], allowed_labels: frozenset[str] | None) -> str:
+    """The slice-4 permission filter as a bare openCypher predicate, parameterized.
+
+    Returns ``"r.visibility IN $allowed AND b.visibility IN $allowed"`` and binds the tier
+    list onto ``params['allowed']`` — the values ride the ``parameters`` map, never
+    string-interpolated (the injection vector). Returns ``""`` (binding nothing) when
+    ``allowed_labels`` is ``None`` (unfiltered). The caller supplies the ``WHERE``/``AND``
+    connector. The edge predicate subsumes the node check (``compose=max`` + downward-closed
+    clearance); the ``b.visibility`` conjunct is a defensive guard against a stale edge
+    label, matching the in-memory store's predicate exactly.
+    """
+    if allowed_labels is None:
+        return ""
+    params["allowed"] = sorted(allowed_labels)
+    return "r.visibility IN $allowed AND b.visibility IN $allowed"
+
+
 def _scalar_props(props: dict[str, object]) -> dict[str, object]:
     """Neptune properties must be scalars; drop ``None`` and stringify the rest."""
     out: dict[str, object] = {}
@@ -149,7 +166,14 @@ class NeptuneGraphStore(GraphStore):
         rows = res.get("results", [])
         return _node_from_result(rows[0]["n"]) if rows else None
 
-    def neighbors(self, node_id: str, edge_kind: EdgeKind, direction: Direction) -> list[Node]:
+    def neighbors(
+        self,
+        node_id: str,
+        edge_kind: EdgeKind,
+        direction: Direction,
+        *,
+        allowed_labels: frozenset[str] | None = None,
+    ) -> list[Node]:
         if direction is Direction.OUT:
             pattern = (
                 f"(a:{_NODE_LABEL} {{id: $id}})-[r:{_REL_TYPE} {{kind: $kind}}]->(b:{_NODE_LABEL})"
@@ -158,10 +182,15 @@ class NeptuneGraphStore(GraphStore):
             pattern = (
                 f"(a:{_NODE_LABEL} {{id: $id}})<-[r:{_REL_TYPE} {{kind: $kind}}]-(b:{_NODE_LABEL})"
             )
-        res = self._run(f"MATCH {pattern} RETURN b", {"id": node_id, "kind": edge_kind.value})
+        params: dict[str, object] = {"id": node_id, "kind": edge_kind.value}
+        pred = _visibility_predicate(params, allowed_labels)
+        where = f" WHERE {pred}" if pred else ""
+        res = self._run(f"MATCH {pattern}{where} RETURN b", params)
         return [_node_from_result(row["b"]) for row in res.get("results", [])]
 
-    def neighbors_batch(self, node_ids: list[str]) -> list[NeighborEdge]:
+    def neighbors_batch(
+        self, node_ids: list[str], *, allowed_labels: frozenset[str] | None = None
+    ) -> list[NeighborEdge]:
         """Batched neighborhood for the whole frontier in **two** openCypher queries
         (one per direction), instead of the default fan-out's O(nodes x kinds x 2)
         round-trips — the live-perf path for seed-and-expand against Neptune.
@@ -178,10 +207,17 @@ class NeptuneGraphStore(GraphStore):
             Direction.OUT: f"(a:{_NODE_LABEL})-[r:{_REL_TYPE}]->(b:{_NODE_LABEL})",
             Direction.IN: f"(a:{_NODE_LABEL})<-[r:{_REL_TYPE}]-(b:{_NODE_LABEL})",
         }
+        params: dict[str, object] = {"ids": node_ids}
+        # Slice-4 permission filter, applied DURING traversal on the edge (parameterized,
+        # never interpolated): a forbidden neighbor is excluded server-side, so it never
+        # enters the frontier. Same predicate as the in-memory store.
+        pred = _visibility_predicate(params, allowed_labels)
+        where_vis = f" AND {pred}" if pred else ""
         for direction, pattern in patterns.items():
             res = self._run(
-                f"MATCH {pattern} WHERE a.id IN $ids RETURN a.id AS src, r.kind AS kind, b AS node",
-                {"ids": node_ids},
+                f"MATCH {pattern} WHERE a.id IN $ids{where_vis} "
+                "RETURN a.id AS src, r.kind AS kind, b AS node",
+                params,
             )
             for row in res.get("results", []):
                 out.append(

@@ -173,3 +173,57 @@ def test_expand_empty_seed_yields_nothing() -> None:
     result = expand_neighborhood(store, [], max_hops=2)
     assert result.result_ids == []
     assert result.trace == []
+
+
+# --- slice-4: during-traversal permission filter (the leak guard, AC3) ---------------
+
+from graphrag.labels import label_graph  # noqa: E402
+from graphrag.model import Edge, EntityKind, Graph, Node  # noqa: E402
+from graphrag.visibility import resolve_clearance  # noqa: E402
+
+
+def _leak_store() -> MemoryGraphStore:
+    """seed → R(restricted) → B(public): B is reachable ONLY through the restricted node.
+
+    A final-node-set post-filter would drop R but still surface B (leaking it via the
+    forbidden reachability path); the during-traversal edge filter must reach neither.
+    """
+    graph = Graph()
+    graph.upsert_node(Node("person:p", EntityKind.PERSON))
+    graph.upsert_node(Node("sig:s", EntityKind.SIG))
+    graph.upsert_node(Node("kep-9001", EntityKind.KEP))
+    graph.upsert_edge(Edge("person:p", "sig:s", EdgeKind.TECH_LEADS))
+    graph.upsert_edge(Edge("sig:s", "kep-9001", EdgeKind.OWNS))
+    label_graph(graph, {"sig:s": "restricted"})
+    return MemoryGraphStore(graph)
+
+
+def test_expand_edge_filter_no_leak_for_public_reader() -> None:
+    res = expand_neighborhood(
+        _leak_store(), ["person:p"], max_hops=2, clearance=resolve_clearance("public-reader")
+    )
+    reached = set(res.result_ids)
+    # the restricted intermediate is never reached...
+    assert "sig:s" not in reached
+    # ...and neither is the node reachable ONLY through it (the leak the guard prevents).
+    assert "kep-9001" not in reached
+    # and neither appears anywhere in the hop trace.
+    in_trace = {nid for entry in res.trace for nid in entry.reached}
+    assert "sig:s" not in in_trace
+    assert "kep-9001" not in in_trace
+
+
+def test_expand_maintainer_reaches_through_restricted() -> None:
+    res = expand_neighborhood(
+        _leak_store(), ["person:p"], max_hops=2, clearance=resolve_clearance("maintainer")
+    )
+    reached = set(res.result_ids)
+    assert "sig:s" in reached
+    assert "kep-9001" in reached
+
+
+def test_expand_no_clearance_is_unfiltered_slice3_behavior() -> None:
+    res = expand_neighborhood(_leak_store(), ["person:p"], max_hops=2, clearance=None)
+    reached = set(res.result_ids)
+    assert "sig:s" in reached
+    assert "kep-9001" in reached

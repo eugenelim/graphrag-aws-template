@@ -39,11 +39,26 @@ class GraphStore(ABC):
     def get_node(self, node_id: str) -> Node | None: ...
 
     @abstractmethod
-    def neighbors(self, node_id: str, edge_kind: EdgeKind, direction: Direction) -> list[Node]:
+    def neighbors(
+        self,
+        node_id: str,
+        edge_kind: EdgeKind,
+        direction: Direction,
+        *,
+        allowed_labels: frozenset[str] | None = None,
+    ) -> list[Node]:
         """Nodes one hop from ``node_id`` along ``edge_kind`` in ``direction``.
 
         ``OUT`` follows edges where ``node_id`` is the source; ``IN`` follows edges
         where it is the destination.
+
+        ``allowed_labels`` is the slice-4 permission filter (a teaching stand-in for an
+        ACL, never real authz): when not ``None``, the hop excludes any edge whose
+        ``visibility`` — or whose neighbor node's ``visibility`` — is outside the set, so a
+        forbidden node never enters the frontier. Because an edge's visibility is
+        ``compose(src, dst) = max`` and a clearance is downward-closed, the edge check
+        subsumes the node check; the neighbor check is kept as a defensive guard against a
+        stale edge label. ``None`` = unfiltered (the slice-1–3 path).
         """
 
     @abstractmethod
@@ -52,7 +67,9 @@ class GraphStore(ABC):
     @abstractmethod
     def all_edges(self) -> list[Edge]: ...
 
-    def neighbors_batch(self, node_ids: list[str]) -> list[NeighborEdge]:
+    def neighbors_batch(
+        self, node_ids: list[str], *, allowed_labels: frozenset[str] | None = None
+    ) -> list[NeighborEdge]:
         """All neighbor edges of ``node_ids`` across **every** edge kind and **both**
         directions — the batched primitive seed-and-expand expands over.
 
@@ -63,11 +80,17 @@ class GraphStore(ABC):
         round-trips instead of O(nodes x kinds x directions) — the live-perf path
         (Neptune). The order of the returned edges is not significant: callers that
         need a stable trace sort the reached set themselves.
+
+        ``allowed_labels`` (slice-4 permission filter) is threaded into each ``neighbors``
+        call, so the during-traversal edge filter applies identically whether a backend
+        uses this fan-out or overrides the batch.
         """
         out: list[NeighborEdge] = []
         for node_id in node_ids:
             for edge_kind in EdgeKind:
                 for direction in (Direction.OUT, Direction.IN):
-                    for neighbor in self.neighbors(node_id, edge_kind, direction):
+                    for neighbor in self.neighbors(
+                        node_id, edge_kind, direction, allowed_labels=allowed_labels
+                    ):
                         out.append(NeighborEdge(node_id, edge_kind, direction, neighbor))
         return out

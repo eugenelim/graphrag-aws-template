@@ -121,3 +121,56 @@ design model, not a demo step, so it lives next door:
 Each row's `query`, `gold`, and `highlight` live in `queries.yaml`; a test
 (`test_showcase.py`) asserts every gold id resolves in the fixture corpus, so the
 curation stays honest.
+
+## Permission-filtered retrieval — the two-persona contrast (slice 4)
+
+> **These visibility labels are a *synthetic teaching stand-in* for access control — not
+> real authorization.** They show *where* permission filtering rides the retrieval path;
+> they are never production IAM, multi-tenancy, or data authz (charter principle 5).
+
+The same three-mode query takes an optional `--persona`. Two synthetic labels are applied
+to the corpus at ingest (`packages/graphrag/src/graphrag/labels.yaml`): **KEP-1287** is
+`restricted`, **KEP-1880** is `internal`. Three personas have ascending clearance:
+`public-reader` (sees `public`), `member` (`public` + `internal`), `maintainer` (all).
+
+Run the same question as two personas and watch the result diverge:
+
+```bash
+# A public reader: the restricted KEP-1287 is filtered out
+graphrag compare --community <c> --enhancements <e> \
+  --q "What KEPs does SIG Node own?" --persona public-reader
+# -> sees kep-9; KEP-1287 is absent (and its owning OWNS edge is never traversed)
+
+# A maintainer: the same question now surfaces the restricted KEP
+graphrag compare --community <c> --enhancements <e> \
+  --q "What KEPs does SIG Node own?" --persona maintainer
+# -> sees kep-9 AND kep-1287
+```
+
+**What to point at in the trace:** the `persona:`/`clearance:` line names the active
+clearance, and the `filtered (visibility; …)` line names what was removed. The teaching
+point is *where* the filter runs: the graph filter applies **during traversal, on edges**
+— the `OWNS` edge into a restricted KEP is never followed, so a forbidden node never
+enters the frontier and cannot leak via a reachability path (it is not merely dropped from
+the final result). The vector mode applies the same clearance as an OpenSearch metadata
+filter during the k-NN search; the hybrid mode applies both. Omit `--persona` and the
+output is identical to the unfiltered runs above.
+
+> The `filtered (…)` line names the *identity* of items the persona can't see — a teaching
+> observability aid. A real ACL system would **not** reveal that to the requester; it is
+> safe here only because the labels are non-authz and the live query ingress is the
+> IAM-auth, scoped-principal Function URL (the caller is the trusted operator, not an
+> end-user). See [`security.md`](../../architecture/security.md).
+
+### Permission showcase queries
+
+| Persona | Question | Sees | Filtered |
+| --- | --- | --- | --- |
+| `public-reader` | What KEPs does SIG Node own? | `kep-9` | `kep-1287` (restricted) |
+| `maintainer` | What KEPs does SIG Node own? | `kep-9`, `kep-1287` | — |
+| `public-reader` | What KEPs does sig-network own? | `kep-2086` | `kep-1880` (internal) |
+| `member` | What KEPs does sig-network own? | `kep-1880`, `kep-2086` | — |
+
+These live in `queries.yaml` under `permission_queries`; `test_showcase.py` asserts each
+`visible`/`filtered` id resolves in the fixture corpus **and** is consistent with the
+labels + the persona's clearance, so the curation stays honest.

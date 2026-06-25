@@ -44,7 +44,9 @@ class _FakeVectorStore:
     def __init__(self, *a: Any, **k: Any) -> None:
         pass
 
-    def knn(self, vector: list[float], k: int) -> list[VectorHit]:
+    def knn(
+        self, vector: list[float], k: int, *, allowed_labels: frozenset[str] | None = None
+    ) -> list[VectorHit]:
         chunk = Chunk(
             id="ENHANCEMENTS/keps/2086/README.md#0",
             text="Service Internal Traffic Policy.",
@@ -52,7 +54,10 @@ class _FakeVectorStore:
             doc_path="keps/2086/README.md",
             heading="Summary",
             entity_ids=["kep-2086", "sig:sig-network"],
+            visibility="public",
         )
+        if allowed_labels is not None and chunk.visibility not in allowed_labels:
+            return []
         return [VectorHit(chunk, 0.5)]
 
     def index_chunk(self, embedded: EmbeddedChunk) -> None: ...
@@ -68,24 +73,44 @@ class _FakeGraphStore(GraphStore):
             "person:thockin": Node("person:thockin", EntityKind.PERSON),
             "sig:sig-network": Node("sig:sig-network", EntityKind.SIG),
             "kep-2086": Node("kep-2086", EntityKind.KEP),
+            # a restricted KEP the SIG owns — visible only to a maintainer (slice 4).
+            "kep-secret": Node("kep-secret", EntityKind.KEP, props={"visibility": "restricted"}),
         }
         self._edges = [
             Edge("person:thockin", "sig:sig-network", EdgeKind.TECH_LEADS),
             Edge("sig:sig-network", "kep-2086", EdgeKind.OWNS),
+            Edge("sig:sig-network", "kep-secret", EdgeKind.OWNS),
         ]
 
     def get_node(self, node_id: str) -> Node | None:
         return self._nodes.get(node_id)
 
-    def neighbors(self, node_id: str, edge_kind: EdgeKind, direction: Direction) -> list[Node]:
+    def neighbors(
+        self,
+        node_id: str,
+        edge_kind: EdgeKind,
+        direction: Direction,
+        *,
+        allowed_labels: frozenset[str] | None = None,
+    ) -> list[Node]:
         out: list[Node] = []
         for e in self._edges:
             if e.kind != edge_kind:
                 continue
             if direction is Direction.OUT and e.src_id == node_id:
-                out.append(self._nodes[e.dst_id])
+                target = self._nodes[e.dst_id]
             elif direction is Direction.IN and e.dst_id == node_id:
-                out.append(self._nodes[e.src_id])
+                target = self._nodes[e.src_id]
+            else:
+                continue
+            # Mirror the real store's during-traversal filter on the neighbor's visibility
+            # (default public) so the lambda persona test exercises a real filtered path.
+            if (
+                allowed_labels is not None
+                and str(target.props.get("visibility", "public")) not in allowed_labels
+            ):
+                continue
+            out.append(target)
         return out
 
     def upsert_node(self, node: Node) -> None: ...
@@ -208,8 +233,43 @@ def test_query_lambda_import_graph_is_pyyaml_free() -> None:
     builtins.__import__ = _blocking
     try:
         importlib.import_module("graphrag.query_lambda")  # must not pull in yaml
+        # Slice-4: threading `visibility` (pure) must NOT transitively drag in `labels`
+        # (which imports yaml) — the read path stays PyYAML-free.
+        assert "graphrag.labels" not in sys.modules
     finally:
         builtins.__import__ = real_import
         for m in [m for m in list(sys.modules) if _is_target(m)]:
             del sys.modules[m]
         sys.modules.update(saved)
+
+
+# --- slice-4: persona permission filter through the Lambda (AC7) ----------------------
+
+
+def test_persona_filters_restricted_entity(wired: None) -> None:
+    reader = query_lambda.lambda_handler(
+        {"question": "what does @thockin own", "persona": "public-reader"}, None
+    )
+    maint = query_lambda.lambda_handler(
+        {"question": "what does @thockin own", "persona": "maintainer"}, None
+    )
+    # divergent: the restricted KEP is absent for the reader, present for the maintainer.
+    assert "kep-secret" not in json.dumps(reader)
+    assert "kep-secret" in json.dumps(maint)
+    # the trace names the persona/clearance (the filtered-out teaching aid).
+    assert "public-reader" in reader["trace"]
+    assert "not real authz" in reader["trace"]
+
+
+def test_unknown_persona_returns_sanitized_envelope(wired: None) -> None:
+    result = query_lambda.lambda_handler({"question": "hi", "persona": "root"}, None)
+    assert "error" in result
+    assert "correlation_id" in result
+    assert "answer" not in result  # orchestration did not run
+
+
+def test_no_persona_is_unrestricted(wired: None) -> None:
+    result = query_lambda.lambda_handler({"question": "what does @thockin own"}, None)
+    # unrestricted: the restricted KEP is reachable (no filter), and no clearance line.
+    assert "kep-secret" in json.dumps(result)
+    assert "clearance:" not in result["trace"]

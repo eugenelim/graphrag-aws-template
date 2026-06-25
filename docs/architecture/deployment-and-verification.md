@@ -249,3 +249,23 @@ fix so it can't regress silently:
 >    graph facts do not include explicit owns edges") instead of stating the ownership
 >    chain. The trace + structural win are correct; enriching the synthesis context with
 >    the relationships is the next quality step.
+
+## Verification ladder — slice 4 (permission-filtered retrieval)
+
+Slice 4 adds **no new infrastructure** (the persona rides the existing query Lambda's
+request body; the only store change is the OpenSearch `visibility` mapping field). The
+offline build proves the filter structurally — the during-traversal edge filter (the leak
+guard), the vector terms-filter, and the two-persona divergence are all asserted over the
+fixture corpus (`test_query.py`, `test_store_neptune.py`, `test_hybrid.py`,
+`test_compare.py`, `test_query_lambda.py`).
+
+| Rung | What it proves | Status |
+| --- | --- | --- |
+| Offline leak guard (AC3) | a restricted intermediate is unreachable for a low-clearance persona — incl. a node reachable *only* through it (a post-filter would leak it) | **PASS** (unit, in-memory) |
+| Neptune filter shape (AC3) | the `WHERE r.visibility IN $allowed AND b.visibility IN $allowed` is present and parameterized (`$allowed` on the params map, never interpolated) | **PASS** (mock HTTP) |
+| Three-mode + Lambda persona (AC5/AC7) | vector/graph/hybrid each filter by clearance; the query Lambda accepts a `persona`, fails closed on unknown, stays PyYAML-free | **PASS** (unit) |
+| Live two-persona smoke (AC9) | deploy → labeled Fargate dual-write → SigV4 Function-URL query as `public-reader` **and** `maintainer` over one entity-led question; the restricted entity absent for the reader, present for the maintainer; then destroy | **DEFERRED** — `permission-filtered-retrieval-live-deploy` (needs AWS creds + a deploy window) |
+
+> The live two-persona run is the supervisor's step (it costs a deploy cycle). When run,
+> record the two JSON results + teardown here as a new ladder row, mirroring the slice-3
+> hybrid-live entry above.

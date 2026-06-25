@@ -93,6 +93,9 @@ def _knn_mapping(dimensions: int) -> dict[str, Any]:
                 "doc_path": {"type": "keyword"},
                 "heading": {"type": "text"},
                 "entity_ids": {"type": "keyword"},
+                # Slice-4 synthetic visibility (a teaching stand-in for an ACL) — keyword so
+                # the permission terms-filter is exact-match. Lands on a fresh index only.
+                "visibility": {"type": "keyword"},
                 "text": {"type": "text"},
             }
         },
@@ -163,16 +166,32 @@ class OpenSearchVectorStore(VectorStore):
                 "doc_path": chunk.doc_path,
                 "heading": chunk.heading,
                 "entity_ids": chunk.entity_ids,
+                "visibility": chunk.visibility,
                 "text": chunk.text,
             },
         )
 
-    def knn(self, vector: list[float], k: int) -> list[VectorHit]:
-        body = {
-            "size": k,
-            "_source": {"excludes": ["vector"]},
-            "query": {"knn": {"vector": {"vector": vector, "k": k}}},
-        }
+    def knn(
+        self, vector: list[float], k: int, *, allowed_labels: frozenset[str] | None = None
+    ) -> list[VectorHit]:
+        knn_clause: dict[str, Any] = {"knn": {"vector": {"vector": vector, "k": k}}}
+        if allowed_labels is None:
+            query: dict[str, Any] = knn_clause
+        else:
+            # Slice-4 permission filter: the k-NN clause is the scoring `must`, the
+            # visibility terms-filter prunes the candidate set. The allowed tiers ride the
+            # request body, never interpolated into a path/query. (Recall caveat: on the
+            # nmslib/HNSW engine a `bool` `filter` can behave as a post-filter over the k
+            # ANN candidates, so a persona may get *fewer than k* visible hits — a
+            # retrieval-quality nuance, never a leak, since a restricted chunk is never
+            # returned. Demo-scale corpus; the live-path eval owns recall.)
+            query = {
+                "bool": {
+                    "must": [knn_clause],
+                    "filter": [{"terms": {"visibility": sorted(allowed_labels)}}],
+                }
+            }
+        body = {"size": k, "_source": {"excludes": ["vector"]}, "query": query}
         res = self._request("POST", f"/{self.index}/_search", body)
         return [self._hit(h) for h in res.get("hits", {}).get("hits", [])]
 
@@ -186,6 +205,7 @@ class OpenSearchVectorStore(VectorStore):
             doc_path=str(src.get("doc_path", "")),
             heading=str(src.get("heading", "")),
             entity_ids=list(src.get("entity_ids") or []),
+            visibility=str(src.get("visibility", "public")),
         )
         return VectorHit(chunk, float(hit.get("_score", 0.0)))
 

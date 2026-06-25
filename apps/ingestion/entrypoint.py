@@ -99,11 +99,15 @@ def _vector_dual_write(
         vector_store = OpenSearchVectorStore(endpoint or "", region)
 
     from graphrag.chunk import chunk_corpus
+    from graphrag.labels import label_chunks, load_labels
     from graphrag.sources import load_corpus
     from graphrag.store.vector_base import EmbeddedChunk
 
     vector_store.create_index()  # no-op for in-memory; creates the k-NN index on OpenSearch
     chunks = chunk_corpus(load_corpus(community, enhancements))
+    # Stamp synthetic visibility on every chunk from the same parse (slice 4) so the vector
+    # store carries the permission-filter metadata, consistent with the graph's labels.
+    label_chunks(chunks, load_labels())
     vectors = embedder.embed([c.text for c in chunks])
     for chunk, vector in zip(chunks, vectors, strict=True):
         vector_store.index_chunk(EmbeddedChunk(chunk, vector))

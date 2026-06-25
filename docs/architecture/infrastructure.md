@@ -169,6 +169,17 @@ necessary, not sufficient.
 
 Append one entry per slice that touches infrastructure. Newest first.
 
+- **Slice 4 — `permission-filtered-retrieval` (2026-06-24).** **No new resource.** The
+  synthetic visibility permission filter rides the existing topology: the persona is a
+  field on the existing query Lambda's request body, the graph filter is a parameterized
+  openCypher `WHERE` on the existing Neptune adapter, and the vector filter is an OpenSearch
+  `terms` metadata filter on the existing k-NN search. The only store change is an app-side
+  index-mapping field — `visibility` (`keyword`) added to `_knn_mapping`, applied at
+  `create_index` on a **fresh** index (teardown-first rebuild; a re-deploy over a live
+  domain does not migrate the mapping). The Neptune/OpenSearch IAM data actions already
+  cover the read/write. **Budgets unchanged at $150** (asserted by
+  `test_slice4_permission_filter_adds_no_new_infra`). Labels are a teaching stand-in for
+  ACLs, never real authz. Live two-persona smoke is the supervisor's step (AC9, deferred).
 - **Slice 2 — `vector-rag-baseline` (2026-06-24).** Added to the same stack: the
   `bedrock-runtime` VPC endpoint; a single-node, VPC-private, encrypted **OpenSearch
   domain** (k-NN) with a role-scoped access policy; a **vector smoke probe** Lambda;

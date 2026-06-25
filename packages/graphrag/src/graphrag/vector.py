@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 
 from .embed import Embedder
 from .store.vector_base import VectorHit, VectorStore
+from .visibility import Clearance
 
 DEFAULT_K = 5
 
@@ -43,11 +44,22 @@ class VectorQueryResult:
 
 
 def vector_search(
-    store: VectorStore, embedder: Embedder, query: str, k: int = DEFAULT_K
+    store: VectorStore,
+    embedder: Embedder,
+    query: str,
+    k: int = DEFAULT_K,
+    *,
+    clearance: Clearance | None = None,
 ) -> VectorQueryResult:
-    """Embed ``query``, retrieve the top-``k`` chunks, and return the traced result."""
+    """Embed ``query``, retrieve the top-``k`` chunks, and return the traced result.
+
+    When ``clearance`` is set (slice-4 permission filter), the allowed visibility tiers are
+    threaded into ``knn`` so a chunk above clearance is never a candidate (the filter rides
+    the ANN search, not a post-filter). ``None`` = unfiltered (slice-2/3 behavior).
+    """
     vector = embedder.embed([query])[0]
-    hits = store.knn(vector, k)
+    allowed = clearance.allowed if clearance is not None else None
+    hits = store.knn(vector, k, allowed_labels=allowed)
     return VectorQueryResult(
         query=query, model_id=embedder.model_id, dimensions=embedder.dimensions, hits=hits
     )

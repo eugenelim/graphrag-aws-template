@@ -84,3 +84,52 @@ def test_semantic_led_query_has_vector_chunks(
 ) -> None:
     result = _run(community_root, enhancements_root, "service internal traffic policy")
     assert result.vector.chunk_ids  # vector mode retrieved chunks
+
+
+# --- slice-4: permission filter across all three modes (AC5) --------------------------
+
+from graphrag.labels import label_chunks, label_graph, load_labels  # noqa: E402
+from graphrag.visibility import resolve_clearance  # noqa: E402
+
+
+def _labeled_run(
+    community_root: Path, enhancements_root: Path, q: str, persona: str | None
+) -> ComparisonResult:
+    docs = load_corpus(community_root, enhancements_root)
+    graph_obj = resolve(docs)
+    label_graph(graph_obj, load_labels())
+    graph = MemoryGraphStore.from_graph(graph_obj)
+    embedder = HashEmbedder()
+    vstore = MemoryVectorStore()
+    chunks = chunk_corpus(docs)
+    label_chunks(chunks, load_labels())
+    vectors = embedder.embed([c.text for c in chunks])
+    for c, v in zip(chunks, vectors, strict=True):
+        vstore.index_chunk(EmbeddedChunk(c, v))
+    return run_modes(
+        q,
+        vector_store=vstore,
+        graph_store=graph,
+        embedder=embedder,
+        synthesizer=TemplateSynthesizer(),
+        aliases=load_aliases(),
+        max_hops=2,
+        clearance=resolve_clearance(persona) if persona else None,
+    )
+
+
+def test_all_three_modes_diverge_by_persona(community_root: Path, enhancements_root: Path) -> None:
+    q = "What KEPs does SIG Node own?"
+    reader = _labeled_run(community_root, enhancements_root, q, "public-reader")
+    maint = _labeled_run(community_root, enhancements_root, q, "maintainer")
+
+    # graph-only and hybrid: the restricted KEP is reachable only for the maintainer.
+    assert "kep-1287" not in set(reader.graph.result_ids)
+    assert "kep-1287" in set(maint.graph.result_ids)
+    assert "kep-1287" not in set(reader.hybrid.result_ids)
+    assert "kep-1287" in set(maint.hybrid.result_ids)
+
+    # vector-only must filter its OWN chunk set too — the restricted KEP-1287 chunk never
+    # surfaces for the reader (else vector-only leaks what graph/hybrid drop).
+    reader_vec_chunks = " ".join(reader.vector.chunk_ids)
+    assert "1287" not in reader_vec_chunks

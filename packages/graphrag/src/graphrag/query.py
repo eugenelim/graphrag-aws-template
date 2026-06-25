@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 
 from .model import Direction, EdgeKind, Node
 from .store.base import GraphStore
+from .visibility import Clearance
 
 DEFAULT_MAX_HOPS = 2
 DEFAULT_FRONTIER_CAP = 50
@@ -73,18 +74,35 @@ def traverse(
     *,
     max_hops: int = DEFAULT_MAX_HOPS,
     frontier_cap: int = DEFAULT_FRONTIER_CAP,
+    clearance: Clearance | None = None,
 ) -> TraversalResult:
-    """Expand ``seed_ids`` through ``steps`` (one hop each), tracing every hop."""
+    """Expand ``seed_ids`` through ``steps`` (one hop each), tracing every hop.
+
+    When ``clearance`` is set (slice-4 permission filter), each hop filters edges by
+    visibility during traversal, so a forbidden node never enters the frontier — the same
+    leak guard as ``expand_neighborhood``. ``None`` = unfiltered.
+    """
     if len(steps) > max_hops:
         raise ValueError(f"{len(steps)} hops requested exceeds max_hops={max_hops}")
 
+    allowed = clearance.allowed if clearance is not None else None
+    # The seed is an *explicit* user-named start (the typed-path `graph-query` verb), so it
+    # is shown as-is — seed-visibility filtering is the orchestration layer's job
+    # (hybrid/compare drop+record a forbidden seed). Here the clearance filters the *hops*:
+    # a forbidden neighbor is excluded during traversal, so the path cannot reach past it.
+    # No separate final-set guard is needed (unlike hybrid/graph-only, which re-resolve
+    # nodes via resolve_nodes and could re-materialize one): every node in `result_ids`
+    # is a neighbor that already passed the edge predicate's `neighbor.visibility ∈ allowed`
+    # check, so the final frontier is within clearance by construction.
     frontier = _dedupe(seed_ids)
     result = TraversalResult(seed_ids=frontier)
 
     for hop, (edge_kind, direction) in enumerate(steps, start=1):
         reached: list[str] = []
         for node_id in frontier:
-            reached.extend(n.id for n in store.neighbors(node_id, edge_kind, direction))
+            reached.extend(
+                n.id for n in store.neighbors(node_id, edge_kind, direction, allowed_labels=allowed)
+            )
         reached = _dedupe(reached)
         truncated = len(reached) > frontier_cap
         if truncated:
@@ -146,6 +164,7 @@ def expand_neighborhood(
     *,
     max_hops: int = DEFAULT_MAX_HOPS,
     frontier_cap: int = DEFAULT_FRONTIER_CAP,
+    clearance: Clearance | None = None,
 ) -> NeighborhoodResult:
     """Expand ``seed_ids`` up to ``max_hops`` over **all** edge kinds in both directions.
 
@@ -163,7 +182,15 @@ def expand_neighborhood(
     set), not the first-discovered ones — the price of a backend-independent trace. An
     empty seed set expands to nothing. Returns the reached node IDs (cumulative,
     excluding the seeds) and the per-hop trace.
+
+    When ``clearance`` is set (slice-4 permission filter — a teaching stand-in for an ACL,
+    not real authz), the allowed visibility tiers are threaded into ``neighbors_batch`` so
+    the filter is applied **during traversal, on edges**: a forbidden node never enters the
+    frontier, never appears in the trace, and so can never bridge to a node reachable only
+    through it. Seed-visibility filtering (dropping a forbidden seed before expansion) is
+    the orchestration layer's job — by the time seeds reach here they are already cleared.
     """
+    allowed = clearance.allowed if clearance is not None else None
     seeds = _dedupe(seed_ids)
     result = NeighborhoodResult(seed_ids=seeds)
     visited: set[str] = set(seeds)
@@ -176,7 +203,7 @@ def expand_neighborhood(
         # fan-out over neighbors()). The reached set + contributing edge kinds are
         # sorted before recording, so the trace is deterministic and identical across
         # backends regardless of the order the store returns edges in.
-        edges = store.neighbors_batch(frontier)
+        edges = store.neighbors_batch(frontier, allowed_labels=allowed)
         newly = {e.neighbor.id for e in edges if e.neighbor.id not in visited}
         truncated = len(newly) > frontier_cap
         reached = sorted(newly)[:frontier_cap]
