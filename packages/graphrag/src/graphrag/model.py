@@ -42,23 +42,33 @@ class Direction(StrEnum):
 
 @dataclass
 class Node:
-    """A resolved graph entity. ``id`` is the normalized key (the merge key)."""
+    """A resolved graph entity. ``id`` is the normalized key (the merge key).
+
+    ``doc_paths`` (slice 5) is the set of ``{source}/{path}`` document ids that contribute
+    this node — the provenance/reference-count that the incremental delta's orphan-removal
+    pass reads: a node survives a delta iff at least one surviving document remains in this
+    set (``delta.py`` / ``ingest.ingest_delta``)."""
 
     id: str
     kind: EntityKind
     props: dict[str, object] = field(default_factory=dict)
     sources: set[str] = field(default_factory=set)
+    doc_paths: set[str] = field(default_factory=set)
 
 
 @dataclass
 class Edge:
-    """A directed relationship between two node IDs."""
+    """A directed relationship between two node IDs.
+
+    ``doc_paths`` (slice 5) is the contributing-document provenance set, same role as on
+    ``Node`` — the reference count the delta's orphan pass uses to decide edge removal."""
 
     src_id: str
     dst_id: str
     kind: EdgeKind
     props: dict[str, object] = field(default_factory=dict)
     sources: set[str] = field(default_factory=set)
+    doc_paths: set[str] = field(default_factory=set)
 
     def key(self) -> tuple[str, str, str]:
         """Identity of an edge for de-duplication."""
@@ -93,6 +103,7 @@ class Graph:
                 f"{existing.kind.value} vs {node.kind.value}"
             )
         existing.sources |= node.sources
+        existing.doc_paths |= node.doc_paths
         for k, v in node.props.items():
             existing.props.setdefault(k, v)
         return existing
@@ -104,6 +115,7 @@ class Graph:
             self._edges[edge.key()] = edge
             return edge
         existing.sources |= edge.sources
+        existing.doc_paths |= edge.doc_paths
         for k, v in edge.props.items():
             existing.props.setdefault(k, v)
         return existing

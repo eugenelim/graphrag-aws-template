@@ -30,11 +30,17 @@ def _persons(raw_list: object, aliases: dict[str, str]) -> list[tuple[str, str]]
 
 
 def extract(docs: list[ParsedDoc], aliases: dict[str, str]) -> tuple[list[Node], list[Edge]]:
-    """Extract all entities and edges from the parsed corpus."""
+    """Extract all entities and edges from the parsed corpus.
+
+    Each node/edge is stamped with its originating document's ``doc_id`` (slice-5 provenance)
+    — the reference-count the incremental delta's orphan pass reads. Stamping at the loop
+    level (every node/edge a doc emitted) keeps the per-kind extractors unchanged.
+    """
     nodes: list[Node] = []
     edges: list[Edge] = []
 
     for doc in docs:
+        n_start, e_start = len(nodes), len(edges)
         if doc.kind == "sigs_index":
             _extract_sigs_index(doc, aliases, nodes, edges)
         elif doc.kind == "sig_readme":
@@ -43,6 +49,10 @@ def extract(docs: list[ParsedDoc], aliases: dict[str, str]) -> tuple[list[Node],
             _extract_kep_yaml(doc, aliases, nodes, edges)
         elif doc.kind == "kep_readme":
             _extract_kep_readme(doc, aliases, nodes, edges)
+        for node in nodes[n_start:]:
+            node.doc_paths.add(doc.doc_id)
+        for edge in edges[e_start:]:
+            edge.doc_paths.add(doc.doc_id)
     return nodes, edges
 
 
