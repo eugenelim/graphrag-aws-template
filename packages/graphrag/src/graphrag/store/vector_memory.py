@@ -42,3 +42,14 @@ class MemoryVectorStore(VectorStore):
     def delete(self, ids: list[str]) -> None:
         for node_id in ids:
             self._items.pop(node_id, None)
+
+    def delete_by_doc(self, doc_ids: list[str]) -> None:
+        targets = set(doc_ids)
+        self._items = {
+            cid: ec
+            for cid, ec in self._items.items()
+            if f"{ec.chunk.source}/{ec.chunk.doc_path}" not in targets
+        }
+
+    def clear(self) -> None:
+        self._items = {}

@@ -87,6 +87,34 @@ def test_upsert_edge_uses_single_rel_type_with_kind_param() -> None:
     assert http.last_params()["kind"] == "TECH_LEADS"
 
 
+def test_delete_node_emits_parameterized_detach_delete() -> None:
+    http = RecordingHttp([HttpResponse(200, json.dumps({"results": []}))])
+    _store(http).delete_node("sig:sig-network")
+    query = http.last_query()
+    assert "DETACH DELETE" in query
+    assert "$id" in query and "sig:sig-network" not in query  # parameterized
+    assert http.last_params()["id"] == "sig:sig-network"
+
+
+def test_delete_edge_binds_full_src_kind_dst_key() -> None:
+    http = RecordingHttp([HttpResponse(200, json.dumps({"results": []}))])
+    _store(http).delete_edge("sig:sig-network", EdgeKind.OWNS, "kep-2086")
+    query = http.last_query()
+    # Every leg bound so exactly one edge is deleted — never all edges of a kind.
+    assert "$src" in query and "$kind" in query and "$dst" in query
+    assert "DELETE r" in query
+    assert "OWNS" not in query and "kep-2086" not in query
+    params = http.last_params()
+    assert params == {"src": "sig:sig-network", "kind": "OWNS", "dst": "kep-2086"}
+
+
+def test_clear_emits_detach_delete_all() -> None:
+    http = RecordingHttp([HttpResponse(200, json.dumps({"results": []}))])
+    _store(http).clear()
+    query = http.last_query()
+    assert "MATCH (n:Entity)" in query and "DETACH DELETE n" in query
+
+
 def test_neighbors_out_parses_into_same_node_shape() -> None:
     response = {
         "results": [

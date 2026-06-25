@@ -67,3 +67,12 @@ class MemoryGraphStore(GraphStore):
 
     def all_edges(self) -> list[Edge]:
         return self._graph.edges
+
+    def delete_node(self, node_id: str) -> None:
+        self._graph.remove_node(node_id)
+
+    def delete_edge(self, src_id: str, kind: EdgeKind, dst_id: str) -> None:
+        self._graph.remove_edge(src_id, kind, dst_id)
+
+    def clear(self) -> None:
+        self._graph = Graph()

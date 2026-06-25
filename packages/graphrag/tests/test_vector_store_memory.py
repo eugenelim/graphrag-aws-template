@@ -46,6 +46,41 @@ def test_delete_removes_by_id() -> None:
     assert "a" not in [h.chunk.id for h in store.knn([1.0, 0.0, 0.0], k=99)]
 
 
+def test_delete_by_doc_disambiguates_source() -> None:
+    # Two chunks share the bare path "README.md" but differ by source — delete_by_doc keyed by
+    # the source-qualified doc id must remove only the named one (slice-5 orphan removal).
+    store = MemoryVectorStore()
+    store.index_chunk(
+        EmbeddedChunk(Chunk("community/README.md#0", "t", "community", "README.md", "H", []), [1.0])
+    )
+    store.index_chunk(
+        EmbeddedChunk(
+            Chunk("enhancements/README.md#0", "t", "enhancements", "README.md", "H", []), [1.0]
+        )
+    )
+    store.delete_by_doc(["enhancements/README.md"])
+    remaining = {h.chunk.id for h in store.knn([1.0], k=99)}
+    assert remaining == {"community/README.md#0"}
+
+
+def test_delete_by_doc_removes_all_chunks_of_a_doc() -> None:
+    store = MemoryVectorStore()
+    for ordinal in range(3):
+        store.index_chunk(
+            EmbeddedChunk(
+                Chunk(f"community/a.md#{ordinal}", "t", "community", "a.md", "H", []), [1.0]
+            )
+        )
+    store.delete_by_doc(["community/a.md"])
+    assert store.count() == 0
+
+
+def test_clear_empties_vector_store() -> None:
+    store = _store()
+    store.clear()
+    assert store.count() == 0
+
+
 def test_zero_vector_scores_zero_not_nan() -> None:
     store = MemoryVectorStore()
     store.index_chunk(_ec("z", [0.0, 0.0, 0.0]))

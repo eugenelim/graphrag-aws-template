@@ -218,3 +218,30 @@ class OpenSearchVectorStore(VectorStore):
         if refresh:
             path += "?refresh=true"
         self._request("POST", path, {"query": {"terms": {"chunk_id": ids}}})
+
+    def delete_by_doc(self, doc_ids: list[str], *, refresh: bool = True) -> None:
+        """Delete every chunk of the named documents (slice-5 orphan removal).
+
+        A ``doc_id`` is the source-qualified ``{source}/{path}``; the match is on **source AND
+        doc_path together** (a ``bool.should`` of per-doc ``must`` pairs over the already-indexed
+        ``source`` + ``doc_path`` keyword fields), never ``doc_path`` alone — otherwise a
+        same-named doc in the other source would be cross-deleted."""
+        if not doc_ids:
+            return
+        clauses = []
+        for did in doc_ids:
+            source, _, doc_path = did.partition("/")
+            clauses.append(
+                {"bool": {"must": [{"term": {"source": source}}, {"term": {"doc_path": doc_path}}]}}
+            )
+        path = f"/{self.index}/_delete_by_query"
+        if refresh:
+            path += "?refresh=true"
+        self._request("POST", path, {"query": {"bool": {"should": clauses}}})
+
+    def clear(self, *, refresh: bool = True) -> None:
+        """Remove every chunk (keep the index) — the ``--rebuild`` reset (slice 5)."""
+        path = f"/{self.index}/_delete_by_query"
+        if refresh:
+            path += "?refresh=true"
+        self._request("POST", path, {"query": {"match_all": {}}})
