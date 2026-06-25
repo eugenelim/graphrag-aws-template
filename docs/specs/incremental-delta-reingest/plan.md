@@ -1,7 +1,7 @@
 # Plan: incremental-delta-reingest
 
 - **Spec:** [`spec.md`](spec.md)
-- **Status:** Executing <!-- Drafting | Executing | Done -->
+- **Status:** Done <!-- Drafting | Executing | Done -->
 
 > **Plan contract:** this is the implementation strategy. Unlike the spec, this
 > document is allowed to change as you learn. When it changes substantially
@@ -433,6 +433,13 @@ edge case.
   with doc-path as provenance; (5) added AC8b (no-prior-manifest fallback) and made it pure
   `ingest_delta` logic so T5 no longer forward-depends on T6's S3 helpers; (6) scoped AC6
   equivalence to the in-memory oracle; (7) added `resolve.py` to T2 Touches.
+- 2026-06-24: AC9 verified live (T8) on the deployed full stack — `MODE=rebuild` baseline →
+  real delta (deleted KEP-1880, added KEP-4242) → `MODE=delta` removed 2 orphans + added the
+  KEP across both stores (Fargate trace), confirmed live via SigV4 Function-URL query
+  (KEP-4242 retrievable; KEP-1880 dropped/absent), then torn down. The live run surfaced + fixed
+  one IAM gap `cdk synth` can't catch: the slice-1 task role was read-only on the corpus bucket,
+  so the manifest `PutObject` hit AccessDenied — added `s3:PutObject` scoped to `manifest.json`
+  (`bucket.grant_put`), pinned by a new stack test. Plan Status → Done.
 - 2026-06-24: EXECUTE discovery (T4) — reconciliation needs an **exact-set** store primitive,
   not `upsert`. `upsert_*` *unions* `doc_paths` and *setdefaults* props (the resolve-merge
   semantics), but a surviving node/edge that lost a contributing doc must have its `doc_paths`
