@@ -33,6 +33,21 @@ class ShowcaseQuery:
     highlight: str = ""
 
 
+@dataclass
+class PermissionShowcaseQuery:
+    """A slice-4 permission-filtered demo query: the same question under a ``persona``, with
+    the entity ids the persona **should see** vs. those it should find **filtered** — the
+    two-persona contrast the presenter narrates (synthetic labels, a teaching stand-in for
+    ACLs, never real authz)."""
+
+    id: str
+    query: str
+    persona: str
+    visible: list[str] = field(default_factory=list)
+    filtered: list[str] = field(default_factory=list)
+    highlight: str = ""
+
+
 def load_showcase() -> list[ShowcaseQuery]:
     """Load the packaged showcase query set as ``ShowcaseQuery`` objects."""
     text = resources.files("graphrag.showcase").joinpath("queries.yaml").read_text(encoding="utf-8")
@@ -46,6 +61,26 @@ def load_showcase() -> list[ShowcaseQuery]:
                 query=str(entry["query"]),
                 wins=entry["wins"],
                 gold=[str(g) for g in entry.get("gold", [])],
+                highlight=str(entry.get("highlight", "")),
+            )
+        )
+    return out
+
+
+def load_permission_showcase() -> list[PermissionShowcaseQuery]:
+    """Load the packaged slice-4 permission-filtered demo queries (the two-persona set)."""
+    text = resources.files("graphrag.showcase").joinpath("queries.yaml").read_text(encoding="utf-8")
+    data = yaml.safe_load(text) or {}
+    raw = data.get("permission_queries", []) if isinstance(data, dict) else []
+    out: list[PermissionShowcaseQuery] = []
+    for entry in raw:
+        out.append(
+            PermissionShowcaseQuery(
+                id=str(entry["id"]),
+                query=str(entry["query"]),
+                persona=str(entry["persona"]),
+                visible=[str(g) for g in entry.get("visible", [])],
+                filtered=[str(g) for g in entry.get("filtered", [])],
                 highlight=str(entry.get("highlight", "")),
             )
         )

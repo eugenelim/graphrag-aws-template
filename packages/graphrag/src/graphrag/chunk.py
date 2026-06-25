@@ -42,6 +42,12 @@ class Chunk:
     doc_path: str  # path relative to the corpus root, for provenance in the trace
     heading: str  # the nearest preceding heading (the section the chunk came from)
     entity_ids: list[str] = field(default_factory=list)
+    # Synthetic visibility tier (slice 4) — a TEACHING stand-in for an ACL, never real
+    # authz. Defaults to "public"; the ingest-path labeling (graphrag.labels) sets it to
+    # compose() of the owning entities' tiers. Carried as OpenSearch chunk metadata for the
+    # permission filter (store/opensearch.py); never set by chunk_corpus itself, which stays
+    # PyYAML-free.
+    visibility: str = "public"
 
 
 def _entity_ids(doc: ParsedDoc) -> list[str]:

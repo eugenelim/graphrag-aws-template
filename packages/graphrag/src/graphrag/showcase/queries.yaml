@@ -162,3 +162,50 @@ queries:
       - "sig:sig-node"
       - "kep-9"
     highlight: "Vector finds the prose-only KEP-9; expansion attributes it to SIG Node via OWNS."
+
+# --- slice 4: permission-filtered retrieval (the two-persona contrast) ----------------
+# SYNTHETIC visibility labels — a TEACHING stand-in for ACLs, NOT real authz (charter
+# principle 5). Each query runs the SAME question under a `persona`; `visible` are the
+# entity ids the persona should still see, `filtered` the ones its clearance removes
+# (DURING traversal on edges — a forbidden node never enters the frontier). Labels:
+# kep-1287=restricted, kep-1880=internal (see src/graphrag/labels.yaml).
+permission_queries:
+  - id: perm-node-keps-public-reader
+    query: "What KEPs does SIG Node own?"
+    persona: public-reader
+    visible:
+      - "sig:sig-node"
+      - "kep-9"
+    filtered:
+      - "kep-1287"
+    highlight: "public-reader sees kep-9; the restricted KEP-1287 is filtered DURING traversal — the OWNS edge into it is never followed, so it can't leak via a hop."
+
+  - id: perm-node-keps-maintainer
+    query: "What KEPs does SIG Node own?"
+    persona: maintainer
+    visible:
+      - "sig:sig-node"
+      - "kep-9"
+      - "kep-1287"
+    filtered: []
+    highlight: "Same question, maintainer clearance: the restricted KEP-1287 the public-reader could not see is now in the result — the divergence is the teaching point."
+
+  - id: perm-network-keps-public-reader
+    query: "What KEPs does sig-network own?"
+    persona: public-reader
+    visible:
+      - "sig:sig-network"
+      - "kep-2086"
+    filtered:
+      - "kep-1880"
+    highlight: "kep-1880 is labeled internal — filtered for a public-reader; the public kep-2086 remains."
+
+  - id: perm-network-keps-member
+    query: "What KEPs does sig-network own?"
+    persona: member
+    visible:
+      - "sig:sig-network"
+      - "kep-1880"
+      - "kep-2086"
+    filtered: []
+    highlight: "member clearance (public + internal) sees the internal KEP-1880 a public-reader cannot — the middle tier of the three-persona contrast."

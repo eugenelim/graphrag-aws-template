@@ -24,8 +24,15 @@ class MemoryVectorStore(VectorStore):
     def index_chunk(self, embedded: EmbeddedChunk) -> None:
         self._items[embedded.chunk.id] = embedded
 
-    def knn(self, vector: list[float], k: int) -> list[VectorHit]:
-        hits = [VectorHit(ec.chunk, cosine(vector, ec.vector)) for ec in self._items.values()]
+    def knn(
+        self, vector: list[float], k: int, *, allowed_labels: frozenset[str] | None = None
+    ) -> list[VectorHit]:
+        hits = [
+            VectorHit(ec.chunk, cosine(vector, ec.vector))
+            for ec in self._items.values()
+            # slice-4 permission filter: a chunk above clearance is not even a candidate.
+            if allowed_labels is None or ec.chunk.visibility in allowed_labels
+        ]
         hits.sort(key=lambda h: h.score, reverse=True)
         return hits[: max(0, k)]
 

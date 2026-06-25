@@ -35,6 +35,25 @@
 | Compute → Bedrock (Claude synthesis) | Via the `bedrock-runtime` VPC endpoint; default botocore-chain TLS client (no `verify=False`, no plaintext `endpoint_url`); the synthesis model id rides the request body, never string-interpolated. |
 | Public Function URL → error responses | On any failure the handler returns a **sanitized envelope** (a correlation id + a generic message; **no internal endpoint / ARN / stack text**) and logs the real detail to CloudWatch only — the loud-raise-with-body posture stays in-VPC (CLI/adapter side), never crossing the public ingress (information-disclosure boundary). An over-long question (> ~8 KB) is rejected before any orchestration runs. |
 
+## Trust boundaries (slice 4 — permission-filtered retrieval)
+
+> **These visibility labels are a *synthetic teaching stand-in* for access control — not
+> real authorization** (charter principle 5; an explicit Non-goal below). They demonstrate
+> *where* authorization rides a GraphRAG retrieval path; the controls below are about the
+> *mechanism* being correct as a teaching artifact, not production-grade authz.
+
+| Boundary | Control |
+| --- | --- |
+| Persona (untrusted input) → query filter | The `persona` is a query-time input. It resolves through `visibility.resolve_clearance` **fail-closed**: an unknown persona raises (CLI: non-zero exit; Lambda: a sanitized `unknown persona` envelope), never a silent fall-through to unrestricted. The resolved clearance's `allowed` tier set rides the openCypher `parameters` map (`$allowed`) and an OpenSearch `terms` filter — **never string-interpolated** (the `ruff S` ruleset stays on; injection-safe by construction). |
+| Forbidden entity → traversal (the leak guard) | The graph filter is applied **DURING traversal, on edges** (`GraphStore.neighbors`/`neighbors_batch`: in-memory and a parameterized Neptune `WHERE r.visibility IN $allowed AND b.visibility IN $allowed`), **not** as a post-filter on the final node set. A forbidden node therefore never enters the frontier, never appears in the hop trace, and cannot bridge to a node reachable only through it. A redundant independent guard also drops any above-clearance node from the final merged set. |
+| Default-when-no-persona = unrestricted | Omitting the persona yields unfiltered retrieval (slice-1–3 behavior). Read as an authz mechanism this is the textbook **fail-open default** a real ACL must invert (default-deny) — it is safe **here only** because the labels are non-authz **and** the query ingress is the IAM-auth, scoped-principal Function URL (the caller is the trusted deploying/CLI role, not an end-user). Named so the seam is never copied into a context where the persona is the security principal. |
+| Filtered-out trace → caller | The trace names the *identity* of filtered items (an enumeration oracle in a real ACL system) as a **teaching observability aid**, explicitly labeled "a real ACL would not reveal this." This disclosure is **contained by the trusted-caller ingress**: the filtered-out trace crosses the IAM-auth, scoped-principal Function URL only to the trusted operator role — *never* to the persona as an authenticated end-user. Surfacing filtered IDs to a less-trusted caller (a multi-tenant fork, an end-user endpoint) is out of scope and would require re-deciding this boundary. |
+
+The labels are written to **both** stores at ingest (Neptune node + edge properties;
+OpenSearch chunk metadata) from the same dual-write, so the filter is consistent across
+modes. The OpenSearch `visibility` keyword field lands only on a **fresh** index
+(teardown-first rebuild; a re-deploy over a live domain does not migrate the mapping).
+
 ## Least privilege
 
 The Fargate **task role** and the **vector probe role** grant only: scoped `s3`
@@ -64,9 +83,10 @@ Budgets alarm with a threshold + subscriber (charter principle 4).
 
 ## Out of scope this slice (named, not forgotten)
 
-- **Production authorization.** Slice 4's synthetic visibility labels are a
-  *teaching stand-in for ACLs*, never real authz (charter principle 5). Not built
-  here.
+- **Production authorization.** Slice 4 ships the synthetic visibility labels + the
+  permission filter (see the slice-4 trust-boundary table above), but those are a
+  *teaching stand-in for ACLs*, never real IAM / multi-tenancy / data authz (charter
+  principle 5). Real authorization is **not** built here.
 - **Prompt injection from retrieved Markdown** (OWASP LLM01/08). **Now a control as
   of slice 3** (see the slice-3 trust-boundary table): retrieved chunks reach Claude as
   data-not-instruction with a defensive system directive, the answer is display-only,

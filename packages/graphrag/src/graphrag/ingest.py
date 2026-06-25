@@ -15,6 +15,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .labels import label_graph, load_labels
 from .model import Graph
 from .resolve import cross_source_merges, load_aliases, resolve
 from .sources import load_corpus
@@ -59,10 +60,18 @@ def ingest(
     enhancements_root: Path,
     store: GraphStore,
     aliases: dict[str, str] | None = None,
+    labels: dict[str, str] | None = None,
 ) -> IngestReport:
-    """Parse both sources, resolve, write into ``store``, and report."""
+    """Parse both sources, resolve, label visibility, write into ``store``, and report.
+
+    The synthetic visibility labels (slice 4) are stamped onto the resolved graph's nodes
+    and edges **before** the upsert, so the deployed store carries node/edge ``visibility``
+    props for the during-traversal permission filter — written from the same pass as every
+    other property (charter pattern 2). ``labels`` defaults to the packaged ``labels.yaml``.
+    """
     docs = load_corpus(community_root, enhancements_root)
     graph = resolve(docs, aliases if aliases is not None else load_aliases())
+    label_graph(graph, labels if labels is not None else load_labels())
     for node in graph.nodes.values():
         store.upsert_node(node)
     for edge in graph.edges:

@@ -73,3 +73,22 @@ def test_entrypoint_dual_writes_graph_and_vector() -> None:
     )
     assert graph.all_nodes()  # graph half written
     assert vectors.count() > 0  # vector half written from the same parse
+
+
+def test_entrypoint_dual_write_labels_chunks() -> None:
+    # Slice 4: the same dual-write stamps synthetic visibility on every chunk, so the
+    # vector store carries the permission-filter metadata consistent with the graph labels.
+    graph = MemoryGraphStore()
+    vectors = MemoryVectorStore()
+    run(
+        {"CORPUS_BUCKET": "demo-bucket", "CORPUS_PREFIX": "snap/", "AWS_REGION": "us-east-1"},
+        s3_client=FakeS3(CORPUS, "snap/"),
+        store=graph,
+        vector_store=vectors,
+        embedder=HashEmbedder(),
+    )
+    visibilities = {ec.chunk.visibility for ec in vectors._items.values()}
+    # kep-1287 is labeled restricted in labels.yaml; its README chunks inherit it.
+    assert "restricted" in visibilities
+    # chunks owned only by public entities stay public.
+    assert "public" in visibilities

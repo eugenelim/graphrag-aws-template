@@ -71,6 +71,23 @@ dst) in the context `synthesize()` builds — `hybrid_query` already has the hop
 kinds — so the model can ground the relationship, not just the node set. Verify by re-running the
 live entity-led query and confirming the answer names KEP-1880/2086 as `sig-network`-owned.
 
+## permission-filtered-retrieval
+
+### permission-filtered-retrieval-live-deploy
+
+**Deferred live two-persona smoke (slice 4, spec `docs/specs/permission-filtered-retrieval/`,
+AC9).** The offline build proves the permission filter structurally — the during-traversal edge
+filter, the vector terms-filter, and the two-persona divergence are all asserted over the fixture
+corpus with the offline embedder/synthesizer. The full end-to-end live confirmation — **deploy**
+(`apps/infra/scripts/deploy.sh`) → run the **labeled Fargate dual-write** (the corpus ingested with
+`labels.yaml` applied, so Neptune node/edge `visibility` props + OpenSearch chunk `visibility`
+metadata are written) → a SigV4-signed Function-URL hybrid query with `persona=public-reader`
+**and** one with `persona=maintainer` over the same entity-led question, asserting the restricted
+entity is **absent** for the reader and **present** for the maintainer (each with its filtered-out
+trace) → **teardown** (`destroy.sh`) — costs a deploy cycle and is deferred. Blocked on AWS
+credentials + a deploy window; run when one is otherwise warranted. Record the two JSON results +
+teardown in `docs/architecture/deployment-and-verification.md` (a new verification-ladder row).
+
 ## vector-rag-baseline
 
 ### opensearch-create-index-idempotency-live-confirm

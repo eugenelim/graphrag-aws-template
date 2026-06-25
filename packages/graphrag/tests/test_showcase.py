@@ -44,3 +44,38 @@ def test_every_gold_resolves_in_fixture(community_root: Path, enhancements_root:
             assert gold in node_ids or gold in chunk_ids, (
                 f"query {q.id} gold {gold!r} resolves to neither a graph node nor a chunk id"
             )
+
+
+# --- slice 4: permission-filtered showcase queries (AC10) -----------------------------
+
+from graphrag.labels import load_labels  # noqa: E402
+from graphrag.showcase import PermissionShowcaseQuery, load_permission_showcase  # noqa: E402
+from graphrag.visibility import DEFAULT_VISIBILITY, resolve_clearance  # noqa: E402
+
+
+def test_permission_showcase_parses() -> None:
+    queries = load_permission_showcase()
+    assert queries
+    assert all(isinstance(q, PermissionShowcaseQuery) for q in queries)
+
+
+def test_permission_showcase_consistent_with_labels_and_personas(
+    community_root: Path, enhancements_root: Path
+) -> None:
+    docs = load_corpus(community_root, enhancements_root)
+    node_ids = set(resolve(docs).nodes)
+    labels = load_labels()
+
+    for q in load_permission_showcase():
+        assert q.query.strip()
+        assert q.highlight.strip(), f"{q.id} has an empty highlight"
+        assert q.visible or q.filtered, f"{q.id} names no visible/filtered split"
+        clearance = resolve_clearance(q.persona)  # persona must be a known clearance
+        # every named id resolves in the fixture graph, and the visible/filtered split is
+        # CONSISTENT with the actual labels + the persona's clearance (no hand-wavy gold).
+        for vid in q.visible:
+            assert vid in node_ids, f"{q.id} visible {vid!r} missing from fixture"
+            assert clearance.allows(labels.get(vid, DEFAULT_VISIBILITY))
+        for fid in q.filtered:
+            assert fid in node_ids, f"{q.id} filtered {fid!r} missing from fixture"
+            assert not clearance.allows(labels.get(fid, DEFAULT_VISIBILITY))
