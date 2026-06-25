@@ -164,6 +164,10 @@ break the delta-only cost claim for high-fan-in nodes like a SIG) needs per-docu
 provenance — deferred. Unblocked by storing per-doc prop provenance, or by making KEP `title`
 singly-sourced (README sets it only for legacy KEPs without a `kep.yaml`).
 
+<!-- opencypher-templates: AC9 (live governed-query smoke) was verified live on
+     2026-06-25 and the deferral closed — no open items. See
+     docs/architecture/deployment-and-verification.md. -->
+
 <!-- Add one section per spec with open work, e.g.:
 
 ## <spec-name>

@@ -300,3 +300,50 @@ fixture corpus (`test_query.py`, `test_store_neptune.py`, `test_hybrid.py`,
 > (`test_labels.py::test_all_packaged_yaml_declared_in_package_data`) that asserts every
 > `*.yaml` under `src/graphrag` is declared, so a future packaged resource can't be
 > forgotten. Same class as the slice-2 `opensearch-create-index-idempotency` live-only find.
+
+## Verification ladder — opencypher-templates (governed Cypher-Templates live query)
+
+The governed slice adds **no new infrastructure** (the governed path rides the existing
+query Lambda via an additive `mode: "governed"` field; selection reuses the granted
+synthesis-model `bedrock:Converse` + Neptune data-access). The offline build proves the
+machinery — the template registry + governance lint, deterministic param extraction, the
+Bedrock selector (mocked), the dual-form execution identity, and the query-Lambda governed
+dispatch — over the fixture corpus.
+
+| Rung | What it proves | Status |
+| --- | --- | --- |
+| Offline (`pytest` + synth) | template lint (read-only + `$param`-only), deterministic extraction, selector validation, dual-form (Neptune vs app-layer) identity across all four templates, governed Lambda dispatch (mocked), IaC unchanged (no new resource/grant, Budgets 150) | **green** (PR #12) |
+| Live deploy + dual-write | `cdk deploy` → `CREATE_COMPLETE`; Fargate single-parse dual-write | **PASS (2026-06-25)** — graph: 22 nodes / 28 edges / 6 cross-source merges (incl. `person:thockin`, `sig:sig-network`, `OWNS=4`); vector: 13 chunks via live Bedrock Titan |
+| Live governed query (AC9) | a SigV4 `mode: governed` POST to the IAM-auth Function URL selects a vetted template, binds a question-extracted + store-confirmed parameter, executes the **parameterized openCypher live on Neptune**, and returns the audit trace (cypher + param map + real rows) + a Bedrock Claude answer | **PASS (2026-06-25)** — three queries, three templates; traces below |
+
+> **Live governed-query smoke: PASS (2026-06-25).** Deployed `GraphragSlice1` to account
+> `<redacted>` (`us-east-1`), corpus dual-written, then three **SigV4-signed `mode: governed`
+> POSTs** to the IAM-auth Function URL (via `graphrag governed-query --function-url …`), each
+> selecting a **different** vetted template live and binding a different parameter kind:
+>
+> ```text
+> "Which KEPs does SIG Network own?"   -> template sig_owned_keps   | $sig=sig:sig-network (via link:slug)
+>     cypher: MATCH (s:Entity {id: $sig})-[r:REL {kind: 'OWNS'}]->(n:Entity) RETURN n
+>     rows:   kep-1880, kep-2086        | answer (Bedrock Claude): "SIG Network owns KEP-1880
+>             Multiple Service CIDRs and KEP-2086 Service Internal Traffic Policy"   (9.9 s)
+> "Who tech-leads SIG Network?"        -> template sig_tech_leads   | $sig=sig:sig-network (via link:slug)
+>     cypher: MATCH (n:Entity)-[r:REL {kind: 'TECH_LEADS'}]->(s:Entity {id: $sig}) RETURN n
+>     rows:   person:aojea, person:danwinship, person:thockin
+> "Which SIG owns KEP-2086?"           -> template kep_owning_sig   | $kep=kep-2086 (via link:kep-number)
+>     cypher: MATCH (n:Entity)-[r:REL {kind: 'OWNS'}]->(k:Entity {id: $kep}) RETURN n
+> ```
+>
+> This is the governed path proven **live** end to end: an untrusted question → a Bedrock
+> Claude (Converse) selection of one **vetted** template id (never authored query text) →
+> deterministic, store-confirmed parameter binding → the **parameterized openCypher executed
+> on live Neptune** (value bound via `$param`, never interpolated) → a Bedrock Claude answer
+> over the real rows, with the full audit trace returned. That the same `$sig` value drives
+> two different templates and a `$kep` value a third shows selection genuinely routes — the
+> governed pedagogy. The stack was then torn down with `scripts/destroy.sh` (teardown-first);
+> no billable resource remains. Satisfies AC9.
+>
+> **No code bug surfaced** (offline + mocked already covered the path). **One operational
+> gotcha worth recording:** the Bash/zsh tool runs **zsh**, where an unbraced `$ECR_URI:latest`
+> triggers zsh's `:l` (lowercase) history-modifier — silently mangling the image tag to
+> `…<repo>atest:latest` and pushing to a non-existent repo. Use `"${ECR_URI}:latest"` (braced)
+> when tagging/pushing the Fargate image. (Build/push only; not a stack or app defect.)

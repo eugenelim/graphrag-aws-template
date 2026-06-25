@@ -31,9 +31,13 @@
 
 ## Apps and packages
 
-**Slices 1–4 have landed** — the graph half, the vector baseline, the hybrid
-seed-and-expand mode + three-mode runner, *and* permission-filtered retrieval. Current
-layout:
+**Slices 1–5 have landed** — the graph half, the vector baseline, the hybrid
+seed-and-expand mode + three-mode runner, permission-filtered retrieval, and incremental
+delta re-ingest — plus the first **pattern-catalog** slice, `opencypher-templates` (the
+governed **Cypher Templates** path: a fixed library of expert-authored parameterized
+openCypher templates the LLM only *selects*, with parameters extracted/validated
+deterministically and a full audit trace; the governed half of the governed-vs-risky
+teaching pair). Current layout:
 
 | Path | What | Stack |
 | --- | --- | --- |

@@ -209,3 +209,43 @@ permission_queries:
       - "kep-2086"
     filtered: []
     highlight: "member clearance (public + internal) sees the internal KEP-1880 a public-reader cannot — the middle tier of the three-persona contrast."
+
+# opencypher-templates (governed Cypher-Templates path). Each query names the template a
+# correct selector should pick, the parameter that should be bound from the question, and
+# the gold rows the parameterized openCypher should return (all resolving in the fixture
+# corpus). The loader/test runs each template with its param and asserts rows == gold.
+governed_queries:
+  - id: governed-sig-owned-keps
+    query: "Which KEPs does SIG Network own?"
+    template: sig_owned_keps
+    param: "sig:sig-network"
+    gold:
+      - "kep-1880"
+      - "kep-2086"
+    highlight: "Selector picks sig_owned_keps; $sig binds to sig:sig-network; the vetted OWNS query returns the owned KEPs."
+
+  - id: governed-sig-tech-leads
+    query: "Who tech-leads SIG Network?"
+    template: sig_tech_leads
+    param: "sig:sig-network"
+    gold:
+      - "person:aojea"
+      - "person:danwinship"
+      - "person:thockin"
+    highlight: "Same SIG parameter, a different vetted template (TECH_LEADS, incoming) — selection chooses the query, not the value."
+
+  - id: governed-person-led-sigs
+    query: "What SIGs does @thockin tech-lead?"
+    template: person_led_sigs
+    param: "person:thockin"
+    gold:
+      - "sig:sig-network"
+    highlight: "A person parameter; the @handle is normalized + store-confirmed to person:thockin before binding."
+
+  - id: governed-kep-owning-sig
+    query: "Which SIG owns KEP-2086?"
+    template: kep_owning_sig
+    param: "kep-2086"
+    gold:
+      - "sig:sig-network"
+    highlight: "A KEP parameter resolved from the question; the OWNS edge is traversed inbound to the owning SIG."
