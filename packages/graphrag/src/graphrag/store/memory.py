@@ -76,3 +76,9 @@ class MemoryGraphStore(GraphStore):
 
     def clear(self) -> None:
         self._graph = Graph()
+
+    def replace_node(self, node: Node) -> None:
+        self._graph.set_node(node)
+
+    def replace_edge(self, edge: Edge) -> None:
+        self._graph.set_edge(edge)

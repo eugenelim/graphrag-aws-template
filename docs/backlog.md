@@ -135,6 +135,21 @@ infrastructure concern. Blocked on the repo gaining a CI surface (`.github/workf
 committed pre-commit config). Unblocked by adding a `gitleaks`/`detect-secrets` job + a
 `shellcheck` job that runs on push/PR.
 
+## incremental-delta-reingest
+
+### incremental-delta-multicontributed-prop
+
+**AC6 documented limit.** A KEP's `title` is contributed by both its `kep.yaml` and its
+README H1. The incremental delta reconciles multiply-contributed props **last-writer-wins**,
+so a README-only prose edit that changes the H1 while `kep.yaml` is unchanged makes the delta
+keep the README's title where a full `--rebuild` keeps `kep.yaml`'s (resolve's first-writer
+order). AC6's equivalence is scoped to the structural sets (nodes/edges/chunks/provenance) +
+props on delta-touched nodes; this single multiply-contributed-prop case is out of scope.
+Resolving it without re-parsing a touched node's *unchanged* co-contributor docs (which would
+break the delta-only cost claim for high-fan-in nodes like a SIG) needs per-document property
+provenance — deferred. Unblocked by storing per-doc prop provenance, or by making KEP `title`
+singly-sourced (README sets it only for legacy KEPs without a `kep.yaml`).
+
 <!-- Add one section per spec with open work, e.g.:
 
 ## <spec-name>

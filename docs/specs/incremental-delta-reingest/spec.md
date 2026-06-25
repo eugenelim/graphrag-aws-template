@@ -173,11 +173,16 @@ proceeding; *Never do* is a hard rule, even under time pressure.
   is reported as a move (not delete+add) in the trace, its chunks and node/edge provenance
   carry the new path, and nothing is orphaned by the move.
 - [ ] **AC6 — delta equals rebuild (in-memory).** Applying a delta converges the
-  in-memory graph and vector stores to contents identical to a full `--rebuild` of the
-  new snapshot — node-for-node, edge-for-edge, chunk-for-chunk (the consistency contract,
-  proven offline; the live path is AC9). The in-memory stores are the equivalence oracle
-  because the deployed backends do not round-trip every field byte-identically (Neptune
-  prop encoding; OpenSearch per-op `_id`).
+  in-memory graph and vector stores to the same **node set** (by id+kind), **edge set** (by
+  key), **`doc_paths` provenance**, **`sources`**, and **chunk set** (by id) as a full
+  `--rebuild` of the new snapshot, and the same **props** on every delta-touched node — the
+  consistency contract, proven offline (the live path is AC9). The in-memory stores are the
+  equivalence oracle because the deployed backends do not round-trip every field
+  byte-identically (Neptune prop encoding; OpenSearch per-op `_id`). *Documented limit:* a
+  multiply-contributed prop (a KEP's `title`, set by both `kep.yaml` and its README) reconciles
+  last-writer-wins, so a README-only prose edit that changes its H1 while `kep.yaml` is
+  unchanged is the one case the incremental path and a rebuild may differ on — out of the
+  equivalence scope (deferred: incremental-delta-multicontributed-prop).
 - [ ] **AC7 — `--rebuild` escape hatch.** `--rebuild` reingests from scratch, clearing
   prior state in both stores, and produces the same end state as a clean first ingest.
 - [ ] **AC8 — manifest persisted and diffed.** Each run writes the manifest

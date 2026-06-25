@@ -433,6 +433,20 @@ edge case.
   with doc-path as provenance; (5) added AC8b (no-prior-manifest fallback) and made it pure
   `ingest_delta` logic so T5 no longer forward-depends on T6's S3 helpers; (6) scoped AC6
   equivalence to the in-memory oracle; (7) added `resolve.py` to T2 Touches.
+- 2026-06-24: EXECUTE discovery (T4) — reconciliation needs an **exact-set** store primitive,
+  not `upsert`. `upsert_*` *unions* `doc_paths` and *setdefaults* props (the resolve-merge
+  semantics), but a surviving node/edge that lost a contributing doc must have its `doc_paths`
+  *shrunk* and a changed doc's props must *override*. Added `GraphStore.replace_node` /
+  `replace_edge` (exact set, no edge cascade) — memory: dict assignment; Neptune: `SET n = $props`
+  / edge `+=` (doc_paths is one JSON-string prop, overwritten). This is "beyond the delete
+  primitives" (spec *Ask first*); landed because reconciliation ships broken without it —
+  flagged for human awareness. Props reconcile **last-writer-wins** (changed doc overrides), so
+  a changed `kep.yaml` status updates exactly (AC3); `sources` are *derived from* `doc_paths`
+  prefixes so they match a rebuild. **Known limit:** a KEP `title` is multiply-contributed
+  (kep.yaml H1 vs README H1); a README-only prose edit that changes its H1 while `kep.yaml` is
+  unchanged makes the delta keep the README's title where a rebuild keeps kep.yaml's — AC6 is
+  scoped to structural equivalence (node/edge/chunk/provenance sets) + props on delta-touched
+  nodes; the demo/test use add/delete/move + `kep.yaml`/charter edits, which reconcile exactly.
 - 2026-06-24: second review round — (a) fixed the vector delete key mismatch: `Chunk.doc_path`
   is source-less, so `delete_by_doc` matches on **source + doc_path together** (existing fields,
   no new index field); (b) reconciled the `ingest_delta` signature to take `prev_manifest` and
