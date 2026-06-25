@@ -403,6 +403,46 @@ def _cmd_rebuild(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_delta_demo(args: argparse.Namespace) -> int:
+    """Before/after incremental-delta demo over two real corpus snapshots (slice 5; AC10).
+
+    Offline and in-process (in-memory stores, non-semantic embedder) so the base ingest and the
+    delta share state: ingest the base snapshot, print the BEFORE counts, then re-ingest only the
+    delta into the *same* stores and print the classified add/change/delete/move set, the orphans
+    removed, and the AFTER counts — a legible freshness narration, no black-box hop (AC10)."""
+    graph = MemoryGraphStore()
+    vstore = MemoryVectorStore()
+    embedder = HashEmbedder()
+
+    base = ingest_delta(
+        None,
+        Path(args.base_community),
+        Path(args.base_enhancements),
+        graph,
+        vstore,
+        embedder,
+    )
+    print("== delta demo ==")
+    print(
+        "(synthetic teaching demo — offline non-semantic embedder; BOTH stores updated from one "
+        "pass, kept consistent by stable key = doc path + content hash)"
+    )
+    print(
+        f"BEFORE (base snapshot): nodes={base.after_nodes} edges={base.after_edges} "
+        f"chunks={base.after_chunks}"
+    )
+    report = ingest_delta(
+        base.new_manifest,
+        Path(args.community),
+        Path(args.enhancements),
+        graph,
+        vstore,
+        embedder,
+    )
+    print(report.render())
+    return 0
+
+
 def _cmd_graph_query(args: argparse.Namespace) -> int:
     aliases = load_aliases()
     store = _populated_store(args)
@@ -579,6 +619,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_delta_args(p_rebuild)
     p_rebuild.set_defaults(func=_cmd_rebuild)
+
+    p_demo = sub.add_parser(
+        "delta-demo",
+        help="before/after incremental-delta demo over two corpus snapshots (offline, in-memory)",
+    )
+    p_demo.add_argument("--base-community", required=True, help="base snapshot community root")
+    p_demo.add_argument(
+        "--base-enhancements", required=True, help="base snapshot enhancements root"
+    )
+    p_demo.add_argument("--community", required=True, help="new snapshot community root")
+    p_demo.add_argument("--enhancements", required=True, help="new snapshot enhancements root")
+    p_demo.set_defaults(func=_cmd_delta_demo)
 
     return parser
 

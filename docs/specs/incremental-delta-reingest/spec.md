@@ -154,25 +154,25 @@ proceeding; *Never do* is a hard rule, even under time pressure.
 
 ## Acceptance Criteria
 
-- [ ] **AC1 — `--delta` detects the git-delta.** The Fargate ingestion task (and the CLI)
+- [x] **AC1 — `--delta` detects the git-delta.** The Fargate ingestion task (and the CLI)
   run in `--delta` mode and classify every changed document between the stored manifest
   and a new snapshot as exactly one of add / change / delete / move.
-- [ ] **AC2 — re-ingest is delta-only.** A delta re-parses and re-embeds only added /
+- [x] **AC2 — re-ingest is delta-only.** A delta re-parses and re-embeds only added /
   changed / moved-to documents; a test proves zero embedding calls are made for unchanged
   documents.
-- [ ] **AC3 — both stores reflect the new state.** After a delta: added documents'
+- [x] **AC3 — both stores reflect the new state.** After a delta: added documents'
   nodes/edges/chunks are present, changed documents' content is updated, and deleted
   documents' content is absent — in **both** the graph store and the vector store. The
   chunk and document-provenance operations are addressed by the (doc path + content hash)
   key; node/edge identity remains the normalized entity key.
-- [ ] **AC4 — explicit orphan-removal, no stale nodes / no orphan chunks.** After a delta,
+- [x] **AC4 — explicit orphan-removal, no stale nodes / no orphan chunks.** After a delta,
   no graph node/edge and no chunk remains whose contributing documents are all gone; **and**
   a node/edge still contributed by a surviving document is *not* deleted (the
   README-deleted-but-KEP-still-references-the-SIG case is covered by a test).
-- [ ] **AC5 — move is classified and migrated distinctly.** A same-hash-new-path document
+- [x] **AC5 — move is classified and migrated distinctly.** A same-hash-new-path document
   is reported as a move (not delete+add) in the trace, its chunks and node/edge provenance
   carry the new path, and nothing is orphaned by the move.
-- [ ] **AC6 — delta equals rebuild (in-memory).** Applying a delta converges the
+- [x] **AC6 — delta equals rebuild (in-memory).** Applying a delta converges the
   in-memory graph and vector stores to the same **node set** (by id+kind), **edge set** (by
   key), **`doc_paths` provenance**, **`sources`**, and **chunk set** (by id) as a full
   `--rebuild` of the new snapshot, and the same **props** on every delta-touched node — the
@@ -183,12 +183,12 @@ proceeding; *Never do* is a hard rule, even under time pressure.
   last-writer-wins, so a README-only prose edit that changes its H1 while `kep.yaml` is
   unchanged is the one case the incremental path and a rebuild may differ on — out of the
   equivalence scope (deferred: incremental-delta-multicontributed-prop).
-- [ ] **AC7 — `--rebuild` escape hatch.** `--rebuild` reingests from scratch, clearing
+- [x] **AC7 — `--rebuild` escape hatch.** `--rebuild` reingests from scratch, clearing
   prior state in both stores, and produces the same end state as a clean first ingest.
-- [ ] **AC8 — manifest persisted and diffed.** Each run writes the manifest
+- [x] **AC8 — manifest persisted and diffed.** Each run writes the manifest
   (`doc id → content hash`) to S3 **last**, only after both stores are updated; the next
   `--delta` reads it back and diffs against it.
-- [ ] **AC8b — no-prior-manifest fallback.** A `--delta` against a stack with no stored
+- [x] **AC8b — no-prior-manifest fallback.** A `--delta` against a stack with no stored
   manifest (the state of every already-deployed slice-1–4 stack on its first `--delta`)
   falls back to a full ingest and writes the manifest — it never crashes, and it
   backfills the graph's document-provenance so the next `--delta` reconciles correctly.
@@ -196,7 +196,7 @@ proceeding; *Never do* is a hard rule, even under time pressure.
   a real git-history delta; an orphaned node/chunk from a deleted document is gone and an
   added document's content is retrievable, observed in the trace, then the stack is torn
   down.
-- [ ] **AC10 — narratable before/after demo on real git history.** A CLI demo driven from
+- [x] **AC10 — narratable before/after demo on real git history.** A CLI demo driven from
   two real commits of a local corpus checkout prints a legible report — counts before, the
   classified add/change/delete/move set, the orphans removed, counts after — with no
   black-box hop (charter principle 1) and the synthetic/teaching framing surfaced.
