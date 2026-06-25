@@ -370,3 +370,28 @@ def test_neighbors_single_visibility_filter_parameterized() -> None:
     query = http.last_query()
     assert "WHERE r.visibility IN $allowed AND b.visibility IN $allowed" in query
     assert sorted(http.last_params()["allowed"]) == ["internal", "public"]
+
+
+# --- opencypher-templates: run_template_query decode (AC2) -----------------------------
+def test_run_template_query_decodes_n_rows() -> None:
+    rows = {"results": [{"n": {"~properties": {"id": "kep-2086", "kind": "KEP"}}}]}
+    http = RecordingHttp([HttpResponse(200, json.dumps(rows))])
+    store = _store(http)
+    nodes = store.run_template_query("MATCH (n:Entity) RETURN n", {"sig": "sig:sig-network"})
+    assert [n.id for n in nodes] == ["kep-2086"]
+    # the value is bound, not interpolated.
+    assert http.last_params() == {"sig": "sig:sig-network"}
+
+
+def test_run_template_query_empty_results_is_empty_list() -> None:
+    http = RecordingHttp([HttpResponse(200, json.dumps({"results": []}))])
+    assert _store(http).run_template_query("MATCH (n:Entity) RETURN n", {}) == []
+
+
+def test_run_template_query_missing_alias_raises_diagnosable_error() -> None:
+    # a row that doesn't carry the expected `n` alias fails with a message naming the alias,
+    # not a bare KeyError that surfaces as an opaque sanitized envelope.
+    rows = {"results": [{"x": {"~properties": {"id": "kep-2086", "kind": "KEP"}}}]}
+    http = RecordingHttp([HttpResponse(200, json.dumps(rows))])
+    with pytest.raises(RuntimeError, match="'n' alias"):
+        _store(http).run_template_query("MATCH (n:Entity) RETURN n", {})

@@ -31,11 +31,15 @@ for the contract and the module map.
 | `query.py` | Bounded multi-hop `traverse` (over `neighbors()`) **and** (slice 3) `expand_neighborhood` (undirected-over-all-edge-kinds neighborhood expansion for seed-and-expand) over the `neighbors_batch` seam (default fan-out; Neptune-batched override), with a sorted, backend-identical trace. |
 | `hybrid.py` | (slice 3) The seed-and-expand orchestration: dual-seed (vector-owners ∪ question-links) → cap → expand → merge → synthesize → `HybridResult.render()` trace. |
 | `compare.py` | (slice 3) The three-mode runner — `vector-only` / `graph-only` / `hybrid` independently, with a side-by-side `ComparisonResult.render()`. |
-| `query_lambda.py` | (slice 3) In-VPC query Lambda handler behind an IAM-auth Function URL; reuses the same `hybrid_query`; PyYAML-free import graph; entity-links with `aliases={}` (mechanical normalizers only — no display-name table in the bundle). |
-| `showcase/` | (slice 3) The consolidated showcase query set (`queries.yaml`) + `load_showcase()` loader (CLI/test-only; uses yaml, never imported by the Lambda). (slice 4) `queries.yaml` also carries `permission_queries` (the two-persona contrast) + `load_permission_showcase()`. |
+| `query_lambda.py` | (slice 3) In-VPC query Lambda handler behind an IAM-auth Function URL; reuses the same `hybrid_query`; PyYAML-free import graph; entity-links with `aliases={}` (mechanical normalizers only — no display-name table in the bundle). (opencypher-templates) additive `mode` dispatch (`hybrid` default \| `governed`); `governed` runs `governed_query` and returns the audit envelope; unknown mode → client error. |
+| `templates.py` | (opencypher-templates) The governed **Cypher Templates** library: a fixed, reviewed registry of expert-authored, parameterized, **read-only** openCypher templates, each with a paired app-layer `evaluate` over the `GraphStore` seam (the dual form). Pure-Python (no yaml) — Lambda-bundle-safe. |
+| `params.py` | (opencypher-templates) Deterministic parameter extraction + validation (the governance boundary): entity slots via `link_question`/`normalize` confirmed against the store, enum/int slots validated; a bad required slot → `ExtractionFailure` (no query runs). |
+| `select.py` | (opencypher-templates) Template **selection** seam — `BedrockTemplateSelector` (Converse, returns one validated template id; an id outside the fixed set → `None`) + offline non-semantic `RuleTemplateSelector`. The LLM selects only; params are extracted deterministically. |
+| `governed.py` | (opencypher-templates) The governed orchestration: `governed_query` (select → extract → `execute_template` → synthesize) + `GovernedResult.render()` audit trace; `execute_template` dispatches the dual form (Neptune `run_template_query` live / `evaluate` offline, sorted-identical). PyYAML-free. |
+| `showcase/` | (slice 3) The consolidated showcase query set (`queries.yaml`) + `load_showcase()` loader (CLI/test-only; uses yaml, never imported by the Lambda). (slice 4) `queries.yaml` also carries `permission_queries` (the two-persona contrast) + `load_permission_showcase()`. (opencypher-templates) also `governed_queries` (template + bound param + gold rows per query) + `load_governed_showcase()`. |
 | `visibility.py` | (slice 4) **Pure, PyYAML-free** read-side of the synthetic permission filter (a TEACHING stand-in for ACLs, not real authz): the ordered `Visibility` tiers, most-restrictive-wins `compose`, `Clearance`, `PERSONAS`, and `resolve_clearance` (fail-closed — unknown persona raises `ValueError`). Imported by the query path (hybrid/compare/query_lambda) — must stay yaml-free. |
 | `labels.py` | (slice 4) **Ingest-path only** (uses yaml): loads the packaged `labels.yaml` (entity-id→tier) and stamps node/edge (`label_graph`, edge = `compose(src,dst)`) + chunk (`label_chunks`, = `compose(owners)`) visibility during the dual-write. **Never imported by the query Lambda** (a `sys.modules` test guards it). |
-| `cli.py` | `graphrag` CLI: `ingest`, `graph-query`, `resolve-eval`, `vector-ingest`, `vector-query`, `vector-eval`, (slice 3) `hybrid-query` / `compare` (offline default + live SigV4 Function-URL client), and (slice 5) `delta` / `rebuild` / `delta-demo` (the before/after freshness demo; `scripts/delta-demo.sh` drives it from real git history). |
+| `cli.py` | `graphrag` CLI: `ingest`, `graph-query`, `resolve-eval`, `vector-ingest`, `vector-query`, `vector-eval`, (slice 3) `hybrid-query` / `compare` (offline default + live SigV4 Function-URL client), (slice 5) `delta` / `rebuild` / `delta-demo` (the before/after freshness demo; `scripts/delta-demo.sh` drives it from real git history), and (opencypher-templates) `governed-query` (the governed Cypher-Templates path; offline default + live `--function-url` mode=governed). |
 
 ## Dependencies (recorded per AGENTS.md "record new dependencies before adding")
 
@@ -72,10 +76,20 @@ by the Lambda, while `labels.py` (reads `labels.yaml`) is ingest-path-only and m
 imported by the query graph — guarded by a `sys.modules` assertion in
 `test_query_lambda.py` alongside the existing `import yaml` block.
 
+**opencypher-templates (Cypher Templates) added no new runtime dependency and no new infra
+resource** — template selection + synthesis use the existing `boto3` `bedrock-runtime`
+**Converse** client (selection defaults to the synthesis model, so the existing
+`bedrock:Converse` grant covers it), parameterized openCypher rides the existing
+`NeptuneGraphStore._run`, and the live path rides the existing query Lambda + IAM-auth
+Function URL via an **additive, back-compat `mode` field** (absent ⇒ `hybrid`). The governed
+modules (`templates`, `params`, `select`, `governed`) are **PyYAML-free** and join the
+query-Lambda import-graph guard.
+
 **Pure-Python Lambda / PyYAML-free import graph.** `query_lambda.py` is bundled via
 `Code.from_asset` over the package source (boto3/botocore from the runtime, **no
 pyyaml**). It and its transitive imports (`hybrid`, `synthesize`, `entity_link`,
-`compare`, `embed`, `store/*`, `model`) must never `import yaml` at module load. The
+`compare`, `embed`, `store/*`, `model`, and (opencypher-templates) `governed`, `templates`,
+`select`, `params`) must never `import yaml` at module load. The
 Lambda entity-links with `aliases={}` (the mechanical `@handle`/slug/KEP normalizers
 resolve without the display-name alias table, which `resolve.load_aliases()` loads via
 yaml); `showcase.load_showcase` also uses yaml and is **CLI/test-only**, never imported
@@ -101,3 +115,12 @@ Adding a runtime dependency beyond these is an "Ask first" rail in the spec.
   not rely on store result order).
 - **The fixture corpus is real, pinned excerpts** (see
   `tests/fixtures/corpus/README.md`) so the resolver eval is empirical.
+- **Cypher Templates are dual-form, and the LLM only selects.** Each governed template
+  carries the parameterized openCypher (the governed artifact, run live on Neptune) **and**
+  a paired app-layer `evaluate` over the `GraphStore` seam (offline); `governed.execute_template`
+  sorts both by node id so the backends are byte-identical — the same invariant `neighbors_batch`
+  lives under. The selector (`select.py`) returns only a template id validated against the fixed
+  set; parameter *values* are extracted + validated deterministically (`params.py`) and bound via
+  `$param`, never interpolated — so the executable surface stays a fixed, reviewed, read-only
+  library whatever the model returns (the governed half of the governed-vs-risky pair; the risky
+  half, LLM-authored query text executed read-only, is the separate `text2opencypher-guarded` slice).

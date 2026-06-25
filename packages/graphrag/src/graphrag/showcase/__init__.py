@@ -48,6 +48,20 @@ class PermissionShowcaseQuery:
     highlight: str = ""
 
 
+@dataclass
+class GovernedShowcaseQuery:
+    """An opencypher-templates governed-path demo query: the ``template`` a correct
+    selector should pick, the ``param`` value that should bind from the question, and the
+    ``gold`` rows the parameterized openCypher should return (all in the fixture corpus)."""
+
+    id: str
+    query: str
+    template: str
+    param: str
+    gold: list[str] = field(default_factory=list)
+    highlight: str = ""
+
+
 def load_showcase() -> list[ShowcaseQuery]:
     """Load the packaged showcase query set as ``ShowcaseQuery`` objects."""
     text = resources.files("graphrag.showcase").joinpath("queries.yaml").read_text(encoding="utf-8")
@@ -81,6 +95,26 @@ def load_permission_showcase() -> list[PermissionShowcaseQuery]:
                 persona=str(entry["persona"]),
                 visible=[str(g) for g in entry.get("visible", [])],
                 filtered=[str(g) for g in entry.get("filtered", [])],
+                highlight=str(entry.get("highlight", "")),
+            )
+        )
+    return out
+
+
+def load_governed_showcase() -> list[GovernedShowcaseQuery]:
+    """Load the packaged opencypher-templates governed-path demo queries."""
+    text = resources.files("graphrag.showcase").joinpath("queries.yaml").read_text(encoding="utf-8")
+    data = yaml.safe_load(text) or {}
+    raw = data.get("governed_queries", []) if isinstance(data, dict) else []
+    out: list[GovernedShowcaseQuery] = []
+    for entry in raw:
+        out.append(
+            GovernedShowcaseQuery(
+                id=str(entry["id"]),
+                query=str(entry["query"]),
+                template=str(entry["template"]),
+                param=str(entry["param"]),
+                gold=[str(g) for g in entry.get("gold", [])],
                 highlight=str(entry.get("highlight", "")),
             )
         )

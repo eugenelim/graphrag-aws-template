@@ -238,6 +238,15 @@ def test_query_lambda_import_graph_is_pyyaml_free() -> None:
     builtins.__import__ = _blocking
     try:
         importlib.import_module("graphrag.query_lambda")  # must not pull in yaml
+        # opencypher-templates: the governed import graph must also stay PyYAML-free (it
+        # rides the same Code.from_asset bundle).
+        for mod in (
+            "graphrag.governed",
+            "graphrag.templates",
+            "graphrag.select",
+            "graphrag.params",
+        ):
+            importlib.import_module(mod)
         # Slice-4: threading `visibility` (pure) must NOT transitively drag in `labels`
         # (which imports yaml) — the read path stays PyYAML-free.
         assert "graphrag.labels" not in sys.modules
@@ -278,3 +287,69 @@ def test_no_persona_is_unrestricted(wired: None) -> None:
     # unrestricted: the restricted KEP is reachable (no filter), and no clearance line.
     assert "kep-secret" in json.dumps(result)
     assert "clearance:" not in result["trace"]
+
+
+# --- opencypher-templates: governed-mode dispatch through the Lambda (AC7) -------------
+
+
+class _FakeSelector:
+    def __init__(self, *a: Any, **k: Any) -> None:
+        pass
+
+    @property
+    def model_id(self) -> str:
+        return "fake-selector"
+
+    def select(self, question: str, templates: Any) -> str:
+        return "sig_owned_keps"
+
+
+def test_governed_mode_returns_audit_envelope(wired: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(query_lambda, "BedrockTemplateSelector", _FakeSelector)
+    result = query_lambda.lambda_handler(
+        {"question": "Which KEPs does SIG Network own?", "mode": "governed"}, None
+    )
+    assert result["template_id"] == "sig_owned_keps"
+    assert result["params"] == {"sig": "sig:sig-network"}
+    # the parameterized cypher is returned literally; the value is in the param map, not inlined.
+    assert "$sig" in result["cypher"]
+    assert "sig:sig-network" not in result["cypher"]
+    assert "kep-2086" in result["rows"]  # the executed rows
+    assert result["answer"] == "grounded answer"
+    assert "template: sig_owned_keps" in result["trace"]
+
+
+def test_unknown_mode_is_a_client_error(wired: None) -> None:
+    result = query_lambda.lambda_handler({"question": "hi", "mode": "frobnicate"}, None)
+    assert "error" in result
+    assert "unknown mode" in result["error"]
+    assert "answer" not in result  # orchestration did not run
+
+
+class _NoMatchSelector:
+    def __init__(self, *a: Any, **k: Any) -> None:
+        pass
+
+    @property
+    def model_id(self) -> str:
+        return "fake-selector"
+
+    def select(self, question: str, templates: Any) -> str | None:
+        return None
+
+
+def test_governed_no_match_logs_warning_and_returns_reason(
+    wired: None, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    monkeypatch.setattr(query_lambda, "BedrockTemplateSelector", _NoMatchSelector)
+    with caplog.at_level(logging.WARNING):
+        result = query_lambda.lambda_handler(
+            {"question": "what is the weather", "mode": "governed"}, None
+        )
+    # a governed no-match is a legible result (no query ran), distinct in the log from an "ok".
+    assert result["template_id"] is None
+    assert result["no_match_reason"]
+    assert result["cypher"] == ""
+    assert any("governed no-match" in r.message for r in caplog.records)
