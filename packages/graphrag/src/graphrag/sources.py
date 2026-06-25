@@ -35,6 +35,12 @@ class ParsedDoc:
     payload: dict[str, Any] = field(default_factory=dict)  # parsed YAML is dynamic
     markdown: ParsedMarkdown | None = None
 
+    @property
+    def doc_id(self) -> str:
+        """The source-qualified stable key (`{source}/{path}`) — the slice-5 manifest key,
+        graph node/edge provenance member, and source-qualified chunk identity, all one form."""
+        return f"{self.source}/{self.path}"
+
 
 def load_community(root: Path) -> list[ParsedDoc]:
     """Load ``sigs.yaml`` plus each SIG's ``README.md`` charter."""

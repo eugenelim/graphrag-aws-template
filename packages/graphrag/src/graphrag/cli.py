@@ -20,10 +20,11 @@ from urllib.parse import urlparse
 
 from .chunk import chunk_corpus
 from .compare import run_modes
+from .delta import manifest_from_json, manifest_to_json
 from .embed import BedrockTitanEmbedder, Embedder, HashEmbedder
 from .eval import evaluate, load_labeled_sample
 from .hybrid import hybrid_query
-from .ingest import ingest
+from .ingest import ingest, ingest_delta, rebuild
 from .labels import label_chunks, load_labels
 from .model import Direction, EdgeKind
 from .normalize import kep_id, person_id, sig_id
@@ -360,6 +361,88 @@ def _cmd_ingest(args: argparse.Namespace) -> int:
     return 0
 
 
+def _write_manifest_out(args: argparse.Namespace, manifest: dict[str, str]) -> None:
+    """Persist the run's new manifest to ``--manifest-out`` when given (next delta's baseline)."""
+    out = getattr(args, "manifest_out", None)
+    if out:
+        Path(out).write_text(manifest_to_json(manifest), encoding="utf-8")
+        print(f"wrote manifest: {out} ({len(manifest)} docs)")
+
+
+def _cmd_delta(args: argparse.Namespace) -> int:
+    """Incremental delta re-ingest against a stored manifest (slice 5). With no readable
+    ``--prev-manifest`` it falls back to a full ingest (the no-prior-manifest case, AC8b)."""
+    prev = None
+    prev_path = getattr(args, "prev_manifest", None)
+    if prev_path and Path(prev_path).is_file():
+        prev = manifest_from_json(Path(prev_path).read_text(encoding="utf-8"))
+    report = ingest_delta(
+        prev,
+        Path(args.community),
+        Path(args.enhancements),
+        _target_store(args),
+        _vector_store(args),
+        _embedder(args),
+    )
+    print(report.render())
+    _write_manifest_out(args, report.new_manifest)
+    return 0
+
+
+def _cmd_rebuild(args: argparse.Namespace) -> int:
+    """The ``--rebuild`` escape hatch (slice 5): clear both stores, then full-ingest fresh."""
+    report = rebuild(
+        Path(args.community),
+        Path(args.enhancements),
+        _target_store(args),
+        _vector_store(args),
+        _embedder(args),
+    )
+    print(report.render())
+    _write_manifest_out(args, report.new_manifest)
+    return 0
+
+
+def _cmd_delta_demo(args: argparse.Namespace) -> int:
+    """Before/after incremental-delta demo over two real corpus snapshots (slice 5; AC10).
+
+    Offline and in-process (in-memory stores, non-semantic embedder) so the base ingest and the
+    delta share state: ingest the base snapshot, print the BEFORE counts, then re-ingest only the
+    delta into the *same* stores and print the classified add/change/delete/move set, the orphans
+    removed, and the AFTER counts — a legible freshness narration, no black-box hop (AC10)."""
+    graph = MemoryGraphStore()
+    vstore = MemoryVectorStore()
+    embedder = HashEmbedder()
+
+    base = ingest_delta(
+        None,
+        Path(args.base_community),
+        Path(args.base_enhancements),
+        graph,
+        vstore,
+        embedder,
+    )
+    print("== delta demo ==")
+    print(
+        "(synthetic teaching demo — offline non-semantic embedder; BOTH stores updated from one "
+        "pass, kept consistent by stable key = doc path + content hash)"
+    )
+    print(
+        f"BEFORE (base snapshot): nodes={base.after_nodes} edges={base.after_edges} "
+        f"chunks={base.after_chunks}"
+    )
+    report = ingest_delta(
+        base.new_manifest,
+        Path(args.community),
+        Path(args.enhancements),
+        graph,
+        vstore,
+        embedder,
+    )
+    print(report.render())
+    return 0
+
+
 def _cmd_graph_query(args: argparse.Namespace) -> int:
     aliases = load_aliases()
     store = _populated_store(args)
@@ -513,6 +596,41 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_hybrid_args(p_compare)
     p_compare.set_defaults(func=_cmd_compare)
+
+    def add_delta_args(p: argparse.ArgumentParser) -> None:
+        add_vector_corpus_args(p)  # community/enhancements/opensearch-endpoint/region/bedrock
+        p.add_argument("--neptune-endpoint", help="https Neptune endpoint (deployed graph store)")
+        p.add_argument(
+            "--manifest-out", help="write the run's new manifest (doc id -> hash) to this path"
+        )
+
+    p_delta = sub.add_parser(
+        "delta", help="incremental delta re-ingest against a stored manifest (both stores)"
+    )
+    add_delta_args(p_delta)
+    p_delta.add_argument(
+        "--prev-manifest",
+        help="path to the previously-ingested manifest JSON; omit/absent => full ingest fallback",
+    )
+    p_delta.set_defaults(func=_cmd_delta)
+
+    p_rebuild = sub.add_parser(
+        "rebuild", help="escape hatch: clear both stores, then full-ingest from scratch"
+    )
+    add_delta_args(p_rebuild)
+    p_rebuild.set_defaults(func=_cmd_rebuild)
+
+    p_demo = sub.add_parser(
+        "delta-demo",
+        help="before/after incremental-delta demo over two corpus snapshots (offline, in-memory)",
+    )
+    p_demo.add_argument("--base-community", required=True, help="base snapshot community root")
+    p_demo.add_argument(
+        "--base-enhancements", required=True, help="base snapshot enhancements root"
+    )
+    p_demo.add_argument("--community", required=True, help="new snapshot community root")
+    p_demo.add_argument("--enhancements", required=True, help="new snapshot enhancements root")
+    p_demo.set_defaults(func=_cmd_delta_demo)
 
     return parser
 
