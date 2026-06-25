@@ -79,3 +79,19 @@ def test_ingest_writes_labeled_nodes_and_edges(
     # An unlabeled node stays public.
     net = store.get_node("sig:sig-network")
     assert net is not None and net.props.get("visibility") == "public"
+
+
+def test_all_packaged_yaml_declared_in_package_data() -> None:
+    # Regression for the slice-4 live-deploy finding: labels.yaml existed in the src tree
+    # (so src-layout tests passed) but was absent from [tool.setuptools.package-data], so
+    # `pip install .` / the Fargate image omitted it and load_labels() crashed live. Guard:
+    # every *.yaml under src/graphrag that is loaded as a packaged resource must be declared.
+    import tomllib
+
+    repo_root = Path(__file__).resolve().parents[3]
+    pkg_root = repo_root / "packages/graphrag/src/graphrag"
+    with (repo_root / "pyproject.toml").open("rb") as fh:
+        declared = set(tomllib.load(fh)["tool"]["setuptools"]["package-data"]["graphrag"])
+    on_disk = {p.relative_to(pkg_root).as_posix() for p in pkg_root.rglob("*.yaml")}
+    missing = on_disk - declared
+    assert not missing, f"packaged yaml not declared in pyproject package-data: {sorted(missing)}"

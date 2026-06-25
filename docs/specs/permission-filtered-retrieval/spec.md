@@ -299,12 +299,19 @@ Already wired into `tools/hooks/pre-pr.py`.
   migrate a live domain's mapping); re-deploy over a non-destroyed index without a
   re-create is explicitly out of scope (matches the slice-5 delta boundary). *(goal-based
   synth, CDK-env-gated)*
-- [ ] **AC9 — Live two-persona permission-filtered smoke (in-VPC).** (deferred: permission-filtered-retrieval-live-deploy) Against the deployed
+- [x] **AC9 — Live two-persona permission-filtered smoke (in-VPC).** Against the deployed
   stack with the labeled corpus dual-written, a SigV4-signed Function-URL call with
   `persona=public-reader` and one with `persona=maintainer` return **divergent**
   permission-filtered answers over the same entity-led question — the restricted entity
   **absent** for the reader and **present** for the maintainer, each with its filtered-out
-  trace — then the stack is destroyed (teardown-first). *(live smoke)*
+  trace — then the stack is destroyed (teardown-first). **Verified live (2026-06-24):** for
+  *"What KEPs does SIG Node own?"*, `public-reader` reached `kep-2086` but **not** the
+  restricted `kep-1287` (its `OWNS` edge filtered during the hop, so its approvers were
+  unreachable too), answer citing only KEP-0009; `maintainer` reached `kep-1287` + `kep-1880`
+  and its hop-2 approvers, answer citing KEP-1287 — full trace in
+  `deployment-and-verification.md`; stack torn down. The live run surfaced + fixed one
+  packaging bug (`labels.yaml` missing from `[tool.setuptools.package-data]`, now declared +
+  regression-tested). *(live smoke)*
 - [x] **AC10 — Showcase + presenter narration for the two-persona contrast.** The
   consolidated showcase set gains permission-filtered queries, each labeled with a persona
   and the expected visible/filtered split; a loader/test asserts they parse and every gold
