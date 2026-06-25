@@ -19,7 +19,6 @@ docs/specs/<feature>/
 
 | Spec | Status | Constrained by | Notes |
 | --- | --- | --- | --- |
-| [`incremental-delta-reingest`](incremental-delta-reingest/spec.md) | Implementing | charter (pattern 8, principle 5), design (incremental-sync + corpus-snapshot OQ), ADR-0001/0002/0003 | Slice 5. Fargate `--delta` mode: content-hash-manifest git-delta detection (add/change/delete/move) → re-ingest only the delta → both stores consistent by (doc path + content hash) with explicit orphan removal (provenance-set reference counting) → `--rebuild` escape hatch → before/after CLI demo on real git history. AC9 live required. |
 
 ## Shipped specs (archived)
 
@@ -31,6 +30,7 @@ docs/specs/<feature>/
 | [`graph-ingestion-resolution`](graph-ingestion-resolution/spec.md) | Shipped | ADR-0001, ADR-0002, ADR-0003 | Slice 1 (lead). Graph ingest + cross-source resolution + CLI + slice-1 IaC. AC9 (live deploy) deferred. |
 | [`vector-rag-baseline`](vector-rag-baseline/spec.md) | Shipped | ADR-0001, ADR-0002, ADR-0003 | Slice 2. Chunk → Titan v2 embed → OpenSearch k-NN + `vector-query` CLI with retrieval trace; credible-baseline query set (hit@5=1.0 + honest misses); live retrieve probe verified + torn down. |
 | [`hybrid-orchestration`](hybrid-orchestration/spec.md) | Shipped | ADR-0001, ADR-0002, ADR-0003 | Slice 3. Seed-and-expand hybrid in the in-VPC query Lambda (IAM-auth Function URL) + three-mode comparison runner + consolidated showcase + presenter script; Bedrock Claude synthesis via boto3 Converse; batched neighbor fetch. All 10 ACs met incl. **AC9 verified live** (22.7 s end-to-end, then torn down). Quality follow-up: `hybrid-orchestration-synthesis-edges`. |
+| [`incremental-delta-reingest`](incremental-delta-reingest/spec.md) | Shipped | charter (pattern 8, principle 5), design (incremental-sync + corpus-snapshot OQ), ADR-0001/0002/0003 | Slice 5. Fargate `--delta` mode: content-hash-manifest git-delta detection (add/change/delete/move) → re-ingest only the delta → both stores consistent by (doc path + content hash) with explicit orphan removal (provenance-set reference counting) → `--rebuild` escape hatch → before/after CLI demo on real git history. **All 11 ACs met incl. AC9 verified live (2026-06-24):** delta removed 2 orphans (KEP-1880) + added KEP-4242 across both stores, confirmed via live Function-URL query, then torn down. Live run fixed one IAM bug (task-role `s3:PutObject` on `manifest.json`). |
 | [`permission-filtered-retrieval`](permission-filtered-retrieval/spec.md) | Shipped | charter (principle 5, pattern 7), design D1, ADR-0001/0002/0003 | Slice 4. Synthetic visibility labels → both stores (Neptune node/edge props + OpenSearch metadata) → persona/clearance → permission-filtered retrieval across all three modes, with the graph filter applied **during traversal on edges** (the leak guard). No new dependency, no new infra. **All 10 ACs met incl. AC9 verified live (2026-06-24):** two-persona divergence end-to-end (restricted `kep-1287` absent for `public-reader`, present for `maintainer`), then torn down. Live run fixed one packaging bug (`labels.yaml` package-data). |
 
 ## Adding a new spec

@@ -1,6 +1,6 @@
 # Spec: incremental-delta-reingest
 
-- **Status:** Implementing <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Shipped <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Shape:** mixed
 - **Plan:** [`plan.md`](plan.md)
@@ -193,10 +193,15 @@ proceeding; *Never do* is a hard rule, even under time pressure.
   manifest (the state of every already-deployed slice-1–4 stack on its first `--delta`)
   falls back to a full ingest and writes the manifest — it never crashes, and it
   backfills the graph's document-provenance so the next `--delta` reconciles correctly.
-- [ ] **AC9 — verified live.** `--delta` runs against the deployed Neptune + OpenSearch on
-  a real git-history delta; an orphaned node/chunk from a deleted document is gone and an
-  added document's content is retrievable, observed in the trace, then the stack is torn
-  down.
+- [x] **AC9 — verified live (2026-06-24).** Deployed the full stack; `MODE=rebuild` baseline
+  (22 nodes / 28 edges / 13 chunks, manifest written to S3); applied a real delta (deleted
+  KEP-1880, added KEP-4242); `MODE=delta` removed **2 orphans** (`nodes 22→21`, `edges 28→26`,
+  `chunks 13→11`) and re-embedded **only the 1 delta chunk** — observed in the Fargate trace. A
+  live SigV4 Function-URL query confirmed **KEP-4242 retrievable** (vector seed + citation) and
+  **KEP-1880 gone** (entity-linked but dropped as unconfirmed — absent from the graph, 0
+  citations). Then torn down (`destroy.sh` → DOES_NOT_EXIST). The live run surfaced + fixed one
+  IAM bug `cdk synth` can't catch: the slice-1 task role was read-only on the corpus bucket, so
+  the manifest `PutObject` hit AccessDenied — added `s3:PutObject` scoped to `manifest.json`.
 - [x] **AC10 — narratable before/after demo on real git history.** A CLI demo driven from
   two real commits of a local corpus checkout prints a legible report — counts before, the
   classified add/change/delete/move set, the orphans removed, counts after — with no
