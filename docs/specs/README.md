@@ -19,6 +19,7 @@ docs/specs/<feature>/
 
 | Spec | Status | Constrained by | Notes |
 | --- | --- | --- | --- |
+| [`text2opencypher-guarded`](text2opencypher-guarded/spec.md) | Implementing | ADR-0004, charter (coverage table: *Text2Cypher*), RFC-0001 §2, ADR-0001/0002/0003 | Catalog slice — the **risky** half of the governed-vs-risky pair. Bedrock Claude **writes** the openCypher (Text2Cypher), executed **read-only** against Neptune. Guard = layered defense (ADR-0004): read-only static validator + bounded self-heal + **IAM read-only data-action scoping** on the query-Lambda role as the load-bearing backstop (the single-node Serverless topology can't provide RFC-0001 §2's reader endpoint without a costly replica) + sanitized error boundary. Offline = pure-Python bounded read-subset evaluator (labeled a subset; live Neptune is the fidelity oracle, after rejecting low-fidelity/heavy local engines). New `text2cypher-query` CLI verb + additive `mode: text2cypher` query-Lambda dispatch; only infra change is *narrowing* the query-Lambda Neptune grant (no new resource). Completes the runnable governed-vs-risky contrast doc. |
 
 ## Shipped specs (archived)
 

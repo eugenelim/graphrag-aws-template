@@ -124,3 +124,40 @@ def test_governed_showcase_consistent_with_templates_and_fixture(
         assert rows == sorted(q.gold), f"{q.id}: rows {rows} != gold {sorted(q.gold)}"
         for gid in q.gold:
             assert gid in node_ids, f"{q.id} gold {gid!r} missing from fixture"
+
+
+# --- text2opencypher-guarded: the flexible-path showcase set (AC11) -------------------
+from graphrag.showcase import (  # noqa: E402
+    Text2CypherShowcaseQuery,
+    load_text2cypher_showcase,
+)
+
+
+def test_text2cypher_showcase_parses() -> None:
+    queries = load_text2cypher_showcase()
+    assert len(queries) >= 3
+    assert all(isinstance(q, Text2CypherShowcaseQuery) for q in queries)
+    # at least one head-to-head shared with a governed template, and at least one open-ended.
+    assert any(q.shared_with_template for q in queries), "expected a governed head-to-head"
+    assert any(q.shared_with_template is None for q in queries), "expected an open-ended query"
+
+
+def test_text2cypher_showcase_gold_resolves_and_shared_template_exists(
+    community_root: Path, enhancements_root: Path
+) -> None:
+    node_ids = {
+        n.id
+        for n in MemoryGraphStore.from_graph(
+            resolve(load_corpus(community_root, enhancements_root))
+        ).all_nodes()
+    }
+    for q in load_text2cypher_showcase():
+        assert q.query.strip()
+        assert q.highlight.strip(), f"{q.id} has an empty highlight"
+        assert q.gold, f"{q.id} has no gold rows"
+        for gid in q.gold:
+            assert gid in node_ids, f"{q.id} gold {gid!r} missing from fixture"
+        if q.shared_with_template is not None:
+            assert get_template(q.shared_with_template) is not None, (
+                f"{q.id} names unknown shared template {q.shared_with_template!r}"
+            )

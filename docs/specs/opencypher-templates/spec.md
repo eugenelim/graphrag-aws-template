@@ -3,7 +3,7 @@
 - **Status:** Shipped <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
-- **Constrained by:** [Charter — Pattern coverage table, *Cypher Templates* row](../../CHARTER.md#pattern-coverage-against-the-graphragcom-catalog) (the coverage contract this slice ships), [RFC-0001 feasibility note §2](../../rfc/0001-notes/aws-feasibility.md) (Neptune parameterized openCypher VERIFIED; read-replica is the *text2cypher* guardrail, not this slice's), [ADR-0001](../../adr/0001-hybrid-orchestration-seed-and-expand.md) (reuses the synthesizer seam + the question entity-linking from the hybrid slice), [ADR-0002](../../adr/0002-ephemeral-vpc-store-topology.md) (rides the existing in-VPC query Lambda behind the IAM-auth Function URL; adds no billable resource), [ADR-0003](../../adr/0003-iac-tool-aws-cdk-python.md) (IaC is AWS CDK Python)
+- **Constrained by:** [Charter — Pattern coverage table, *Cypher Templates* row](../../CHARTER.md#pattern-coverage-against-the-graphragcom-catalog) (the coverage contract this slice ships), [RFC-0001 feasibility note §2](../../rfc/0001-notes/aws-feasibility.md) (Neptune parameterized openCypher VERIFIED; a run-time read-only guard is the *text2cypher* guardrail, not this slice's — see [ADR-0004](../../adr/0004-text2cypher-read-only-guard.md), which guards with IAM scoping rather than the note's named read-replica), [ADR-0001](../../adr/0001-hybrid-orchestration-seed-and-expand.md) (reuses the synthesizer seam + the question entity-linking from the hybrid slice), [ADR-0002](../../adr/0002-ephemeral-vpc-store-topology.md) (rides the existing in-VPC query Lambda behind the IAM-auth Function URL; adds no billable resource), [ADR-0003](../../adr/0003-iac-tool-aws-cdk-python.md) (IaC is AWS CDK Python)
 - **Brief:** [`docs/product/briefs/graphrag-pattern-catalog.md`](../../product/briefs/graphrag-pattern-catalog.md)
 - **Contract:** none (new internal Python interfaces + an additive `mode` field on the existing in-VPC Function URL; no repo-root `contracts/` API surface, consistent with the hybrid slice)
 - **Shape:** mixed
@@ -53,10 +53,12 @@ selector + the offline synthesizer) for credential-free CI and a laptop demo, an
 **live** against the deployed VPC stores + Bedrock through the existing query
 Lambda. The teaching contrast is explicit: because the executable surface is a
 fixed, reviewed, read-only library and the parameters are validated, this path is
-*injection-safe and auditable by construction* — it does **not** need Neptune's
-read-replica enforcement that the LLM-authored `text2opencypher-guarded` path
-relies on (RFC-0001 §2). A watcher leaves able to say when they would choose the
-governed templates over the flexible text2cypher path.
+*injection-safe and auditable by construction* — it does **not** need the run-time
+read-only guard that the LLM-authored `text2opencypher-guarded` path relies on
+(IAM read-only data-action scoping per [ADR-0004](../../adr/0004-text2cypher-read-only-guard.md),
+which records why this template guards with IAM scoping rather than RFC-0001 §2's
+named read-replica). A watcher leaves able to say when they would choose the governed
+templates over the flexible text2cypher path.
 
 ## Boundaries
 

@@ -45,12 +45,14 @@ from dataclasses import asdict
 from typing import Any
 
 from .embed import BedrockTitanEmbedder
+from .generate import BedrockText2CypherGenerator
 from .governed import GovernedResult, governed_query
 from .hybrid import HybridResult, hybrid_query
 from .select import BedrockTemplateSelector
 from .store.neptune import NeptuneGraphStore
 from .store.opensearch import OpenSearchVectorStore
 from .synthesize import DEFAULT_SYNTHESIS_MODEL_ID, BedrockClaudeSynthesizer
+from .text2cypher import Text2CypherResult, text2cypher_query
 from .visibility import resolve_clearance
 
 logger = logging.getLogger(__name__)
@@ -94,9 +96,10 @@ def _extract_persona(payload: dict[str, Any]) -> str | None:
 
 
 def _extract_mode(payload: dict[str, Any]) -> str:
-    """The optional ``mode`` (``hybrid`` default | ``governed``) — the additive,
-    back-compat Function-URL field the opencypher-templates slice adds. An absent or
-    non-string mode is ``hybrid``, so an existing caller is unaffected."""
+    """The optional ``mode`` (``hybrid`` default | ``governed`` | ``text2cypher``) — the
+    additive, back-compat Function-URL field (``governed`` added by opencypher-templates,
+    ``text2cypher`` by text2opencypher-guarded). An absent or non-string mode is ``hybrid``,
+    so an existing caller is unaffected."""
     mode = payload.get("mode")
     return mode if isinstance(mode, str) and mode else "hybrid"
 
@@ -150,6 +153,36 @@ def lambda_handler(event: Any, context: Any) -> dict[str, Any]:
                     len(governed.rows),
                 )
             return _serialize_governed(governed)
+        if mode == "text2cypher":
+            # The flexible (risky) path: the LLM WRITES the openCypher; it is validated
+            # read-only + bounded-self-healed, and executed under the query Lambda's READ-ONLY
+            # Neptune grant (ADR-0004 — a validator-missed write is denied by IAM at the engine).
+            graph_store_t = NeptuneGraphStore(os.environ["NEPTUNE_ENDPOINT"], region)
+            generator = BedrockText2CypherGenerator(model_id=model_id, region=region)
+            synthesizer_t = BedrockClaudeSynthesizer(model_id=model_id, region=region)
+            t2c = text2cypher_query(
+                question,
+                graph_store=graph_store_t,
+                generator=generator,
+                synthesizer=synthesizer_t,
+            )
+            if t2c.refusal_reason is not None:
+                # A refusal must be diagnosable from CloudWatch and distinct from a real empty
+                # result (no question text — no PII; no raw Neptune error — that stays internal).
+                logger.warning(
+                    "query_lambda text2cypher refusal (correlation_id=%s) reason=%s attempts=%d",
+                    correlation_id,
+                    t2c.refusal_reason,
+                    len(t2c.attempts),
+                )
+            else:
+                logger.info(
+                    "query_lambda text2cypher ok (correlation_id=%s) rows=%d attempts=%d",
+                    correlation_id,
+                    len(t2c.rows),
+                    len(t2c.attempts),
+                )
+            return _serialize_text2cypher(t2c)
         if mode != "hybrid":
             return {"error": f"unknown mode {mode!r}", "correlation_id": correlation_id}
 
@@ -215,6 +248,57 @@ def _serialize_governed(result: GovernedResult) -> dict[str, Any]:
         "citations": list(result.citations),
         "trace": result.render(),
         "no_match_reason": result.no_match_reason,
+    }
+
+
+def _sanitized_text2cypher_trace(result: Text2CypherResult) -> str:
+    """The audit trace for the caller — narrates question → schema → generated query (+ verdict)
+    → executed query → rows → answer, but **omits the raw execution error** (which can carry
+    Neptune schema / an IAM ARN). The full ``render()`` with the raw error stays in-VPC / on the
+    CLI; the boundary sees only the verdict and an "execution failed" flag."""
+    lines = [f"question: {result.question}", "schema:", result.schema, "generated attempts:"]
+    for index, attempt in enumerate(result.attempts, start=1):
+        verdict = (
+            "valid" if attempt.validation.ok else f"rejected: {attempt.validation.violated_rule}"
+        )
+        lines.append(f"  {index}. {attempt.query}")
+        lines.append(f"     verdict: {verdict}")
+        if attempt.error is not None:
+            lines.append("     execution: failed (detail in server logs)")
+    if result.refusal_reason is not None:
+        lines.append(f"refusal: {result.refusal_reason}")
+        lines.append("(no query executed)")
+        return "\n".join(lines)
+    lines.append(f"executed query: {result.executed_query}")
+    lines.append(f"rows: {', '.join(n.id for n in result.rows) or '(none)'}")
+    lines.append(f"answer: {result.answer}")
+    return "\n".join(lines)
+
+
+def _serialize_text2cypher(result: Text2CypherResult) -> dict[str, Any]:
+    """Shape the Text2CypherResult into the Function-URL audit envelope (no internal detail).
+
+    The generated queries and their validation **verdicts** are returned (the audit value), but
+    the raw execution error is **not** — an execution failure is a boolean, so a Neptune error /
+    IAM ARN never crosses the Function URL (the validator-missed-write backstop firing surfaces
+    as a clean refusal, not a schema leak)."""
+    return {
+        "schema": result.schema,
+        "attempts": [
+            {
+                "query": attempt.query,
+                "valid": attempt.validation.ok,
+                "violated_rule": attempt.validation.violated_rule,
+                "execution_failed": attempt.error is not None,
+            }
+            for attempt in result.attempts
+        ],
+        "executed_query": result.executed_query,
+        "rows": [node.id for node in result.rows],
+        "answer": result.answer,
+        "citations": list(result.citations),
+        "trace": _sanitized_text2cypher_trace(result),
+        "refusal_reason": result.refusal_reason,
     }
 
 

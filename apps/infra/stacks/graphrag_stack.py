@@ -120,6 +120,20 @@ _NEPTUNE_DATA_ACTIONS = [
     "neptune-db:WriteDataViaQuery",
     "neptune-db:DeleteDataViaQuery",
 ]
+# Read-only subset for the query Lambda (ADR-0004): `connect` + `ReadDataViaQuery` only — the
+# load-bearing backstop for LLM-authored text2cypher queries (a write is denied by IAM before
+# the engine runs it, independent of the app-layer validator's completeness).
+_NEPTUNE_READ_ONLY_ACTIONS = [
+    "neptune-db:connect",
+    "neptune-db:ReadDataViaQuery",
+]
+# The Neptune engine-level read-cost backstop (ADR-0004): a per-query timeout (ms) that kills a
+# runaway model-authored traversal even if the validator's unbounded-path guard is bypassed.
+# Set explicitly (vs. the 120s default) so it is narratable and tunable; the parameter-group
+# family must match the pinned engine version below.
+_NEPTUNE_QUERY_TIMEOUT_MS = "20000"
+_NEPTUNE_ENGINE_VERSION = "1.3.2.0"
+_NEPTUNE_PARAM_GROUP_FAMILY = "neptune1.3"
 
 
 class GraphragStack(Stack):
@@ -178,17 +192,29 @@ class GraphragStack(Stack):
         self._budget_alarm(budget_email.value_as_string)
         self._apply_governance_tags()
 
-    # --- Scoped Neptune IAM-auth data-access statement (shared) -------------------
+    # --- Scoped Neptune IAM-auth data-access statements ---------------------------
+    def _neptune_cluster_arn(self, cluster: neptune.CfnDBCluster) -> str:
+        return self.format_arn(
+            service="neptune-db",
+            resource=cluster.attr_cluster_resource_id,
+            resource_name="*",
+        )
+
     def _neptune_data_access(self, cluster: neptune.CfnDBCluster) -> iam.PolicyStatement:
+        """Full read-write Neptune data access — for the roles that legitimately write
+        (the ingestion Fargate task and the on-demand smoke probe)."""
         return iam.PolicyStatement(
-            actions=_NEPTUNE_DATA_ACTIONS,
-            resources=[
-                self.format_arn(
-                    service="neptune-db",
-                    resource=cluster.attr_cluster_resource_id,
-                    resource_name="*",
-                )
-            ],
+            actions=_NEPTUNE_DATA_ACTIONS, resources=[self._neptune_cluster_arn(cluster)]
+        )
+
+    def _neptune_read_only_access(self, cluster: neptune.CfnDBCluster) -> iam.PolicyStatement:
+        """Read-only Neptune data access — `connect` + `ReadDataViaQuery` only, no
+        `WriteDataViaQuery`/`DeleteDataViaQuery`. This is the load-bearing backstop for the
+        text2cypher path (ADR-0004): the query Lambda runs LLM-authored openCypher, so AWS IAM
+        — not the app-layer validator — is what makes a write impossible. The hybrid + governed
+        paths on this same role are read-only too, so the narrowing affects nothing else."""
+        return iam.PolicyStatement(
+            actions=_NEPTUNE_READ_ONLY_ACTIONS, resources=[self._neptune_cluster_arn(cluster)]
         )
 
     # --- Governance tags on every taggable resource -------------------------------
@@ -248,11 +274,25 @@ class GraphragStack(Stack):
             description="Neptune - VPC-internal only",  # ASCII only (EC2 rejects non-ASCII)
             allow_all_outbound=False,
         )
+        # The engine read-cost backstop (ADR-0004): a cluster parameter group pinning
+        # `neptune_query_timeout` so a runaway model-authored read is killed by the engine.
+        # The parameter-group family must match the engine version, so both are pinned (the
+        # stack is fresh-deploy/ephemeral, so there is no upgrade/downgrade path to worry about).
+        cluster_params = neptune.CfnDBClusterParameterGroup(
+            self,
+            "NeptuneClusterParams",
+            family=_NEPTUNE_PARAM_GROUP_FAMILY,
+            description="graphrag neptune - read-cost backstop (query timeout) for text2cypher",
+            name=None,
+            parameters={"neptune_query_timeout": _NEPTUNE_QUERY_TIMEOUT_MS},
+        )
         cluster = neptune.CfnDBCluster(
             self,
             "NeptuneCluster",
             db_subnet_group_name=subnet_group.ref,
             vpc_security_group_ids=[sg.security_group_id],
+            engine_version=_NEPTUNE_ENGINE_VERSION,  # pinned to match the parameter-group family
+            db_cluster_parameter_group_name=cluster_params.ref,
             # Serverless at minimum capacity — scales down when idle (not to zero).
             serverless_scaling_configuration=neptune.CfnDBCluster.ServerlessScalingConfigurationProperty(
                 min_capacity=1.0, max_capacity=2.5
@@ -261,6 +301,7 @@ class GraphragStack(Stack):
             storage_encrypted=True,
         )
         cluster.add_dependency(subnet_group)
+        cluster.add_dependency(cluster_params)
         neptune.CfnDBInstance(
             self,
             "NeptuneInstance",
@@ -546,7 +587,11 @@ class GraphragStack(Stack):
         # Least privilege: Neptune data scoped to the cluster, es:ESHttp* scoped to the
         # domain, Bedrock invoke scoped to the Titan model AND the synthesis Claude
         # model (inference-profile + foundation-model ARNs) — no wildcard Resource.
-        role.add_to_policy(self._neptune_data_access(cluster))
+        # The query Lambda's Neptune grant is READ-ONLY (connect + ReadDataViaQuery, no
+        # Write/Delete): it is the only role that runs LLM-authored text2cypher openCypher,
+        # so IAM — not the app-layer validator — is the load-bearing write backstop (ADR-0004).
+        # The hybrid + governed paths on this role are read-only too, so nothing else regresses.
+        role.add_to_policy(self._neptune_read_only_access(cluster))
         role.add_to_policy(self._opensearch_data_access())
         role.add_to_policy(self._bedrock_invoke())
         role.add_to_policy(self._bedrock_synthesis_invoke())

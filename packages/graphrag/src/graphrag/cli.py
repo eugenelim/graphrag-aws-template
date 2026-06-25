@@ -23,6 +23,11 @@ from .compare import run_modes
 from .delta import manifest_from_json, manifest_to_json
 from .embed import BedrockTitanEmbedder, Embedder, HashEmbedder
 from .eval import evaluate, load_labeled_sample
+from .generate import (
+    BedrockText2CypherGenerator,
+    RuleText2CypherGenerator,
+    Text2CypherGenerator,
+)
 from .governed import governed_query
 from .hybrid import hybrid_query
 from .ingest import ingest, ingest_delta, rebuild
@@ -44,6 +49,7 @@ from .synthesize import (
     Synthesizer,
     TemplateSynthesizer,
 )
+from .text2cypher import text2cypher_query
 from .vector import vector_search
 from .vector_eval import (
     evaluate_query_set,
@@ -398,6 +404,60 @@ def _cmd_governed_query(args: argparse.Namespace) -> int:
     return 0
 
 
+def _text2cypher_generator(args: argparse.Namespace) -> Text2CypherGenerator:
+    """Real Bedrock Claude generator when ``--bedrock``, else the offline non-semantic rule
+    generator (which emits within the offline evaluator's bounded read subset)."""
+    if getattr(args, "bedrock", False):
+        model_id = getattr(args, "synthesis_model_id", None) or DEFAULT_SYNTHESIS_MODEL_ID
+        return BedrockText2CypherGenerator(model_id=model_id, region=args.region)
+    return RuleText2CypherGenerator()
+
+
+def _offline_text2cypher_label(generator: Text2CypherGenerator, synthesizer: Synthesizer) -> str:
+    return (
+        f"generator: {generator.model_id}\n"
+        f"synthesizer: {synthesizer.model_id}\n"
+        "(offline generator/synthesizer are NON-SEMANTIC — structural demo only; the offline "
+        "evaluator runs a bounded read SUBSET, and live Neptune is the execution-fidelity "
+        "oracle — semantic generation/quality is the live path)"
+    )
+
+
+def _cmd_text2cypher_query(args: argparse.Namespace) -> int:
+    """The flexible text2openCypher path: the LLM WRITES the openCypher, executed read-only with
+    validation + bounded self-heal, printing the full audit trace (the risky half of the
+    governed-vs-risky pair)."""
+    if getattr(args, "function_url", None):
+        # Live: thin SigV4 Function-URL client, mode=text2cypher.
+        result = _function_url_query(
+            args.function_url, args.q, args.region, None, mode="text2cypher"
+        )
+        print("== text2cypher-query (live function-url) ==")
+        print(f"executed query: {result.get('executed_query')}")
+        if result.get("refusal_reason"):
+            print(f"refusal: {result.get('refusal_reason')}")
+        print("trace:")
+        print(result.get("trace", "(none)"))
+        print("citations:")
+        for cite in result.get("citations", []) or []:
+            print(f"  - {cite}")
+        print("answer:")
+        print(f"  {result.get('answer', '')}")
+        return 0
+
+    # Offline: in-memory store from the fixture corpus + rule generator + offline synthesizer.
+    graph = _populated_store(args)
+    generator = _text2cypher_generator(args)
+    synthesizer = _synthesizer(args)
+    result_t = text2cypher_query(
+        args.q, graph_store=graph, generator=generator, synthesizer=synthesizer
+    )
+    print("== text2cypher-query (offline) ==")
+    print(_offline_text2cypher_label(generator, synthesizer))
+    print(result_t.render())
+    return 0
+
+
 def _cmd_vector_eval(args: argparse.Namespace) -> int:
     cases = load_query_set(Path(args.query_set))
     corpus = {
@@ -690,6 +750,40 @@ def build_parser() -> argparse.ArgumentParser:
         help="live: SigV4-signed POST (mode=governed) to the in-VPC query Lambda's Function URL",
     )
     p_governed.set_defaults(func=_cmd_governed_query)
+
+    p_text2cypher = sub.add_parser(
+        "text2cypher-query",
+        help="flexible text2openCypher path: the LLM WRITES the openCypher, executed read-only "
+        "with validation + bounded self-heal, printing the audit trace (the risky half)",
+    )
+    p_text2cypher.add_argument(
+        "--community", required=True, help="path to the community source root"
+    )
+    p_text2cypher.add_argument(
+        "--enhancements", required=True, help="path to the enhancements source root"
+    )
+    p_text2cypher.add_argument(
+        "--neptune-endpoint", help="https Neptune endpoint (deployed graph store)"
+    )
+    p_text2cypher.add_argument(
+        "--region", default=_DEFAULT_REGION, help="AWS region for SigV4 signing"
+    )
+    p_text2cypher.add_argument("--q", required=True, help="the natural-language question")
+    p_text2cypher.add_argument(
+        "--bedrock",
+        action="store_true",
+        help="use the real Bedrock Claude generator + synthesis (needs AWS creds); "
+        "default is the offline non-semantic rule generator/synthesizer",
+    )
+    p_text2cypher.add_argument(
+        "--synthesis-model-id",
+        help="override the Bedrock Claude model id for generation + synthesis (with --bedrock)",
+    )
+    p_text2cypher.add_argument(
+        "--function-url",
+        help="live: SigV4-signed POST (mode=text2cypher) to the in-VPC query Lambda's Function URL",
+    )
+    p_text2cypher.set_defaults(func=_cmd_text2cypher_query)
 
     def add_delta_args(p: argparse.ArgumentParser) -> None:
         add_vector_corpus_args(p)  # community/enhancements/opensearch-endpoint/region/bedrock
