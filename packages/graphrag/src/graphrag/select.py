@@ -1,7 +1,7 @@
 """Template selection — the LLM's only job in the governed path (AC4).
 
-The selector returns **only a template id** (validated against the fixed library by the
-caller, ``governed.get_template``) — never query text, never parameter values. Two
+The selector returns **only a template id** (validated against the supplied catalog by the
+caller, ``governed.governed_query``) — never query text, never parameter values. Two
 implementations behind one protocol:
 
 - ``BedrockTemplateSelector`` — a Bedrock Claude **Converse** call (the same client shape

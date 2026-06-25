@@ -324,3 +324,32 @@ def test_unknown_mode_is_a_client_error(wired: None) -> None:
     assert "error" in result
     assert "unknown mode" in result["error"]
     assert "answer" not in result  # orchestration did not run
+
+
+class _NoMatchSelector:
+    def __init__(self, *a: Any, **k: Any) -> None:
+        pass
+
+    @property
+    def model_id(self) -> str:
+        return "fake-selector"
+
+    def select(self, question: str, templates: Any) -> str | None:
+        return None
+
+
+def test_governed_no_match_logs_warning_and_returns_reason(
+    wired: None, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    monkeypatch.setattr(query_lambda, "BedrockTemplateSelector", _NoMatchSelector)
+    with caplog.at_level(logging.WARNING):
+        result = query_lambda.lambda_handler(
+            {"question": "what is the weather", "mode": "governed"}, None
+        )
+    # a governed no-match is a legible result (no query ran), distinct in the log from an "ok".
+    assert result["template_id"] is None
+    assert result["no_match_reason"]
+    assert result["cypher"] == ""
+    assert any("governed no-match" in r.message for r in caplog.records)

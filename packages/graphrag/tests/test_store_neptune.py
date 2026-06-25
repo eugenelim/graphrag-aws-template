@@ -380,7 +380,7 @@ def test_run_template_query_decodes_n_rows() -> None:
     nodes = store.run_template_query("MATCH (n:Entity) RETURN n", {"sig": "sig:sig-network"})
     assert [n.id for n in nodes] == ["kep-2086"]
     # the value is bound, not interpolated.
-    assert store and http.last_params() == {"sig": "sig:sig-network"}
+    assert http.last_params() == {"sig": "sig:sig-network"}
 
 
 def test_run_template_query_empty_results_is_empty_list() -> None:
