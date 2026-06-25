@@ -1,6 +1,6 @@
 # Spec: graph-ingestion-resolution
 
-- **Status:** Implementing
+- **Status:** Shipped
 - **Shape:** mixed
 - **Brief:** [`docs/product/briefs/graphrag-aws-demo.md`](../../product/briefs/graphrag-aws-demo.md)
 - **Constrained by:** [ADR-0001](../../adr/0001-hybrid-orchestration-seed-and-expand.md) (seed-and-expand reuses this resolver/alias table), [ADR-0002](../../adr/0002-ephemeral-vpc-store-topology.md) (ephemeral VPC + Neptune + Fargate topology), [ADR-0003](../../adr/0003-iac-tool-aws-cdk-python.md) (IaC tool), [design doc](../../architecture/graphrag-aws-architecture/design.md)
