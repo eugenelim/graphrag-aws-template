@@ -116,3 +116,24 @@ def test_semantic_exemplar_in_place_pod_resize_returns_kep_1287() -> None:
     embedder: Embedder = _FrozenEmbedder({q1.query: frozen["queries"]["q1"]})
     result = vector_search(store, embedder, q1.query, k=5)
     assert "1287-in-place-update-pod-resources" in result.hits[0].chunk.doc_path
+
+
+# --- slice-4: clearance threads into vector_search (AC4/AC5) ---------------------------
+
+
+def test_vector_search_threads_clearance_to_knn() -> None:
+    from graphrag.store.vector_base import EmbeddedChunk
+    from graphrag.visibility import resolve_clearance
+
+    store = MemoryVectorStore()
+    store.index_chunk(
+        EmbeddedChunk(Chunk("pub", "x", "s", "p.md", "H", [], visibility="public"), [1.0, 0.0])
+    )
+    store.index_chunk(
+        EmbeddedChunk(Chunk("res", "x", "s", "r.md", "H", [], visibility="restricted"), [1.0, 0.0])
+    )
+    emb = _FixedEmbedder([1.0, 0.0])
+    reader = vector_search(store, emb, "q", k=10, clearance=resolve_clearance("public-reader"))
+    assert {h.chunk.id for h in reader.hits} == {"pub"}
+    unfiltered = vector_search(store, emb, "q", k=10)
+    assert {h.chunk.id for h in unfiltered.hits} == {"pub", "res"}

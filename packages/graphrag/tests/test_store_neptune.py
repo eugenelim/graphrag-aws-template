@@ -195,3 +195,59 @@ def test_neighbors_batch_empty_frontier_makes_no_call() -> None:
     http = RecordingHttp([])
     assert _store(http).neighbors_batch([]) == []
     assert http.calls == []
+
+
+# --- slice-4: during-traversal permission filter is parameterized (shape check, AC3) ---
+# These assert the WHERE clause + $allowed parameterization (the security posture). They are
+# NOT the leak-correctness proof — a mock returns author-supplied rows, so it cannot prove
+# server-side exclusion; the leak proof runs against the in-memory store in test_query.py.
+
+
+def test_neighbors_batch_visibility_filter_is_parameterized() -> None:
+    # The mock returns a RESTRICTED row; the override must REQUEST it be filtered (the WHERE
+    # names r/b visibility), proving the predicate is sent — not that the mock excluded it.
+    restricted_row = {
+        "src": "sig:sig-node",
+        "kind": "OWNS",
+        "node": {"~properties": {"id": "kep-1287", "kind": "KEP", "visibility": "restricted"}},
+    }
+    http = RecordingHttp(
+        [
+            HttpResponse(200, json.dumps({"results": [restricted_row]})),
+            HttpResponse(200, json.dumps({"results": []})),
+        ]
+    )
+    _store(http).neighbors_batch(["sig:sig-node"], allowed_labels=frozenset({"public"}))
+
+    assert len(http.calls) == 2
+    for call in http.calls:
+        body = json.loads(call["data"])
+        query = body["query"]
+        assert "r.visibility IN $allowed" in query
+        assert "b.visibility IN $allowed" in query
+        params = json.loads(body["parameters"])
+        assert params["allowed"] == ["public"]
+        # the allowed tier rides the params map, never interpolated into the query text.
+        assert "public" not in query
+
+
+def test_neighbors_batch_without_clearance_omits_filter() -> None:
+    http = RecordingHttp([HttpResponse(200, "{}"), HttpResponse(200, "{}")])
+    _store(http).neighbors_batch(["sig:sig-network"])
+    for call in http.calls:
+        body = json.loads(call["data"])
+        assert "visibility" not in body["query"]
+        assert "allowed" not in json.loads(body["parameters"])
+
+
+def test_neighbors_single_visibility_filter_parameterized() -> None:
+    http = RecordingHttp([HttpResponse(200, json.dumps({"results": []}))])
+    _store(http).neighbors(
+        "person:thockin",
+        EdgeKind.TECH_LEADS,
+        Direction.OUT,
+        allowed_labels=frozenset({"public", "internal"}),
+    )
+    query = http.last_query()
+    assert "WHERE r.visibility IN $allowed AND b.visibility IN $allowed" in query
+    assert sorted(http.last_params()["allowed"]) == ["internal", "public"]

@@ -26,11 +26,17 @@ from dataclasses import dataclass, field
 from .embed import Embedder
 from .entity_link import link_question
 from .hybrid import DEFAULT_K, DEFAULT_MAX_HOPS, DEFAULT_SEED_CAP, hybrid_query
+from .model import Node
 from .query import expand_neighborhood, resolve_nodes
 from .store.base import GraphStore
 from .store.vector_base import VectorStore
 from .synthesize import Synthesizer
 from .vector import vector_search
+from .visibility import DEFAULT_VISIBILITY, Clearance
+
+
+def _node_visibility(node: Node) -> str:
+    return str(node.props.get("visibility", DEFAULT_VISIBILITY))
 
 
 @dataclass
@@ -76,12 +82,21 @@ def run_modes(
     k: int = DEFAULT_K,
     max_hops: int = DEFAULT_MAX_HOPS,
     seed_cap: int = DEFAULT_SEED_CAP,
+    clearance: Clearance | None = None,
 ) -> ComparisonResult:
-    """Run the three retrieval modes independently and return their traced results."""
+    """Run the three retrieval modes independently and return their traced results.
+
+    A ``clearance`` (slice-4 permission filter) is threaded into **every** mode — including
+    vector-only, which must filter its own chunks or it would leak restricted chunks the
+    other two modes drop (a per-mode divergence the demo must not have). ``None`` =
+    unfiltered (slice-3 behavior unchanged).
+    """
     return ComparisonResult(
         question=question,
-        vector=_vector_only(question, vector_store, embedder, synthesizer, k),
-        graph=_graph_only(question, graph_store, synthesizer, aliases, max_hops=max_hops),
+        vector=_vector_only(question, vector_store, embedder, synthesizer, k, clearance=clearance),
+        graph=_graph_only(
+            question, graph_store, synthesizer, aliases, max_hops=max_hops, clearance=clearance
+        ),
         hybrid=_hybrid(
             question,
             vector_store,
@@ -92,6 +107,7 @@ def run_modes(
             k=k,
             max_hops=max_hops,
             seed_cap=seed_cap,
+            clearance=clearance,
         ),
     )
 
@@ -102,8 +118,10 @@ def _vector_only(
     embedder: Embedder,
     synthesizer: Synthesizer,
     k: int,
+    *,
+    clearance: Clearance | None = None,
 ) -> ModeResult:
-    vresult = vector_search(vector_store, embedder, question, k=k)
+    vresult = vector_search(vector_store, embedder, question, k=k, clearance=clearance)
     synth = synthesizer.synthesize(question, vresult.hits, [])
     # the entity IDs vector-only surfaces are the chunk owners (no graph expansion).
     owner_ids: list[str] = []
@@ -128,27 +146,42 @@ def _graph_only(
     aliases: dict[str, str],
     *,
     max_hops: int,
+    clearance: Clearance | None = None,
 ) -> ModeResult:
     # confirm question-linked candidates against the graph, then expand. Unconfirmed
     # candidates are recorded and surfaced in the trace — a misseed must be visible in
-    # graph-only too, never silently dropped (ADR-0001; charter principle 1).
+    # graph-only too, never silently dropped (ADR-0001; charter principle 1). A confirmed
+    # candidate above the persona's clearance is filtered (slice-4), recorded separately.
     seed_ids: list[str] = []
     dropped: list[str] = []
+    filtered: list[str] = []
     for cand in link_question(question, aliases):
-        if graph_store.get_node(cand.entity_id) is None:
+        node = graph_store.get_node(cand.entity_id)
+        if node is None:
             dropped.append(f"{cand.surface}->{cand.entity_id}")
+        elif clearance is not None and not clearance.allows(_node_visibility(node)):
+            filtered.append(f"{cand.surface}->{cand.entity_id}")
         elif cand.entity_id not in seed_ids:
             seed_ids.append(cand.entity_id)
-    hop = expand_neighborhood(graph_store, seed_ids, max_hops=max_hops)
+    hop = expand_neighborhood(graph_store, seed_ids, max_hops=max_hops, clearance=clearance)
     node_ids: list[str] = []
     for node_id in seed_ids + hop.result_ids:
         if node_id not in node_ids:
             node_ids.append(node_id)
     nodes = resolve_nodes(graph_store, node_ids)
+    # Independent final guard, mirroring hybrid: drop any merged node above clearance.
+    if clearance is not None:
+        nodes = [n for n in nodes if clearance.allows(_node_visibility(n))]
+        node_ids = [n.id for n in nodes]
     synth = synthesizer.synthesize(question, [], nodes)
     trace = hop.render()
     if dropped:
         trace += f"\ndropped (unconfirmed): {', '.join(dropped)}"
+    if filtered:
+        trace += (
+            f"\nfiltered (visibility; teaching aid, a real ACL would not reveal this): "
+            f"{', '.join(filtered)}"
+        )
     return ModeResult(
         mode="graph-only",
         trace=trace,
@@ -169,6 +202,7 @@ def _hybrid(
     k: int,
     max_hops: int,
     seed_cap: int,
+    clearance: Clearance | None = None,
 ) -> ModeResult:
     result = hybrid_query(
         question,
@@ -180,6 +214,7 @@ def _hybrid(
         k=k,
         max_hops=max_hops,
         seed_cap=seed_cap,
+        clearance=clearance,
     )
     surfaced: list[str] = [n.id for n in result.graph_nodes]
     return ModeResult(

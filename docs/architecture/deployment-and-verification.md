@@ -249,3 +249,54 @@ fix so it can't regress silently:
 >    graph facts do not include explicit owns edges") instead of stating the ownership
 >    chain. The trace + structural win are correct; enriching the synthesis context with
 >    the relationships is the next quality step.
+
+## Verification ladder — slice 4 (permission-filtered retrieval)
+
+Slice 4 adds **no new infrastructure** (the persona rides the existing query Lambda's
+request body; the only store change is the OpenSearch `visibility` mapping field). The
+offline build proves the filter structurally — the during-traversal edge filter (the leak
+guard), the vector terms-filter, and the two-persona divergence are all asserted over the
+fixture corpus (`test_query.py`, `test_store_neptune.py`, `test_hybrid.py`,
+`test_compare.py`, `test_query_lambda.py`).
+
+| Rung | What it proves | Status |
+| --- | --- | --- |
+| Offline leak guard (AC3) | a restricted intermediate is unreachable for a low-clearance persona — incl. a node reachable *only* through it (a post-filter would leak it) | **PASS** (unit, in-memory) |
+| Neptune filter shape (AC3) | the `WHERE r.visibility IN $allowed AND b.visibility IN $allowed` is present and parameterized (`$allowed` on the params map, never interpolated) | **PASS** (mock HTTP) |
+| Three-mode + Lambda persona (AC5/AC7) | vector/graph/hybrid each filter by clearance; the query Lambda accepts a `persona`, fails closed on unknown, stays PyYAML-free | **PASS** (unit) |
+| Live two-persona smoke (AC9) | deploy → labeled Fargate dual-write → SigV4 Function-URL query as `public-reader` **and** `maintainer` over one entity-led question; the restricted entity absent for the reader, present for the maintainer; then destroy | **PASS (2026-06-24)** — trace below |
+
+> **Live two-persona permission-filtered smoke: PASS (2026-06-24).** Deployed
+> `GraphragSlice1` to account `<redacted>` (`us-east-1`) → `CREATE_COMPLETE`; built +
+> pushed the slice-4 ingestion image to ECR; uploaded the fixture corpus; ran the Fargate
+> **labeled** dual-write (graph: 22 nodes / 28 edges / 6 cross-source merges; vector: 13
+> chunks via live Bedrock Titan — both stores carry `visibility` from `labels.yaml`:
+> `kep-1287=restricted`, `kep-1880=internal`). Then two **SigV4-signed POSTs to the IAM-auth
+> Function URL** for *"What KEPs does SIG Node own?"*, identical but for `persona`:
+>
+> ```text
+> persona=public-reader  (clearance allows [public])
+>   hop 1 reached: kep-2086, person:…, subproject:…   # NOT kep-1287, NOT kep-1880
+>   answer cites: kep-9, kep-2086                      # only KEP-0009 in the answer
+> persona=maintainer     (clearance allows [internal, public, restricted])
+>   hop 1 reached: kep-1287, kep-1880, kep-2086, …     # the restricted + internal KEPs
+>   hop 2 reached: person:lavalamp, person:tallclair, person:vinaykul   # kep-1287's approvers
+>   answer cites: KEP-0009 AND KEP-1287 "In-place Update of Pod Resources"
+> ```
+>
+> This is the leak guard proven **live**: the restricted `kep-1287`'s `OWNS` edge composes
+> to `restricted`, so for the `public-reader` it is filtered **during the hop** — `kep-1287`
+> never enters the frontier, and so its approvers (`lavalamp`/`tallclair`/`vinaykul`, only
+> reachable *through* it) never appear either. The `maintainer`, with clearance, traverses
+> the edge and reaches both the KEP and its approvers. Each response carried the persona
+> banner + the synthetic-stand-in label. The stack was then torn down with
+> `scripts/destroy.sh` (teardown-first); no billable resource remains. This satisfies AC9.
+>
+> **One finding only a live run surfaced (fixed in this PR):** `labels.yaml` shipped in the
+> src tree (so src-layout offline tests passed) but was **absent from
+> `[tool.setuptools.package-data]`**, so `pip install .` / the Fargate image omitted it and
+> the live ingest would have crashed in `load_labels()`. Fixed by declaring `labels.yaml`
+> in `package-data`, plus a regression test
+> (`test_labels.py::test_all_packaged_yaml_declared_in_package_data`) that asserts every
+> `*.yaml` under `src/graphrag` is declared, so a future packaged resource can't be
+> forgotten. Same class as the slice-2 `opensearch-create-index-idempotency` live-only find.

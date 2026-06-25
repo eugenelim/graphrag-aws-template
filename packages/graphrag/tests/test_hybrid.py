@@ -206,3 +206,86 @@ def test_merge_dedupes_chunks_and_nodes(community_root: Path, enhancements_root:
     node_ids = [n.id for n in result.graph_nodes]
     assert len(node_ids) == len(set(node_ids))  # deduped nodes
     assert result.answer  # synthesized, non-empty
+
+
+# --- slice-4: permission-filtered hybrid + filtered-out trace (AC5) -------------------
+
+from graphrag.labels import label_chunks, label_graph, load_labels  # noqa: E402
+from graphrag.visibility import resolve_clearance  # noqa: E402
+
+
+def _labeled_stores(
+    community_root: Path, enhancements_root: Path
+) -> tuple[MemoryVectorStore, MemoryGraphStore, HashEmbedder]:
+    docs = load_corpus(community_root, enhancements_root)
+    graph_obj = resolve(docs)
+    label_graph(graph_obj, load_labels())  # kep-1287=restricted, kep-1880=internal
+    graph = MemoryGraphStore.from_graph(graph_obj)
+    embedder = HashEmbedder()
+    vstore = MemoryVectorStore()
+    chunks = chunk_corpus(docs)
+    label_chunks(chunks, load_labels())
+    vectors = embedder.embed([c.text for c in chunks])
+    for c, v in zip(chunks, vectors, strict=True):
+        vstore.index_chunk(EmbeddedChunk(c, v))
+    return vstore, graph, embedder
+
+
+def _hybrid(vstore, graph, embedder, q, persona):  # type: ignore[no-untyped-def]
+    return hybrid_query(
+        q,
+        vector_store=vstore,
+        graph_store=graph,
+        embedder=embedder,
+        synthesizer=TemplateSynthesizer(),
+        aliases=load_aliases(),
+        max_hops=2,
+        clearance=resolve_clearance(persona) if persona else None,
+    )
+
+
+def test_hybrid_public_reader_excludes_restricted_kep(
+    community_root: Path, enhancements_root: Path
+) -> None:
+    vstore, graph, embedder = _labeled_stores(community_root, enhancements_root)
+    q = "What KEPs does SIG Node own?"  # sig-node OWNS kep-9 (public) + kep-1287 (restricted)
+
+    reader = _hybrid(vstore, graph, embedder, q, "public-reader")
+    maint = _hybrid(vstore, graph, embedder, q, "maintainer")
+
+    reader_nodes = {n.id for n in reader.graph_nodes}
+    maint_nodes = {n.id for n in maint.graph_nodes}
+    # the restricted KEP is absent for the reader, present for the maintainer — divergence.
+    assert "kep-1287" not in reader_nodes
+    assert "kep-1287" in maint_nodes
+    # the public sibling KEP is still reachable for the reader (sig-node OWNS kep-9).
+    assert "kep-9" in reader_nodes
+    # the final merged-node guard: NO node above the reader's clearance leaks through.
+    assert all(n.props.get("visibility", "public") == "public" for n in reader.graph_nodes)
+
+
+def test_hybrid_filtered_question_seed_recorded_and_traced(
+    community_root: Path, enhancements_root: Path
+) -> None:
+    vstore, graph, embedder = _labeled_stores(community_root, enhancements_root)
+    # The question names the restricted KEP directly; for a public-reader it is filtered
+    # (recorded), never seeded — distinct from an unconfirmed-candidate drop.
+    reader = _hybrid(vstore, graph, embedder, "summarize KEP-1287", "public-reader")
+    filtered_ids = {c.entity_id for c in reader.filtered_seeds}
+    assert "kep-1287" in filtered_ids
+    assert "kep-1287" not in {s.entity_id for s in reader.seeds}
+    rendered = reader.render()
+    assert "clearance: persona=public-reader" in rendered
+    assert "filtered (visibility" in rendered
+    assert "not real authz" in rendered  # synthetic stand-in label present
+
+
+def test_hybrid_no_clearance_render_unchanged(
+    community_root: Path, enhancements_root: Path
+) -> None:
+    vstore, graph, embedder = _labeled_stores(community_root, enhancements_root)
+    result = _hybrid(vstore, graph, embedder, "What KEPs does SIG Node own?", None)
+    rendered = result.render()
+    # No persona => no clearance/filtered lines (slice-3 render shape unchanged).
+    assert "clearance:" not in rendered
+    assert "filtered (visibility" not in rendered
