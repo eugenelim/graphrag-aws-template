@@ -1,6 +1,6 @@
 # Spec: incremental-delta-reingest
 
-- **Status:** Approved <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Implementing <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Shape:** mixed
 - **Plan:** [`plan.md`](plan.md)
@@ -67,9 +67,10 @@ proceeding; *Never do* is a hard rule, even under time pressure.
   + content hash); node/edge identity remains the normalized entity key. The end state
   after a delta is **identical** to a full `--rebuild` of that same snapshot (verified on
   the in-memory stores, AC6) — this equivalence is the consistency contract.
-- **Re-ingest only the delta.** Re-parse, re-chunk, and re-embed only added / changed /
-  moved-to documents; unchanged documents are never re-parsed and their chunks are never
-  re-embedded (the Bedrock cost saver and the honest claim behind "incremental").
+- **Re-ingest only the delta.** Re-extract, re-chunk, and **re-embed** only added / changed /
+  moved-to documents; **unchanged documents are never re-embedded** — that Bedrock call is the
+  cost the "incremental" claim is about (AC2). (Parsing the corpus to build the new manifest is
+  cheap and in-process, so it is *not* restricted; only the network-bound embedding is.)
 - **Run an explicit orphan-removal pass.** After applying the delta, no graph node or
   edge and no chunk may remain whose every contributing document is gone (design's
   *Incremental drift / orphans* Risk). Orphan removal is computed as **net reconciliation

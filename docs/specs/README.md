@@ -19,7 +19,7 @@ docs/specs/<feature>/
 
 | Spec | Status | Constrained by | Notes |
 | --- | --- | --- | --- |
-| [`incremental-delta-reingest`](incremental-delta-reingest/spec.md) | Approved | charter (pattern 8, principle 5), design (incremental-sync + corpus-snapshot OQ), ADR-0001/0002/0003 | Slice 5. Fargate `--delta` mode: content-hash-manifest git-delta detection (add/change/delete/move) → re-ingest only the delta → both stores consistent by (doc path + content hash) with explicit orphan removal (provenance-set reference counting) → `--rebuild` escape hatch → before/after CLI demo on real git history. AC9 live required. |
+| [`incremental-delta-reingest`](incremental-delta-reingest/spec.md) | Implementing | charter (pattern 8, principle 5), design (incremental-sync + corpus-snapshot OQ), ADR-0001/0002/0003 | Slice 5. Fargate `--delta` mode: content-hash-manifest git-delta detection (add/change/delete/move) → re-ingest only the delta → both stores consistent by (doc path + content hash) with explicit orphan removal (provenance-set reference counting) → `--rebuild` escape hatch → before/after CLI demo on real git history. AC9 live required. |
 
 ## Shipped specs (archived)
 

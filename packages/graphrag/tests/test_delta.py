@@ -48,6 +48,19 @@ def test_diff_detects_move_as_same_hash_new_path() -> None:
     assert delta.changed == []
 
 
+def test_two_files_same_hash_move_pairs_deterministically() -> None:
+    # When several moved files share one content hash, pairing is by sorted path — arbitrary but
+    # deterministic, and the end state is identical regardless since the bytes are the same.
+    old = {"community/a/README.md": "h", "community/b/README.md": "h"}
+    new = {"community/c/README.md": "h", "community/d/README.md": "h"}
+    delta = diff_manifests(old, new)
+    assert sorted(delta.moved) == [
+        ("community/a/README.md", "community/c/README.md"),
+        ("community/b/README.md", "community/d/README.md"),
+    ]
+    assert delta.added == [] and delta.deleted == []
+
+
 def test_move_plus_edit_is_delete_plus_add_not_move() -> None:
     # Path changed AND content changed → hash differs → not a move.
     old = {"enhancements/keps/x/README.md": "hX"}

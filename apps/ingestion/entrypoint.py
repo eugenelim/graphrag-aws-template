@@ -21,6 +21,7 @@ Env:
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import tempfile
@@ -37,6 +38,8 @@ from graphrag.store.vector_base import VectorStore
 # The ingest manifest (doc id -> content hash) lives at the corpus prefix root in S3; a --delta
 # diffs the new snapshot against it, and every run writes it back **last** (slice 5; AC8).
 MANIFEST_FILENAME = "manifest.json"
+
+logger = logging.getLogger("ingestion.entrypoint")
 
 
 class S3Client(Protocol):
@@ -208,6 +211,14 @@ def run(
         elif mode == "delta":
             vstore, emb = _resolve_vector(env, vector_store, embedder)
             prev = read_manifest(s3_client, bucket, manifest_key)
+            if prev is None:
+                # Loud, not silent: an operator expecting an incremental delta should see that the
+                # baseline was missing and the run fell back to a full re-ingest (re-embeds all).
+                logger.warning(
+                    "MODE=delta but no manifest at s3://%s/%s — falling back to a FULL ingest",
+                    bucket,
+                    manifest_key,
+                )
             report = ingest_delta(prev, community, enhancements, store, vstore, emb)
             new_manifest = report.new_manifest
         else:
@@ -222,6 +233,7 @@ def run(
 
 
 def main() -> int:  # pragma: no cover - container entrypoint
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     run(os.environ)
     return 0
 

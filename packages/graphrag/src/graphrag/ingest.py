@@ -11,6 +11,7 @@ This slice does a full, idempotent upsert only; delta/orphan-removal is slice 5.
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,6 +25,19 @@ from .resolve import cross_source_merges, load_aliases, resolve
 from .sources import load_corpus
 from .store.base import GraphStore
 from .store.vector_base import EmbeddedChunk, VectorStore
+
+logger = logging.getLogger("graphrag.ingest")
+
+
+def _safe_count(vector_store: VectorStore) -> int:
+    """Chunk count for the narration, degrading to ``-1`` ("unknown") on a backend error — a
+    cosmetic trace value must never gate the delta or the manifest write (a live OpenSearch
+    ``_count`` is a network round-trip)."""
+    try:
+        return vector_store.count()
+    except Exception:  # narration only — never fail the delta on a count round-trip
+        logger.warning("vector_store.count() failed; chunk count unknown", exc_info=True)
+        return -1
 
 
 @dataclass
@@ -219,11 +233,14 @@ class DeltaReport:
             lines.append(f"  - {did}")
         for old, new in d.moved:
             lines.append(f"  > {old} -> {new}")
+        def _c(n: int) -> str:
+            return "?" if n < 0 else str(n)  # -1 = count unavailable (a backend error)
+
         lines += [
             f"orphans removed: {self.orphans_removed}",
             f"nodes: {self.before_nodes} -> {self.after_nodes}   "
             f"edges: {self.before_edges} -> {self.after_edges}   "
-            f"chunks: {self.before_chunks} -> {self.after_chunks}",
+            f"chunks: {_c(self.before_chunks)} -> {_c(self.after_chunks)}",
             f"re-embedded chunks (delta only): {self.indexed_chunks}",
         ]
         return "\n".join(lines)
@@ -258,25 +275,37 @@ def ingest_delta(
 
     before_nodes = len(graph_store.all_nodes())
     before_edges = len(graph_store.all_edges())
-    before_chunks = vector_store.count()
+    before_chunks = _safe_count(vector_store)
 
     added_ids = delta.added_doc_ids()
     removed_ids = delta.removed_doc_ids()
     delta_docs = [doc for doc in docs if doc.doc_id in added_ids]
+    logger.info(
+        "delta%s: +%d ~%d -%d >%d (%d docs to re-ingest)",
+        " (full — no prior manifest)" if prev_manifest is None else "",
+        len(delta.added), len(delta.changed), len(delta.deleted), len(delta.moved), len(delta_docs),
+    )
 
     # Graph: resolve only the delta docs into a scratch graph, then reconcile by provenance.
     scratch = resolve(delta_docs, aliases)
     label_graph(scratch, labels)
     orphans = _reconcile_graph(graph_store, scratch, removed_ids)
+    logger.info("graph reconciled: %d orphan node(s)/edge(s) removed", orphans)
 
-    # Vector: drop removed docs' chunks, then chunk + embed + index ONLY the delta docs.
-    if removed_ids:
-        vector_store.delete_by_doc(sorted(removed_ids))
+    # Vector: delete chunks of EVERY doc the delta touches (removed + added/changed/moved-to),
+    # then re-index the added/changed/moved-to set. Deleting the added set too — not only the
+    # removed set — makes a retry after a partial failure idempotent: a crashed run's chunks are
+    # cleared before re-indexing, so OpenSearch's auto-id `_doc` POST can't accumulate duplicates.
+    touched_ids = removed_ids | added_ids
+    if touched_ids:
+        logger.info("vector: deleting chunks of %d touched doc(s)", len(touched_ids))
+        vector_store.delete_by_doc(sorted(touched_ids))
     chunks = chunk_corpus(delta_docs)
     label_chunks(chunks, labels)
     vectors = embedder.embed([c.text for c in chunks]) if chunks else []
     for chunk, vector in zip(chunks, vectors, strict=True):
         vector_store.index_chunk(EmbeddedChunk(chunk, vector))
+    logger.info("vector: indexed %d delta chunk(s)", len(chunks))
 
     return DeltaReport(
         delta=delta,
@@ -286,7 +315,7 @@ def ingest_delta(
         before_chunks=before_chunks,
         after_nodes=len(graph_store.all_nodes()),
         after_edges=len(graph_store.all_edges()),
-        after_chunks=vector_store.count(),
+        after_chunks=_safe_count(vector_store),
         orphans_removed=orphans,
         indexed_chunks=len(chunks),
         full_ingest=prev_manifest is None,
@@ -304,7 +333,13 @@ def rebuild(
 ) -> DeltaReport:
     """The ``--rebuild`` escape hatch (slice 5; charter pattern 8): clear both stores, then
     full-ingest from scratch. The ground-truth reset — identical end state to a clean first
-    ingest. Returns a ``DeltaReport`` (every document classified as added)."""
+    ingest. Returns a ``DeltaReport`` (every document classified as added).
+
+    Blast radius is the **whole** graph + vector store **by design** — and that is safe because
+    the Neptune cluster and OpenSearch domain are single-tenant to this demo (ADR-0002's
+    ephemeral, teardown-first topology). A future multi-tenant reuse must not inherit this
+    full-wipe without re-scoping ``GraphStore.clear`` / ``VectorStore.clear``."""
+    logger.warning("rebuild: clearing BOTH stores (full wipe) before re-ingest")
     graph_store.clear()
     vector_store.clear()
     return ingest_delta(
