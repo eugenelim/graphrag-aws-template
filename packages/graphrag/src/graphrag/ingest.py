@@ -130,8 +130,12 @@ def _reconcile_edge(
     if scratch_edge is not None:
         props.update(scratch_edge.props)
     return Edge(
-        ref.src_id, ref.dst_id, ref.kind,
-        props=props, sources=_sources_of(surviving), doc_paths=surviving,
+        ref.src_id,
+        ref.dst_id,
+        ref.kind,
+        props=props,
+        sources=_sources_of(surviving),
+        doc_paths=surviving,
     )
 
 
@@ -233,6 +237,7 @@ class DeltaReport:
             lines.append(f"  - {did}")
         for old, new in d.moved:
             lines.append(f"  > {old} -> {new}")
+
         def _c(n: int) -> str:
             return "?" if n < 0 else str(n)  # -1 = count unavailable (a backend error)
 
@@ -283,7 +288,11 @@ def ingest_delta(
     logger.info(
         "delta%s: +%d ~%d -%d >%d (%d docs to re-ingest)",
         " (full — no prior manifest)" if prev_manifest is None else "",
-        len(delta.added), len(delta.changed), len(delta.deleted), len(delta.moved), len(delta_docs),
+        len(delta.added),
+        len(delta.changed),
+        len(delta.deleted),
+        len(delta.moved),
+        len(delta_docs),
     )
 
     # Graph: resolve only the delta docs into a scratch graph, then reconcile by provenance.
