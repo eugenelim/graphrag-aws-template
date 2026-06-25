@@ -23,6 +23,7 @@ from .compare import run_modes
 from .delta import manifest_from_json, manifest_to_json
 from .embed import BedrockTitanEmbedder, Embedder, HashEmbedder
 from .eval import evaluate, load_labeled_sample
+from .governed import governed_query
 from .hybrid import hybrid_query
 from .ingest import ingest, ingest_delta, rebuild
 from .labels import label_chunks, load_labels
@@ -30,6 +31,7 @@ from .model import Direction, EdgeKind
 from .normalize import kep_id, person_id, sig_id
 from .query import Step, traverse
 from .resolve import load_aliases
+from .select import BedrockTemplateSelector, RuleTemplateSelector, TemplateSelector
 from .sources import load_corpus
 from .store.base import GraphStore
 from .store.memory import MemoryGraphStore
@@ -165,7 +167,7 @@ def _make_http_client() -> HttpClient:
 
 
 def _function_url_query(
-    url: str, question: str, region: str, persona: str | None = None
+    url: str, question: str, region: str, persona: str | None = None, mode: str = "hybrid"
 ) -> dict[str, Any]:
     """Thin live client: a SigV4-signed (service=lambda) POST of the question to the
     in-VPC query Lambda's Function URL, the signature **covering the body** (an
@@ -173,7 +175,11 @@ def _function_url_query(
     body is rejected). A non-2xx raises with the body (loud, like the adapters).
 
     A ``persona`` (slice-4 permission filter) rides the body when set, so the live query is
-    permission-filtered server-side by the same clearance the offline path applies."""
+    permission-filtered server-side by the same clearance the offline path applies.
+
+    ``mode`` selects the server path (``hybrid`` default | ``governed``); it rides the body
+    only when non-default, so a hybrid call's wire form is byte-unchanged (the additive,
+    back-compat Function-URL extension the opencypher-templates slice ships)."""
     from botocore.auth import SigV4Auth
     from botocore.awsrequest import AWSRequest
     from botocore.session import Session
@@ -187,6 +193,8 @@ def _function_url_query(
     payload: dict[str, str] = {"question": question}
     if persona:
         payload["persona"] = persona
+    if mode != "hybrid":
+        payload["mode"] = mode
     body = json.dumps(payload).encode("utf-8")
     payload_hash = hashlib.sha256(body).hexdigest()
     request = AWSRequest(
@@ -333,6 +341,60 @@ def _cmd_compare(args: argparse.Namespace) -> int:
     print(_offline_label(embedder, synthesizer))
     _print_persona(clearance)
     print(result.render())
+    return 0
+
+
+def _selector(args: argparse.Namespace) -> TemplateSelector:
+    """Real Bedrock Claude selector when ``--bedrock`` (needs creds), else the offline
+    deterministic, non-semantic rule selector."""
+    if getattr(args, "bedrock", False):
+        model_id = getattr(args, "synthesis_model_id", None) or DEFAULT_SYNTHESIS_MODEL_ID
+        return BedrockTemplateSelector(model_id=model_id, region=args.region)
+    return RuleTemplateSelector()
+
+
+def _offline_governed_label(selector: TemplateSelector, synthesizer: Synthesizer) -> str:
+    return (
+        f"selector: {selector.model_id}\n"
+        f"synthesizer: {synthesizer.model_id}\n"
+        "(offline selector/synthesizer are NON-SEMANTIC — structural demo only; "
+        "semantic selection/quality is the live path)"
+    )
+
+
+def _cmd_governed_query(args: argparse.Namespace) -> int:
+    """The governed Cypher-Templates path: select a vetted template, bind validated
+    parameters, run the parameterized openCypher, and print the full audit trace."""
+    if getattr(args, "function_url", None):
+        # Live: thin SigV4 Function-URL client, mode=governed.
+        result = _function_url_query(args.function_url, args.q, args.region, None, mode="governed")
+        print("== governed-query (live function-url) ==")
+        print(f"template: {result.get('template_id')}")
+        print(f"params: {json.dumps(result.get('params', {}))}")
+        print(f"cypher: {result.get('cypher', '')}")
+        print("trace:")
+        print(result.get("trace", "(none)"))
+        print("citations:")
+        for cite in result.get("citations", []) or []:
+            print(f"  - {cite}")
+        print("answer:")
+        print(f"  {result.get('answer', '')}")
+        return 0
+
+    # Offline: in-memory store from the fixture corpus + rule selector + offline synthesizer.
+    graph = _populated_store(args)
+    selector = _selector(args)
+    synthesizer = _synthesizer(args)
+    result_g = governed_query(
+        args.q,
+        graph_store=graph,
+        selector=selector,
+        synthesizer=synthesizer,
+        aliases=load_aliases(),
+    )
+    print("== governed-query (offline) ==")
+    print(_offline_governed_label(selector, synthesizer))
+    print(result_g.render())
     return 0
 
 
@@ -596,6 +658,38 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_hybrid_args(p_compare)
     p_compare.set_defaults(func=_cmd_compare)
+
+    p_governed = sub.add_parser(
+        "governed-query",
+        help="governed Cypher-Templates path: select a vetted parameterized openCypher "
+        "template, bind validated params, run it, and print the audit trace",
+    )
+    p_governed.add_argument("--community", required=True, help="path to the community source root")
+    p_governed.add_argument(
+        "--enhancements", required=True, help="path to the enhancements source root"
+    )
+    p_governed.add_argument(
+        "--neptune-endpoint", help="https Neptune endpoint (deployed graph store)"
+    )
+    p_governed.add_argument(
+        "--region", default=_DEFAULT_REGION, help="AWS region for SigV4 signing"
+    )
+    p_governed.add_argument("--q", required=True, help="the natural-language question")
+    p_governed.add_argument(
+        "--bedrock",
+        action="store_true",
+        help="use the real Bedrock Claude selector + synthesis (needs AWS creds); "
+        "default is the offline non-semantic rule selector/synthesizer",
+    )
+    p_governed.add_argument(
+        "--synthesis-model-id",
+        help="override the Bedrock Claude model id for selection + synthesis (with --bedrock)",
+    )
+    p_governed.add_argument(
+        "--function-url",
+        help="live: SigV4-signed POST (mode=governed) to the in-VPC query Lambda's Function URL",
+    )
+    p_governed.set_defaults(func=_cmd_governed_query)
 
     def add_delta_args(p: argparse.ArgumentParser) -> None:
         add_vector_corpus_args(p)  # community/enhancements/opensearch-endpoint/region/bedrock

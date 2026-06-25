@@ -45,7 +45,9 @@ from dataclasses import asdict
 from typing import Any
 
 from .embed import BedrockTitanEmbedder
+from .governed import GovernedResult, governed_query
 from .hybrid import HybridResult, hybrid_query
+from .select import BedrockTemplateSelector
 from .store.neptune import NeptuneGraphStore
 from .store.opensearch import OpenSearchVectorStore
 from .synthesize import DEFAULT_SYNTHESIS_MODEL_ID, BedrockClaudeSynthesizer
@@ -91,6 +93,14 @@ def _extract_persona(payload: dict[str, Any]) -> str | None:
     return persona if isinstance(persona, str) and persona else None
 
 
+def _extract_mode(payload: dict[str, Any]) -> str:
+    """The optional ``mode`` (``hybrid`` default | ``governed``) — the additive,
+    back-compat Function-URL field the opencypher-templates slice adds. An absent or
+    non-string mode is ``hybrid``, so an existing caller is unaffected."""
+    mode = payload.get("mode")
+    return mode if isinstance(mode, str) and mode else "hybrid"
+
+
 def lambda_handler(event: Any, context: Any) -> dict[str, Any]:
     correlation_id = uuid.uuid4().hex
     try:
@@ -105,6 +115,35 @@ def lambda_handler(event: Any, context: Any) -> dict[str, Any]:
                 "correlation_id": correlation_id,
             }
 
+        region = os.environ.get("AWS_REGION", "us-east-1")
+        model_id = os.environ.get("SYNTHESIS_MODEL_ID", DEFAULT_SYNTHESIS_MODEL_ID)
+
+        # Mode dispatch (additive, back-compat): absent ⇒ hybrid. The governed path runs the
+        # Cypher-Templates orchestration (select a vetted template → bind validated params →
+        # run the parameterized openCypher → synthesize); it reuses the same Neptune
+        # data-access + synthesis-model Converse grant the hybrid path already holds.
+        mode = _extract_mode(payload)
+        if mode == "governed":
+            graph_store_g = NeptuneGraphStore(os.environ["NEPTUNE_ENDPOINT"], region)
+            selector = BedrockTemplateSelector(model_id=model_id, region=region)
+            synthesizer_g = BedrockClaudeSynthesizer(model_id=model_id, region=region)
+            governed = governed_query(
+                question,
+                graph_store=graph_store_g,
+                selector=selector,
+                synthesizer=synthesizer_g,
+                aliases={},  # PyYAML-free Lambda: mechanical normalizers only (no alias table)
+            )
+            logger.info(
+                "query_lambda governed ok (correlation_id=%s) template=%s rows=%d",
+                correlation_id,
+                governed.template_id,
+                len(governed.rows),
+            )
+            return _serialize_governed(governed)
+        if mode != "hybrid":
+            return {"error": f"unknown mode {mode!r}", "correlation_id": correlation_id}
+
         # Slice-4 permission filter (a teaching stand-in for an ACL, never real authz):
         # resolve the optional persona to a clearance, fail-closed. An unknown persona is a
         # client error (the persona is user-supplied, not internal) — never a silent
@@ -115,8 +154,6 @@ def lambda_handler(event: Any, context: Any) -> dict[str, Any]:
         except ValueError:
             return {"error": "unknown persona", "correlation_id": correlation_id}
 
-        region = os.environ.get("AWS_REGION", "us-east-1")
-        model_id = os.environ.get("SYNTHESIS_MODEL_ID", DEFAULT_SYNTHESIS_MODEL_ID)
         graph_store = NeptuneGraphStore(os.environ["NEPTUNE_ENDPOINT"], region)
         vector_store = OpenSearchVectorStore(os.environ["OPENSEARCH_ENDPOINT"], region)
         embedder = BedrockTitanEmbedder(region=region)
@@ -151,6 +188,25 @@ def lambda_handler(event: Any, context: Any) -> dict[str, Any]:
             "error": "internal error processing the query",
             "correlation_id": correlation_id,
         }
+
+
+def _serialize_governed(result: GovernedResult) -> dict[str, Any]:
+    """Shape the GovernedResult into the Function-URL audit envelope (no internal detail).
+
+    The cypher and the parameter map are returned **separately** (never interpolated), so a
+    caller sees exactly which vetted query ran with which validated values."""
+    return {
+        "template_id": result.template_id,
+        "template_description": result.template_description,
+        "params": dict(result.param_map),
+        "bound_params": [asdict(bp) for bp in result.bound_params],
+        "cypher": result.cypher,
+        "rows": [node.id for node in result.rows],
+        "answer": result.answer,
+        "citations": list(result.citations),
+        "trace": result.render(),
+        "no_match_reason": result.no_match_reason,
+    }
 
 
 def _serialize(result: HybridResult) -> dict[str, Any]:

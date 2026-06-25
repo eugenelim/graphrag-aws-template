@@ -54,6 +54,21 @@ OpenSearch chunk metadata) from the same dual-write, so the filter is consistent
 modes. The OpenSearch `visibility` keyword field lands only on a **fresh** index
 (teardown-first rebuild; a re-deploy over a live domain does not migrate the mapping).
 
+## Trust boundaries (opencypher-templates — the governed query path)
+
+> The governed half of the governed-vs-risky pair. Its security property is **injection-safe
+> and read-only by construction**, so — unlike the LLM-authored `text2opencypher-guarded`
+> path — it does **not** rely on Neptune's read-replica enforcement (RFC-0001 §2). See the
+> [governed-vs-risky explanation](../guides/explanation/governed-vs-risky-graph-queries.md).
+
+| Boundary | Control |
+| --- | --- |
+| Untrusted question → LLM template selector (LLM01/LLM08) | The Bedrock Claude (Converse) selector receives the template catalog + the question as **data** in `messages` (never `system`); the `system` block carries the defensive untrusted-data directive; `maxTokens` is bounded. Its output is **validated against the fixed template set** — an id outside the library (or malformed/empty JSON) resolves to a governed *no-match*, never a fabricated query. The LLM selects an id only; it never authors query text. |
+| Selected template → Neptune (the executable surface) | The executable surface is a **fixed, reviewed, read-only library** (`templates.py`): a static check asserts every template is read-only (no mutating clause / `CALL`) and binds every value through a declared `$param` (no value-interpolation token). Read-only is guaranteed by **review + lint**, not by endpoint enforcement — the teaching contrast with text2cypher. |
+| Question → bound parameters (the governance boundary) | Parameter **values** are extracted **deterministically** (`params.py`), never taken as free LLM text: entity slots resolve through the slice-1 normalizers and are **confirmed against the store** (an unconfirmed candidate is dropped, not bound); enum slots are checked against a declared set; int slots are parsed + bounded. A bad required slot → governed no-match (no query runs). Values ride the openCypher `parameters` map (`NeptuneGraphStore.run_template_query`) — **never string-interpolated** (`ruff S` stays on). |
+| Untrusted rows → Claude synthesis | Same posture as the hybrid path: returned rows ride Converse `messages` as data, the answer is display-only, the client is the default-TLS botocore chain. |
+| Live ingress + IAM | The governed path rides the **existing** IAM-auth, scoped-principal Function URL via an additive `mode` field; it adds **no new resource and no new IAM statement** — selection reuses the already-granted `bedrock:Converse` on the synthesis model and the existing Neptune data-access (a *different* selection model would be the only thing that widens the grant). |
+
 ## Least privilege
 
 The Fargate **task role** and the **vector probe role** grant only: scoped `s3`
