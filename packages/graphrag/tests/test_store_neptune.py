@@ -73,7 +73,8 @@ def test_upsert_node_emits_parameterized_merge() -> None:
     params = http.last_params()
     assert params["id"] == "person:thockin"
     assert params["kind"] == "Person"
-    assert params["props"] == {"name": "Tim Hockin"}
+    # props carries the entity props plus the slice-5 encoded doc_paths (empty here).
+    assert params["props"] == {"name": "Tim Hockin", "doc_paths": "[]"}
 
 
 def test_upsert_edge_uses_single_rel_type_with_kind_param() -> None:
@@ -85,6 +86,124 @@ def test_upsert_edge_uses_single_rel_type_with_kind_param() -> None:
     # The edge kind is a bound parameter, not interpolated as a relationship type.
     assert "TECH_LEADS" not in query
     assert http.last_params()["kind"] == "TECH_LEADS"
+
+
+def test_upsert_node_encodes_doc_paths_as_json_string() -> None:
+    http = RecordingHttp([HttpResponse(200, json.dumps({"results": []}))])
+    node = Node("sig:sig-network", EntityKind.SIG, doc_paths={"community/sigs.yaml", "b/README.md"})
+    _store(http).upsert_node(node)
+    props = http.last_params()["props"]
+    # doc_paths rides a single JSON-string scalar property (Neptune can't store a set natively),
+    # sorted for determinism.
+    assert props["doc_paths"] == json.dumps(["b/README.md", "community/sigs.yaml"])
+
+
+def test_upsert_edge_encodes_doc_paths_as_json_string() -> None:
+    http = RecordingHttp([HttpResponse(200, json.dumps({"results": []}))])
+    edge = Edge("sig:s", "kep-1", EdgeKind.OWNS, doc_paths={"enhancements/k/kep.yaml"})
+    _store(http).upsert_edge(edge)
+    assert http.last_params()["props"]["doc_paths"] == json.dumps(["enhancements/k/kep.yaml"])
+
+
+def test_node_round_trips_doc_paths_from_result() -> None:
+    response = {
+        "results": [
+            {
+                "n": {
+                    "~properties": {
+                        "id": "sig:sig-network",
+                        "kind": "SIG",
+                        "doc_paths": json.dumps(["community/sigs.yaml", "enhancements/k/kep.yaml"]),
+                    }
+                }
+            }
+        ]
+    }
+    http = RecordingHttp([HttpResponse(200, json.dumps(response))])
+    node = _store(http).get_node("sig:sig-network")
+    assert node is not None
+    assert node.doc_paths == {"community/sigs.yaml", "enhancements/k/kep.yaml"}
+    assert "doc_paths" not in node.props  # decoded out of the props bag
+
+
+def test_node_missing_doc_paths_decodes_to_empty_set() -> None:
+    # A pre-slice-5 row has no doc_paths property — must decode to an empty set, not crash.
+    response = {"results": [{"n": {"~properties": {"id": "x", "kind": "SIG"}}}]}
+    http = RecordingHttp([HttpResponse(200, json.dumps(response))])
+    node = _store(http).get_node("x")
+    assert node is not None and node.doc_paths == set()
+
+
+def test_all_edges_round_trips_doc_paths() -> None:
+    response = {
+        "results": [
+            {
+                "src": "sig:s",
+                "dst": "kep-1",
+                "kind": "OWNS",
+                "doc_paths": json.dumps(["enhancements/k/kep.yaml"]),
+            }
+        ]
+    }
+    http = RecordingHttp([HttpResponse(200, json.dumps(response))])
+    edges = _store(http).all_edges()
+    assert len(edges) == 1
+    assert edges[0].doc_paths == {"enhancements/k/kep.yaml"}
+    assert "r.doc_paths" in http.last_query()
+
+
+def test_full_ingest_backfills_doc_paths_through_neptune_upserts(
+    community_root: object, enhancements_root: object
+) -> None:
+    # Offline backfill guard (AC8b): a full ingest() against the Neptune adapter must emit
+    # encoded doc_paths on EVERY node/edge upsert payload — so a first --delta on a pre-slice-5
+    # stack backfills provenance, verified here without a live cluster.
+    from graphrag.ingest import ingest
+
+    class AlwaysEmpty:
+        def __init__(self) -> None:
+            self.payloads: list[dict] = []
+
+        def post(self, url, *, data, headers, verify) -> HttpResponse:
+            self.payloads.append(json.loads(json.loads(data)["parameters"]))
+            return HttpResponse(200, json.dumps({"results": []}))
+
+    http = AlwaysEmpty()
+    store = NeptuneGraphStore(
+        "https://neptune.example:8182", "us-east-1", session=FakeSession(CREDS), http_client=http
+    )
+    ingest(community_root, enhancements_root, store)  # type: ignore[arg-type]
+    writes = [p for p in http.payloads if "props" in p]
+    assert writes, "expected node/edge upsert writes"
+    assert all("doc_paths" in p["props"] for p in writes)
+
+
+def test_delete_node_emits_parameterized_detach_delete() -> None:
+    http = RecordingHttp([HttpResponse(200, json.dumps({"results": []}))])
+    _store(http).delete_node("sig:sig-network")
+    query = http.last_query()
+    assert "DETACH DELETE" in query
+    assert "$id" in query and "sig:sig-network" not in query  # parameterized
+    assert http.last_params()["id"] == "sig:sig-network"
+
+
+def test_delete_edge_binds_full_src_kind_dst_key() -> None:
+    http = RecordingHttp([HttpResponse(200, json.dumps({"results": []}))])
+    _store(http).delete_edge("sig:sig-network", EdgeKind.OWNS, "kep-2086")
+    query = http.last_query()
+    # Every leg bound so exactly one edge is deleted — never all edges of a kind.
+    assert "$src" in query and "$kind" in query and "$dst" in query
+    assert "DELETE r" in query
+    assert "OWNS" not in query and "kep-2086" not in query
+    params = http.last_params()
+    assert params == {"src": "sig:sig-network", "kind": "OWNS", "dst": "kep-2086"}
+
+
+def test_clear_emits_detach_delete_all() -> None:
+    http = RecordingHttp([HttpResponse(200, json.dumps({"results": []}))])
+    _store(http).clear()
+    query = http.last_query()
+    assert "MATCH (n:Entity)" in query and "DETACH DELETE n" in query
 
 
 def test_neighbors_out_parses_into_same_node_shape() -> None:

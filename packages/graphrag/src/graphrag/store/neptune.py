@@ -89,6 +89,11 @@ def _visibility_predicate(params: dict[str, object], allowed_labels: frozenset[s
     return "r.visibility IN $allowed AND b.visibility IN $allowed"
 
 
+# The slice-5 document-provenance set rides a single JSON-string scalar property (Neptune has
+# no native set property), so it round-trips losslessly through _scalar_props' string passthrough.
+_DOC_PATHS_PROP = "doc_paths"
+
+
 def _scalar_props(props: dict[str, object]) -> dict[str, object]:
     """Neptune properties must be scalars; drop ``None`` and stringify the rest."""
     out: dict[str, object] = {}
@@ -99,15 +104,36 @@ def _scalar_props(props: dict[str, object]) -> dict[str, object]:
     return out
 
 
+def _write_props(props: dict[str, object], doc_paths: set[str]) -> dict[str, object]:
+    """The scalar property bag written to Neptune, with ``doc_paths`` encoded as a JSON string
+    (slice-5 provenance round-trip)."""
+    out = _scalar_props(props)
+    out[_DOC_PATHS_PROP] = json.dumps(sorted(doc_paths))
+    return out
+
+
+def _decode_doc_paths(props: dict[str, Any]) -> set[str]:
+    """Pop and decode the JSON-string ``doc_paths`` property (empty set if absent — a
+    pre-slice-5 row)."""
+    raw = props.pop(_DOC_PATHS_PROP, None)
+    if not raw:
+        return set()
+    try:
+        return {str(p) for p in json.loads(raw)}
+    except (TypeError, ValueError):
+        return set()
+
+
 def _node_from_result(obj: dict[str, Any]) -> Node:
-    # sources/edge-props are intentionally not round-tripped from Neptune — the
-    # live local≡Neptune trace-identity claim is the deferred AC9, not this slice.
+    # sources is intentionally not round-tripped from Neptune; doc_paths (slice 5) IS — the
+    # delta's orphan reconciliation reads it back on the live path.
     props = dict(obj.get("~properties", {}))
     if "id" not in props or "kind" not in props:
         raise RuntimeError(f"Neptune node result missing id/kind: {obj!r}")
     node_id = str(props.pop("id"))
     kind = EntityKind(str(props.pop("kind")))
-    return Node(id=node_id, kind=kind, props=props)
+    doc_paths = _decode_doc_paths(props)
+    return Node(id=node_id, kind=kind, props=props, doc_paths=doc_paths)
 
 
 class NeptuneGraphStore(GraphStore):
@@ -146,7 +172,11 @@ class NeptuneGraphStore(GraphStore):
     def upsert_node(self, node: Node) -> None:
         self._run(
             f"MERGE (n:{_NODE_LABEL} {{id: $id}}) SET n.kind = $kind, n += $props",
-            {"id": node.id, "kind": node.kind.value, "props": _scalar_props(node.props)},
+            {
+                "id": node.id,
+                "kind": node.kind.value,
+                "props": _write_props(node.props, node.doc_paths),
+            },
         )
 
     def upsert_edge(self, edge: Edge) -> None:
@@ -157,7 +187,7 @@ class NeptuneGraphStore(GraphStore):
                 "src": edge.src_id,
                 "dst": edge.dst_id,
                 "kind": edge.kind.value,
-                "props": _scalar_props(edge.props),
+                "props": _write_props(edge.props, edge.doc_paths),
             },
         )
 
@@ -237,10 +267,67 @@ class NeptuneGraphStore(GraphStore):
     def all_edges(self) -> list[Edge]:
         res = self._run(
             f"MATCH (a:{_NODE_LABEL})-[r:{_REL_TYPE}]->(b:{_NODE_LABEL}) "
-            "RETURN a.id AS src, b.id AS dst, r.kind AS kind",
+            "RETURN a.id AS src, b.id AS dst, r.kind AS kind, r.doc_paths AS doc_paths",
             {},
         )
         edges: list[Edge] = []
         for row in res.get("results", []):
-            edges.append(Edge(str(row["src"]), str(row["dst"]), EdgeKind(str(row["kind"]))))
+            edges.append(
+                Edge(
+                    str(row["src"]),
+                    str(row["dst"]),
+                    EdgeKind(str(row["kind"])),
+                    doc_paths=_decode_doc_paths({_DOC_PATHS_PROP: row.get("doc_paths")}),
+                )
+            )
         return edges
+
+    def delete_node(self, node_id: str) -> None:
+        """Delete a node and its incident edges (slice-5 orphan removal).
+
+        ``DETACH DELETE`` removes the node and every relationship it touches in one statement,
+        so no dangling edge survives. Parameterized on ``$id`` (the label/type are fixed
+        constants, never interpolated)."""
+        self._run(f"MATCH (n:{_NODE_LABEL} {{id: $id}}) DETACH DELETE n", {"id": node_id})
+
+    def delete_edge(self, src_id: str, kind: EdgeKind, dst_id: str) -> None:
+        """Delete one edge by its full ``(src, kind, dst)`` identity (slice-5 orphan removal).
+
+        Every leg is bound (``$src``/``$kind``/``$dst``) so exactly the identified edge is
+        deleted — never all edges of a kind."""
+        self._run(
+            f"MATCH (a:{_NODE_LABEL} {{id: $src}})-[r:{_REL_TYPE} {{kind: $kind}}]->"
+            f"(b:{_NODE_LABEL} {{id: $dst}}) DELETE r",
+            {"src": src_id, "kind": kind.value, "dst": dst_id},
+        )
+
+    def clear(self) -> None:
+        """Remove every node and edge — the ``--rebuild`` ground-truth reset (slice 5)."""
+        self._run(f"MATCH (n:{_NODE_LABEL}) DETACH DELETE n", {})
+
+    def replace_node(self, node: Node) -> None:
+        """Set a node's full state exactly (slice-5 reconciliation).
+
+        ``SET n = $props`` *replaces* the whole property map (id/kind/doc_paths included), so a
+        shrunk ``doc_paths`` and a stale prop key from a removed contributor are both cleared —
+        unlike ``upsert_node``'s ``+=`` overlay."""
+        props = _write_props(node.props, node.doc_paths)
+        props["id"] = node.id
+        props["kind"] = node.kind.value
+        self._run(
+            f"MERGE (n:{_NODE_LABEL} {{id: $id}}) SET n = $props",
+            {"id": node.id, "props": props},
+        )
+
+    def replace_edge(self, edge: Edge) -> None:
+        """Set an edge's full state exactly (slice-5 reconciliation).
+
+        The relationship's ``kind`` is part of its MERGE identity, so the property replace keeps
+        ``kind`` and resets the rest (``doc_paths`` is one JSON-string prop, overwritten)."""
+        props = _write_props(edge.props, edge.doc_paths)
+        props["kind"] = edge.kind.value
+        self._run(
+            f"MATCH (a:{_NODE_LABEL} {{id: $src}}), (b:{_NODE_LABEL} {{id: $dst}}) "
+            f"MERGE (a)-[r:{_REL_TYPE} {{kind: $kind}}]->(b) SET r = $props",
+            {"src": edge.src_id, "dst": edge.dst_id, "kind": edge.kind.value, "props": props},
+        )

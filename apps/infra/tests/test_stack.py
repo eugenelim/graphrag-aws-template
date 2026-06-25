@@ -239,6 +239,21 @@ def test_neptune_data_access_actions_present_and_scoped(template: Template) -> N
     raise AssertionError("expected Neptune data-access actions (Read/WriteDataViaQuery)")
 
 
+def test_ingestion_task_can_write_manifest_scoped_to_manifest_key(template: Template) -> None:
+    # Slice 5: the delta task records the ingest manifest to S3 and reads it back. The slice-1
+    # task role was read-only, so an s3:PutObject is required — but scoped to manifest.json only,
+    # never the whole bucket (least privilege). This pins the live-deploy IAM fix AC9 surfaced.
+    found = False
+    for stmt in _iam_statements(template):
+        actions = set(_as_list(stmt.get("Action", [])))
+        if "s3:PutObject" in actions:
+            resources = json.dumps(stmt["Resource"])
+            assert "manifest.json" in resources, "s3:PutObject must be scoped to manifest.json"
+            assert resources.strip('"') != "*", "s3:PutObject must not be wildcard"
+            found = True
+    assert found, "expected an s3:PutObject grant for the ingest manifest"
+
+
 def test_run_task_handles_are_exported_as_outputs(template: Template) -> None:
     # The smoke (live ingest + retrieve) needs these handles; export them so an
     # operator doesn't have to hunt the console.

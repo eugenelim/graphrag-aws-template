@@ -42,23 +42,33 @@ class Direction(StrEnum):
 
 @dataclass
 class Node:
-    """A resolved graph entity. ``id`` is the normalized key (the merge key)."""
+    """A resolved graph entity. ``id`` is the normalized key (the merge key).
+
+    ``doc_paths`` (slice 5) is the set of ``{source}/{path}`` document ids that contribute
+    this node — the provenance/reference-count that the incremental delta's orphan-removal
+    pass reads: a node survives a delta iff at least one surviving document remains in this
+    set (``delta.py`` / ``ingest.ingest_delta``)."""
 
     id: str
     kind: EntityKind
     props: dict[str, object] = field(default_factory=dict)
     sources: set[str] = field(default_factory=set)
+    doc_paths: set[str] = field(default_factory=set)
 
 
 @dataclass
 class Edge:
-    """A directed relationship between two node IDs."""
+    """A directed relationship between two node IDs.
+
+    ``doc_paths`` (slice 5) is the contributing-document provenance set, same role as on
+    ``Node`` — the reference count the delta's orphan pass uses to decide edge removal."""
 
     src_id: str
     dst_id: str
     kind: EdgeKind
     props: dict[str, object] = field(default_factory=dict)
     sources: set[str] = field(default_factory=set)
+    doc_paths: set[str] = field(default_factory=set)
 
     def key(self) -> tuple[str, str, str]:
         """Identity of an edge for de-duplication."""
@@ -93,6 +103,7 @@ class Graph:
                 f"{existing.kind.value} vs {node.kind.value}"
             )
         existing.sources |= node.sources
+        existing.doc_paths |= node.doc_paths
         for k, v in node.props.items():
             existing.props.setdefault(k, v)
         return existing
@@ -104,9 +115,34 @@ class Graph:
             self._edges[edge.key()] = edge
             return edge
         existing.sources |= edge.sources
+        existing.doc_paths |= edge.doc_paths
         for k, v in edge.props.items():
             existing.props.setdefault(k, v)
         return existing
+
+    def remove_node(self, node_id: str) -> None:
+        """Delete a node and every edge incident to it (slice-5 orphan removal).
+
+        A dangling edge to a removed node would be a stale-reference orphan, so node removal
+        cascades to its incident edges in both directions."""
+        self.nodes.pop(node_id, None)
+        self._edges = {
+            key: edge
+            for key, edge in self._edges.items()
+            if edge.src_id != node_id and edge.dst_id != node_id
+        }
+
+    def remove_edge(self, src_id: str, kind: EdgeKind, dst_id: str) -> None:
+        """Delete one edge by its ``(src, kind, dst)`` identity (slice-5 orphan removal)."""
+        self._edges.pop((src_id, kind.value, dst_id), None)
+
+    def set_node(self, node: Node) -> None:
+        """Set a node's full state exactly (slice-5 reconciliation) — *replaces*, not unions."""
+        self.nodes[node.id] = node
+
+    def set_edge(self, edge: Edge) -> None:
+        """Set an edge's full state exactly (slice-5 reconciliation) — *replaces*, not unions."""
+        self._edges[edge.key()] = edge
 
     def get_node(self, node_id: str) -> Node | None:
         return self.nodes.get(node_id)

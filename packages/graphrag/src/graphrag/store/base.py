@@ -67,6 +67,32 @@ class GraphStore(ABC):
     @abstractmethod
     def all_edges(self) -> list[Edge]: ...
 
+    @abstractmethod
+    def delete_node(self, node_id: str) -> None:
+        """Delete a node and its incident edges (slice-5 orphan removal)."""
+
+    @abstractmethod
+    def delete_edge(self, src_id: str, kind: EdgeKind, dst_id: str) -> None:
+        """Delete one edge by its ``(src, kind, dst)`` identity (slice-5 orphan removal)."""
+
+    @abstractmethod
+    def clear(self) -> None:
+        """Remove every node and edge — the ``--rebuild`` ground-truth reset (slice 5)."""
+
+    @abstractmethod
+    def replace_node(self, node: Node) -> None:
+        """Set a node's full state exactly (slice-5 delta reconciliation).
+
+        Unlike ``upsert_node`` — which *unions* ``doc_paths``/``sources`` and *setdefaults*
+        props (the resolve-merge) — this **replaces** them, so a surviving node that lost a
+        contributing document has its ``doc_paths`` shrunk and a changed document's props
+        applied. Does **not** cascade to edges (edges are reconciled separately)."""
+
+    @abstractmethod
+    def replace_edge(self, edge: Edge) -> None:
+        """Set an edge's full state exactly (slice-5 delta reconciliation) — the edge twin of
+        ``replace_node``; replaces ``doc_paths``/``sources``/props rather than unioning."""
+
     def neighbors_batch(
         self, node_ids: list[str], *, allowed_labels: frozenset[str] | None = None
     ) -> list[NeighborEdge]:

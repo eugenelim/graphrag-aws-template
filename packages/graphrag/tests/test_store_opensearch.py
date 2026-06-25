@@ -168,6 +168,29 @@ def test_delete_by_query_is_body_parameterized() -> None:
     assert body["query"]["terms"]["chunk_id"] == ["a", "b"]
 
 
+def test_delete_by_doc_matches_source_and_doc_path_together() -> None:
+    http = RecordingHttp([HttpResponse(200, "{}")])
+    _store(http).delete_by_doc(["enhancements/k/README.md"])
+    clauses = http.last_body()["query"]["bool"]["should"]
+    assert len(clauses) == 1
+    must = clauses[0]["bool"]["must"]
+    # Source AND doc_path both required — never doc_path alone (cross-source-delete guard).
+    assert {"term": {"source": "enhancements"}} in must
+    assert {"term": {"doc_path": "k/README.md"}} in must
+
+
+def test_delete_by_doc_noop_on_empty() -> None:
+    http = RecordingHttp([])  # no response needed; must not call out
+    _store(http).delete_by_doc([])
+    assert http.calls == []
+
+
+def test_clear_deletes_all_via_match_all() -> None:
+    http = RecordingHttp([HttpResponse(200, "{}")])
+    _store(http).clear()
+    assert http.last_body()["query"] == {"match_all": {}}
+
+
 # STUB: AC1 — the default urllib client must *return* (not raise) on an HTTP-error
 # response, so `_request` interprets status uniformly and `create_index`'s documented
 # already-exists tolerance actually fires. This is the regression test: red before the
