@@ -35,15 +35,10 @@ def content_hash(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def doc_id(source: str, path: str) -> str:
-    """The source-qualified stable key used across the manifest, graph provenance, and chunks."""
-    return f"{source}/{path}"
-
-
 def manifest_from_docs(
     docs: list[ParsedDoc], community_root: Path, enhancements_root: Path
 ) -> Manifest:
-    """Hash the raw file of every parsed doc, keyed by its source-qualified doc id.
+    """Hash the raw file of every parsed doc, keyed by its source-qualified ``doc_id``.
 
     Built from the *same* ``ParsedDoc`` list a delta re-uses for extraction, so the manifest
     covers exactly the documents that are ingested — no phantom entries for files the parse
@@ -52,7 +47,7 @@ def manifest_from_docs(
     out: Manifest = {}
     for doc in docs:
         root = community_root if doc.source == COMMUNITY else enhancements_root
-        out[doc_id(doc.source, doc.path)] = content_hash((root / doc.path).read_bytes())
+        out[doc.doc_id] = content_hash((root / doc.path).read_bytes())
     return out
 
 

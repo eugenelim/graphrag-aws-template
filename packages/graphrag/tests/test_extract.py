@@ -51,6 +51,34 @@ def test_extracts_all_six_edge_kinds(community_root: Path, enhancements_root: Pa
     ]
 
 
+def test_nodes_and_edges_carry_originating_doc_provenance(
+    community_root: Path, enhancements_root: Path
+) -> None:
+    # Slice 5: every node/edge is stamped with the {source}/{path} doc id it came from — the
+    # provenance set that drives orphan removal. A SIG appears in sigs.yaml AND in KEPs that
+    # own it, so its resolved node carries several doc ids (verified post-resolve below).
+    nodes, edges = _extracted(community_root, enhancements_root)
+    sig_from_index = next(
+        n for n in nodes if n.id == "sig:sig-network" and "community/sigs.yaml" in n.doc_paths
+    )
+    assert sig_from_index.doc_paths == {"community/sigs.yaml"}  # one emit, one doc id
+    owns = next(e for e in edges if e.kind == EdgeKind.OWNS and e.src_id == "sig:sig-network")
+    assert all(p.startswith("enhancements/") for p in owns.doc_paths)
+
+
+def test_resolved_sig_unions_doc_paths_across_sources(
+    community_root: Path, enhancements_root: Path
+) -> None:
+    from graphrag.resolve import resolve
+
+    graph = resolve(load_corpus(community_root, enhancements_root), load_aliases())
+    sig = graph.get_node("sig:sig-network")
+    assert sig is not None
+    # The same SIG is contributed by the community index/README AND by enhancements KEPs.
+    assert any(p.startswith("community/") for p in sig.doc_paths)
+    assert any(p.startswith("enhancements/") for p in sig.doc_paths)
+
+
 def test_legacy_prose_author_extracted_via_alias(
     community_root: Path, enhancements_root: Path
 ) -> None:

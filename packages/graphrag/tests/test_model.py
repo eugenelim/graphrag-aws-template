@@ -52,3 +52,29 @@ def test_upsert_edge_dedupes_and_unions_sources() -> None:
     )
     assert len(g.edges) == 1
     assert g.edges[0].sources == {"community", "enhancements"}
+
+
+def test_upsert_node_unions_doc_paths_on_collision() -> None:
+    # doc_paths is the slice-5 provenance set (the orphan-removal reference count); it unions
+    # on collision exactly like sources, so a node contributed by several docs records them all.
+    g = Graph()
+    g.upsert_node(Node("sig:sig-node", EntityKind.SIG, doc_paths={"community/sigs.yaml"}))
+    g.upsert_node(
+        Node("sig:sig-node", EntityKind.SIG, doc_paths={"enhancements/keps/x/kep.yaml"})
+    )
+    node = g.get_node("sig:sig-node")
+    assert node is not None
+    assert node.doc_paths == {"community/sigs.yaml", "enhancements/keps/x/kep.yaml"}
+
+
+def test_upsert_edge_unions_doc_paths_on_collision() -> None:
+    g = Graph()
+    g.upsert_edge(Edge("sig:s", "kep-1", EdgeKind.OWNS, doc_paths={"enhancements/keps/x/kep.yaml"}))
+    g.upsert_edge(
+        Edge("sig:s", "kep-1", EdgeKind.OWNS, doc_paths={"enhancements/keps/x/README.md"})
+    )
+    assert len(g.edges) == 1
+    assert g.edges[0].doc_paths == {
+        "enhancements/keps/x/kep.yaml",
+        "enhancements/keps/x/README.md",
+    }
