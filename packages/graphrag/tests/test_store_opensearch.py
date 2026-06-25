@@ -225,3 +225,67 @@ def test_create_index_reraises_non_already_exists_4xx() -> None:
     http = RecordingHttp([HttpResponse(400, "mapper_parsing_exception: bad mapping")])
     with pytest.raises(RuntimeError, match="OpenSearch .* 400"):
         _store(http).create_index()
+
+
+# --- slice-4: visibility mapping + permission terms-filter during ANN (AC4) -----------
+
+
+def test_create_index_includes_visibility_keyword_field() -> None:
+    http = RecordingHttp([HttpResponse(200, "{}")])
+    _store(http).create_index()
+    props = http.last_body()["mappings"]["properties"]
+    assert props["visibility"] == {"type": "keyword"}
+
+
+def test_index_chunk_carries_visibility() -> None:
+    http = RecordingHttp([HttpResponse(201, "{}")])
+    ec = EmbeddedChunk(
+        Chunk(
+            "kep-1287#0",
+            "t",
+            "enh",
+            "k/README.md",
+            "Summary",
+            ["kep-1287"],
+            visibility="restricted",
+        ),
+        [0.1, 0.2, 0.3],
+    )
+    _store(http).index_chunk(ec)
+    assert http.last_body()["visibility"] == "restricted"
+
+
+def test_knn_with_clearance_adds_visibility_terms_filter() -> None:
+    http = RecordingHttp([HttpResponse(200, json.dumps({"hits": {"hits": []}}))])
+    _store(http).knn([0.5, 0.5, 0.5], k=3, allowed_labels=frozenset({"public", "internal"}))
+    body = http.last_body()
+    # the knn clause is the scoring `must`; the visibility terms-filter prunes candidates
+    # DURING the ANN search (not a post-filter).
+    assert body["query"]["bool"]["must"][0]["knn"]["vector"]["vector"] == [0.5, 0.5, 0.5]
+    assert body["query"]["bool"]["filter"][0]["terms"]["visibility"] == ["internal", "public"]
+    # the allowed tiers ride the body, never interpolated into the URL path.
+    assert "internal" not in str(http.calls[-1]["url"])
+
+
+def test_knn_without_clearance_omits_filter() -> None:
+    http = RecordingHttp([HttpResponse(200, json.dumps({"hits": {"hits": []}}))])
+    _store(http).knn([0.5], k=3)
+    body = http.last_body()
+    assert "bool" not in body["query"]
+    assert "knn" in body["query"]
+
+
+def test_hit_parses_visibility() -> None:
+    response = {
+        "hits": {
+            "hits": [
+                {
+                    "_score": 0.9,
+                    "_source": {"chunk_id": "c", "visibility": "internal", "entity_ids": []},
+                }
+            ]
+        }
+    }
+    http = RecordingHttp([HttpResponse(200, json.dumps(response))])
+    hits = _store(http).knn([0.1], k=1)
+    assert hits[0].chunk.visibility == "internal"

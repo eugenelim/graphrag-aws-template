@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 from ..model import Direction, Edge, EdgeKind, Graph, Node
+from ..visibility import DEFAULT_VISIBILITY
 from .base import GraphStore
+
+
+def _vis(props: dict[str, object]) -> str:
+    """The visibility tier of a node/edge props bag (default ``public`` if unlabeled)."""
+    return str(props.get("visibility", DEFAULT_VISIBILITY))
 
 
 class MemoryGraphStore(GraphStore):
@@ -25,7 +31,14 @@ class MemoryGraphStore(GraphStore):
     def get_node(self, node_id: str) -> Node | None:
         return self._graph.get_node(node_id)
 
-    def neighbors(self, node_id: str, edge_kind: EdgeKind, direction: Direction) -> list[Node]:
+    def neighbors(
+        self,
+        node_id: str,
+        edge_kind: EdgeKind,
+        direction: Direction,
+        *,
+        allowed_labels: frozenset[str] | None = None,
+    ) -> list[Node]:
         out: list[Node] = []
         for edge in self._graph.edges:
             if edge.kind != edge_kind:
@@ -36,8 +49,17 @@ class MemoryGraphStore(GraphStore):
                 target = self._graph.get_node(edge.src_id)
             else:
                 continue
-            if target is not None:
-                out.append(target)
+            if target is None:
+                continue
+            # Slice-4 during-traversal permission filter: exclude the edge unless both its
+            # own visibility and the neighbor's are within clearance. edge.visibility =
+            # compose(src,dst), so the edge check is the node guarantee; the neighbor check
+            # is a defensive guard against a stale edge label (same predicate as Neptune).
+            if allowed_labels is not None and (
+                _vis(edge.props) not in allowed_labels or _vis(target.props) not in allowed_labels
+            ):
+                continue
+            out.append(target)
         return out
 
     def all_nodes(self) -> list[Node]:

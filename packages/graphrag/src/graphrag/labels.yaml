@@ -1,0 +1,15 @@
+# Synthetic visibility labels — a TEACHING stand-in for ACLs, NOT real authorization
+# (charter principle 5 / design doc D1 Non-goals). Maps a graph entity-id (== the slice-1
+# normalize output == a chunk's owning id) to a sensitivity tier; anything unlisted defaults
+# to `public`. These are chosen over the bundled fixture + real Kubernetes corpus to make
+# the two-persona demo bite — a `public-reader` sees strictly less than a `maintainer`:
+#
+#   "What KEPs does SIG Node own?"     -> public-reader: kep-9 only   | maintainer: + kep-1287
+#   "What KEPs does sig-network own?"  -> public-reader: kep-2086     | member/maintainer: + kep-1880
+#
+# This map is the single, inspectable source of the labels — relabel the demo by editing it.
+# The edge into a labeled KEP composes to that KEP's tier (compose = most-restrictive-wins),
+# so a lower-clearance persona cannot even traverse to it (the during-traversal edge filter).
+labels:
+  kep-1287: restricted   # in-place pod resize — the "sensitive" KEP a public reader can't see
+  kep-1880: internal     # multiple service CIDRs — "internal", visible to member + maintainer

@@ -49,6 +49,7 @@ from .hybrid import HybridResult, hybrid_query
 from .store.neptune import NeptuneGraphStore
 from .store.opensearch import OpenSearchVectorStore
 from .synthesize import DEFAULT_SYNTHESIS_MODEL_ID, BedrockClaudeSynthesizer
+from .visibility import resolve_clearance
 
 logger = logging.getLogger(__name__)
 
@@ -61,12 +62,12 @@ MAX_QUESTION_BYTES = 8192
 MAX_BODY_BYTES = 65536
 
 
-def _extract_question(event: Any) -> str:
-    """Parse the question from a Function-URL event (``body``, base64-aware) or a bare
-    ``{"question": ...}`` event."""
+def _parse_payload(event: Any) -> dict[str, Any]:
+    """Parse a Function-URL event (``body``, base64-aware) or a bare event dict into the
+    request payload dict. The raw body is length-checked before any decode/parse of the
+    attacker-controlled input (the ingress guard protects the decode path too)."""
     if isinstance(event, dict) and "body" in event:
         body = event.get("body") or ""
-        # Length-check the raw body before decoding/parsing the attacker-controlled input.
         if len(body) > MAX_BODY_BYTES:
             raise ValueError("request body too large")
         if event.get("isBase64Encoded"):
@@ -76,14 +77,25 @@ def _extract_question(event: Any) -> str:
         parsed = event
     else:
         parsed = {}
-    question = parsed.get("question", "") if isinstance(parsed, dict) else ""
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _extract_question(payload: dict[str, Any]) -> str:
+    question = payload.get("question", "")
     return question if isinstance(question, str) else ""
+
+
+def _extract_persona(payload: dict[str, Any]) -> str | None:
+    """The optional ``persona`` (slice-4 permission filter); absent ⇒ unrestricted."""
+    persona = payload.get("persona")
+    return persona if isinstance(persona, str) and persona else None
 
 
 def lambda_handler(event: Any, context: Any) -> dict[str, Any]:
     correlation_id = uuid.uuid4().hex
     try:
-        question = _extract_question(event)
+        payload = _parse_payload(event)
+        question = _extract_question(payload)
         if not question:
             return {"error": "missing 'question'", "correlation_id": correlation_id}
         # Reject an over-long question before any orchestration runs.
@@ -92,6 +104,16 @@ def lambda_handler(event: Any, context: Any) -> dict[str, Any]:
                 "error": f"question exceeds {MAX_QUESTION_BYTES} bytes",
                 "correlation_id": correlation_id,
             }
+
+        # Slice-4 permission filter (a teaching stand-in for an ACL, never real authz):
+        # resolve the optional persona to a clearance, fail-closed. An unknown persona is a
+        # client error (the persona is user-supplied, not internal) — never a silent
+        # fall-through to unrestricted.
+        persona = _extract_persona(payload)
+        try:
+            clearance = resolve_clearance(persona) if persona is not None else None
+        except ValueError:
+            return {"error": "unknown persona", "correlation_id": correlation_id}
 
         region = os.environ.get("AWS_REGION", "us-east-1")
         model_id = os.environ.get("SYNTHESIS_MODEL_ID", DEFAULT_SYNTHESIS_MODEL_ID)
@@ -109,6 +131,7 @@ def lambda_handler(event: Any, context: Any) -> dict[str, Any]:
             # PyYAML-free Lambda: entity-linking runs with the mechanical normalizers
             # only (no display-name alias table — see module docstring).
             aliases={},
+            clearance=clearance,
         )
         # Happy-path log: tie the correlation id to seed/hop counts (no question text,
         # no payload) so a live mis-seed is diagnosable from CloudWatch, not only the

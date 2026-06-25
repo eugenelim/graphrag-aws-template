@@ -19,6 +19,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Permission-filtered retrieval via synthetic visibility labels (slice 4).** Synthetic
+  visibility labels (a **teaching stand-in for ACLs — not real authz**) are attached to the
+  corpus at ingest and propagated to **both** stores (Neptune node *and* edge properties;
+  OpenSearch chunk metadata). A `--persona` flag (CLI) / `persona` field (the in-VPC query
+  Lambda) selects a clearance — `public-reader`, `member`, or `maintainer` — and **all three
+  retrieval modes** (vector, graph, hybrid) return results filtered to what that persona may
+  see. The graph filter is applied **during traversal, on edges**, so a forbidden entity
+  never enters the frontier and cannot leak via a reachability path; the vector filter rides
+  the OpenSearch k-NN search as a metadata filter. Each trace names the active clearance and
+  what was filtered out. Omitting the persona leaves retrieval unrestricted (slice-1–3
+  behavior unchanged). No new dependency, no new infrastructure resource — the persona rides
+  the existing query Lambda's request body. The labels are presented as a synthetic stand-in
+  everywhere they surface.
+
 - **Hybrid seed-and-expand retrieval + three-mode comparison (slice 3).** A question
   now runs the **hybrid** path: it seeds graph entities from *both* the owners of the
   top-k vector hits and the entities linked from the question itself, expands 1–2 hops

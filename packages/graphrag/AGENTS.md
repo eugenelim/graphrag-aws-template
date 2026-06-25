@@ -31,7 +31,9 @@ for the contract and the module map.
 | `hybrid.py` | (slice 3) The seed-and-expand orchestration: dual-seed (vector-owners ∪ question-links) → cap → expand → merge → synthesize → `HybridResult.render()` trace. |
 | `compare.py` | (slice 3) The three-mode runner — `vector-only` / `graph-only` / `hybrid` independently, with a side-by-side `ComparisonResult.render()`. |
 | `query_lambda.py` | (slice 3) In-VPC query Lambda handler behind an IAM-auth Function URL; reuses the same `hybrid_query`; PyYAML-free import graph; entity-links with `aliases={}` (mechanical normalizers only — no display-name table in the bundle). |
-| `showcase/` | (slice 3) The consolidated showcase query set (`queries.yaml`) + `load_showcase()` loader (CLI/test-only; uses yaml, never imported by the Lambda). |
+| `showcase/` | (slice 3) The consolidated showcase query set (`queries.yaml`) + `load_showcase()` loader (CLI/test-only; uses yaml, never imported by the Lambda). (slice 4) `queries.yaml` also carries `permission_queries` (the two-persona contrast) + `load_permission_showcase()`. |
+| `visibility.py` | (slice 4) **Pure, PyYAML-free** read-side of the synthetic permission filter (a TEACHING stand-in for ACLs, not real authz): the ordered `Visibility` tiers, most-restrictive-wins `compose`, `Clearance`, `PERSONAS`, and `resolve_clearance` (fail-closed — unknown persona raises `ValueError`). Imported by the query path (hybrid/compare/query_lambda) — must stay yaml-free. |
+| `labels.py` | (slice 4) **Ingest-path only** (uses yaml): loads the packaged `labels.yaml` (entity-id→tier) and stamps node/edge (`label_graph`, edge = `compose(src,dst)`) + chunk (`label_chunks`, = `compose(owners)`) visibility during the dual-write. **Never imported by the query Lambda** (a `sys.modules` test guards it). |
 | `cli.py` | `graphrag` CLI: `ingest`, `graph-query`, `resolve-eval`, `vector-ingest`, `vector-query`, `vector-eval`, and (slice 3) `hybrid-query` / `compare` (offline default + live SigV4 Function-URL client). |
 
 ## Dependencies (recorded per AGENTS.md "record new dependencies before adding")
@@ -58,6 +60,16 @@ forever-dependency for what SigV4+urllib already does.)
 from the Lambda runtime / pure-Python bundle and would be a forever-dependency), and
 the live Function-URL client signs with `botocore` + `urllib` exactly as the adapters
 do. Only the `boto3` floor moved (`>=1.34 → >=1.35`).
+
+**Slice 4 (permission-filtered retrieval) added no new runtime dependency and no new
+infra resource** — the synthetic visibility filter is a parameterized openCypher `WHERE`
+on the Neptune hop + an OpenSearch `terms` metadata filter over the existing adapters; the
+persona rides the existing query Lambda's request body. Labels are a **teaching stand-in
+for ACLs, never real authz** (charter principle 5). The read path stays PyYAML-free:
+`visibility.py` (tiers, `compose`, `Clearance`, `resolve_clearance`) is pure and importable
+by the Lambda, while `labels.py` (reads `labels.yaml`) is ingest-path-only and must never be
+imported by the query graph — guarded by a `sys.modules` assertion in
+`test_query_lambda.py` alongside the existing `import yaml` block.
 
 **Pure-Python Lambda / PyYAML-free import graph.** `query_lambda.py` is bundled via
 `Code.from_asset` over the package source (boto3/botocore from the runtime, **no

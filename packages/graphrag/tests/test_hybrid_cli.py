@@ -146,3 +146,108 @@ def test_function_url_non_2xx_raises(monkeypatch: pytest.MonkeyPatch) -> None:
                 "x",
             ]
         )
+
+
+# --- slice-4: --persona permission filter on the CLI (AC6) ----------------------------
+
+
+def _compare(args_extra: list[str]) -> list[str]:
+    return ["compare", "--community", COMMUNITY, "--enhancements", ENHANCEMENTS, *args_extra]
+
+
+def test_compare_persona_public_reader_filters_and_labels(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    rc = cli.main(_compare(["--q", "What KEPs does SIG Node own?", "--persona", "public-reader"]))
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "persona: public-reader" in out
+    assert "not real authz" in out  # synthetic stand-in labeled
+    # the restricted KEP is filtered out of the public-reader's view.
+    assert "kep-1287" not in out
+
+
+def test_compare_persona_maintainer_sees_restricted(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    rc = cli.main(_compare(["--q", "What KEPs does SIG Node own?", "--persona", "maintainer"]))
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "kep-1287" in out  # the maintainer sees the restricted KEP
+
+
+def test_unknown_persona_exits_nonzero(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        cli.main(_compare(["--q", "anything", "--persona", "root"]))
+
+
+def test_no_persona_output_byte_identical_to_pre_slice4(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Without --persona, the offline corpus is labeled but visibility is inert: no
+    # clearance/filtered/persona lines, no filtering — the slice-3 trace, unchanged.
+    rc = cli.main(_compare(["--q", "What KEPs does SIG Node own?"]))
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "persona:" not in out
+    assert "clearance:" not in out
+    assert "filtered (visibility" not in out
+    # filtering is off: the restricted KEP appears for the no-persona (unrestricted) run.
+    assert "kep-1287" in out
+
+
+def test_function_url_persona_rides_body_and_prints_banner(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The live path must (a) send the persona in the POST body and (b) print the same
+    # synthetic-stand-in banner the offline verbs print — persona contract consistent
+    # across ingresses (the server's trace also carries the clearance line).
+    _fake_creds(monkeypatch)
+    fake = _FakeHttp()
+    monkeypatch.setattr(cli, "_make_http_client", lambda: fake)
+    rc = cli.main(
+        [
+            "hybrid-query",
+            "--community",
+            COMMUNITY,
+            "--enhancements",
+            ENHANCEMENTS,
+            "--function-url",
+            "https://abc123.lambda-url.us-east-1.on.aws/",
+            "--q",
+            "what does @thockin own",
+            "--persona",
+            "public-reader",
+        ]
+    )
+    assert rc == 0
+    assert b'"persona": "public-reader"' in fake.calls[0]["data"]
+    out = capsys.readouterr().out
+    assert "persona: public-reader" in out
+    assert "not real authz" in out
+
+
+def test_function_url_unknown_persona_exits_before_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An unknown persona fails closed client-side, before any signed network call.
+    _fake_creds(monkeypatch)
+    fake = _FakeHttp()
+    monkeypatch.setattr(cli, "_make_http_client", lambda: fake)
+    with pytest.raises(SystemExit):
+        cli.main(
+            [
+                "hybrid-query",
+                "--community",
+                COMMUNITY,
+                "--enhancements",
+                ENHANCEMENTS,
+                "--function-url",
+                "https://abc123.lambda-url.us-east-1.on.aws/",
+                "--q",
+                "x",
+                "--persona",
+                "root",
+            ]
+        )
+    assert fake.calls == []  # no network call was made

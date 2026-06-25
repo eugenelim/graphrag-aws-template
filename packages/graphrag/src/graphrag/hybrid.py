@@ -23,7 +23,7 @@ pure-Python Lambda's PyYAML-free bundle.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from .embed import Embedder
@@ -34,12 +34,18 @@ from .store.base import GraphStore
 from .store.vector_base import VectorHit, VectorStore
 from .synthesize import Synthesizer
 from .vector import vector_search
+from .visibility import DEFAULT_VISIBILITY, Clearance
 
 DEFAULT_K = 5
 DEFAULT_MAX_HOPS = 2
 DEFAULT_SEED_CAP = 8
 
 SeedSource = Literal["vector", "question"]
+
+
+def _node_visibility(node: Node) -> str:
+    """The visibility tier of a resolved node (default ``public`` if unlabeled)."""
+    return str(node.props.get("visibility", DEFAULT_VISIBILITY))
 
 
 @dataclass
@@ -69,6 +75,12 @@ class HybridResult:
     # wrong source) — the dual-seed split is the demo's pedagogy (ADR-0001).
     vector_truncated: bool = False
     question_truncated: bool = False
+    # Slice-4 permission filter (a teaching stand-in for an ACL, never real authz). When a
+    # clearance is applied, ``filtered_seeds`` records question-linked candidates that
+    # resolved to a real node but sit above the persona's clearance — distinct from
+    # ``dropped_candidates`` (which never resolved). ``None`` clearance = unfiltered.
+    clearance: Clearance | None = None
+    filtered_seeds: list[Candidate] = field(default_factory=list)
 
     @property
     def seed_cap_truncated(self) -> bool:
@@ -76,8 +88,24 @@ class HybridResult:
         return self.vector_truncated or self.question_truncated
 
     def render(self) -> str:
-        """Narrate seeds-by-source → hops → citations → answer (AC4 ordering)."""
+        """Narrate clearance → seeds-by-source → hops → citations → answer (AC4/AC5)."""
         lines = ["== hybrid-query =="]
+        # Slice-4: the persona's clearance + what the filter removed. The filtered line is a
+        # TEACHING observability aid — a real ACL system would not reveal the existence of
+        # items the requester may not see (charter principle 5; safe here only because the
+        # caller is the trusted scoped principal behind the IAM-auth Function URL).
+        if self.clearance is not None:
+            allowed = ", ".join(sorted(self.clearance.allowed))
+            lines.append(
+                f"clearance: persona={self.clearance.persona} allows=[{allowed}] "
+                "(synthetic visibility labels — a teaching stand-in for ACLs, not real authz)"
+            )
+            filtered = (
+                ", ".join(f"{c.surface}->{c.entity_id}" for c in self.filtered_seeds) or "(none)"
+            )
+            lines.append(
+                f"filtered (visibility; teaching aid, a real ACL would not reveal this): {filtered}"
+            )
         # seeds, grouped by source so the dual-seed split is legible.
         lines.append("seeds:")
         truncated_by_source = {"vector": self.vector_truncated, "question": self.question_truncated}
@@ -129,10 +157,21 @@ def hybrid_query(
     k: int = DEFAULT_K,
     max_hops: int = DEFAULT_MAX_HOPS,
     seed_cap: int = DEFAULT_SEED_CAP,
+    clearance: Clearance | None = None,
 ) -> HybridResult:
-    """Run the seed-and-expand hybrid path end-to-end and return the traced result."""
-    # 1. Vector search → owning entity IDs (source=vector).
-    vresult = vector_search(vector_store, embedder, question, k=k)
+    """Run the seed-and-expand hybrid path end-to-end and return the traced result.
+
+    When ``clearance`` is set (slice-4 permission filter — a teaching stand-in for an ACL,
+    never real authz), the filter is applied at every stage: vector search filters chunks
+    by visibility (so vector seeds derive only from visible chunks); a question-linked
+    entity above clearance is recorded in ``filtered_seeds`` and never seeded; expansion
+    filters edges DURING traversal (so a forbidden node never enters the frontier); and the
+    final merged node set is filtered as an independent guard. ``None`` = unfiltered.
+    """
+    # 1. Vector search → owning entity IDs (source=vector). With a clearance, the chunks are
+    #    already filtered by visibility, so their owning entities are within clearance too
+    #    (chunk visibility = compose(owners) = max, and clearance is downward-closed).
+    vresult = vector_search(vector_store, embedder, question, k=k, clearance=clearance)
     chunks = _dedupe_chunks(vresult.hits)
 
     vector_seeds: list[Seed] = []
@@ -143,12 +182,20 @@ def hybrid_query(
                 seen_ids.add(entity_id)
                 vector_seeds.append(Seed(entity_id=entity_id, source="vector"))
 
-    # 2. Question entity-linking → confirmed (source=question) ∪ dropped (unconfirmed).
+    # 2. Question entity-linking → confirmed (source=question) ∪ dropped (unconfirmed)
+    #    ∪ filtered (resolved to a real node but above the persona's clearance).
     question_seeds: list[Seed] = []
     dropped: list[Candidate] = []
+    filtered_seeds: list[Candidate] = []
     for cand in link_question(question, aliases):
-        if graph_store.get_node(cand.entity_id) is None:
+        node = graph_store.get_node(cand.entity_id)
+        if node is None:
             dropped.append(cand)
+            continue
+        if clearance is not None and not clearance.allows(_node_visibility(node)):
+            # A real node the question named, but the persona may not see it — recorded as
+            # filtered (distinct from unconfirmed) and never seeded.
+            filtered_seeds.append(cand)
             continue
         if cand.entity_id not in seen_ids:
             seen_ids.add(cand.entity_id)
@@ -166,9 +213,10 @@ def hybrid_query(
     kept_vector = vector_seeds[:vector_budget]
     seeds = kept_vector + kept_question
 
-    # 4. Expand 1–2 hops over the (capped) seed set.
+    # 4. Expand 1–2 hops over the (capped) seed set, filtering edges DURING traversal so a
+    #    forbidden node never enters the frontier (the leak guard).
     seed_ids = [s.entity_id for s in seeds]
-    hop_trace = expand_neighborhood(graph_store, seed_ids, max_hops=max_hops)
+    hop_trace = expand_neighborhood(graph_store, seed_ids, max_hops=max_hops, clearance=clearance)
 
     # 5. Merge: the vector chunks + the seed nodes + the reached graph facts (deduped).
     node_ids: list[str] = []
@@ -178,6 +226,10 @@ def hybrid_query(
             seen_nodes.add(node_id)
             node_ids.append(node_id)
     graph_nodes = resolve_nodes(graph_store, node_ids)
+    # Independent final guard: even after seed + edge filtering, drop any merged node above
+    # clearance, so a node re-materialized by id can never reintroduce a forbidden entity.
+    if clearance is not None:
+        graph_nodes = [n for n in graph_nodes if clearance.allows(_node_visibility(n))]
 
     # 6. Synthesize (injected; display-only output).
     synth = synthesizer.synthesize(question, chunks, graph_nodes)
@@ -195,4 +247,6 @@ def hybrid_query(
         max_hops=max_hops,
         vector_truncated=vector_truncated,
         question_truncated=question_truncated,
+        clearance=clearance,
+        filtered_seeds=filtered_seeds,
     )

@@ -24,6 +24,7 @@ from .embed import BedrockTitanEmbedder, Embedder, HashEmbedder
 from .eval import evaluate, load_labeled_sample
 from .hybrid import hybrid_query
 from .ingest import ingest
+from .labels import label_chunks, load_labels
 from .model import Direction, EdgeKind
 from .normalize import kep_id, person_id, sig_id
 from .query import Step, traverse
@@ -47,6 +48,7 @@ from .vector_eval import (
     load_frozen,
     load_query_set,
 )
+from .visibility import PERSONAS, Clearance, resolve_clearance
 
 # Default region for SigV4 signing when a Function URL doesn't encode one.
 _DEFAULT_REGION = "us-east-1"
@@ -126,6 +128,32 @@ def _synthesizer(args: argparse.Namespace) -> Synthesizer:
     return TemplateSynthesizer()
 
 
+def _clearance(args: argparse.Namespace) -> Clearance | None:
+    """Resolve ``--persona`` to a Clearance, or ``None`` (unrestricted) when absent.
+
+    An unknown persona exits non-zero with a clear message (fail-closed — never a silent
+    fall-through to unrestricted). The labels are a synthetic stand-in for ACLs, not real
+    authz (charter principle 5)."""
+    persona = getattr(args, "persona", None)
+    if not persona:
+        return None
+    try:
+        return resolve_clearance(persona)
+    except ValueError as exc:
+        raise SystemExit(f"error: {exc}") from exc
+
+
+def _print_persona(clearance: Clearance | None) -> None:
+    """Print the active persona + clearance when filtering is on; nothing when it's off
+    (so no-persona output stays byte-identical to the pre-slice-4 trace)."""
+    if clearance is not None:
+        allowed = ", ".join(sorted(clearance.allowed))
+        print(
+            f"persona: {clearance.persona}  clearance allows: [{allowed}] "
+            "(synthetic visibility labels — a teaching stand-in for ACLs, not real authz)"
+        )
+
+
 def _make_http_client() -> HttpClient:
     """The HTTP client seam for the live Function-URL path (monkeypatched in tests).
 
@@ -135,11 +163,16 @@ def _make_http_client() -> HttpClient:
     return _UrllibClient(timeout=_FUNCTION_URL_TIMEOUT)
 
 
-def _function_url_query(url: str, question: str, region: str) -> dict[str, Any]:
+def _function_url_query(
+    url: str, question: str, region: str, persona: str | None = None
+) -> dict[str, Any]:
     """Thin live client: a SigV4-signed (service=lambda) POST of the question to the
     in-VPC query Lambda's Function URL, the signature **covering the body** (an
     ``X-Amz-Content-SHA256`` payload hash, never ``UNSIGNED-PAYLOAD``, so a tampered
-    body is rejected). A non-2xx raises with the body (loud, like the adapters)."""
+    body is rejected). A non-2xx raises with the body (loud, like the adapters).
+
+    A ``persona`` (slice-4 permission filter) rides the body when set, so the live query is
+    permission-filtered server-side by the same clearance the offline path applies."""
     from botocore.auth import SigV4Auth
     from botocore.awsrequest import AWSRequest
     from botocore.session import Session
@@ -150,7 +183,10 @@ def _function_url_query(url: str, question: str, region: str) -> dict[str, Any]:
     host_match = _FUNCTION_URL_REGION.search(parsed.netloc)
     signing_region = host_match.group(1) if host_match else region
 
-    body = json.dumps({"question": question}).encode("utf-8")
+    payload: dict[str, str] = {"question": question}
+    if persona:
+        payload["persona"] = persona
+    body = json.dumps(payload).encode("utf-8")
     payload_hash = hashlib.sha256(body).hexdigest()
     request = AWSRequest(
         method="POST",
@@ -178,6 +214,10 @@ def _index_corpus(
 ) -> list[EmbeddedChunk]:
     """Chunk the prose-rich subset, embed it, and index every chunk into ``store``."""
     chunks = chunk_corpus(load_corpus(community, enhancements))
+    # Slice-4: label the offline corpus too, so `--persona` can actually filter. Visibility
+    # is inert without a persona (the trace/filter are gated on a clearance), so no-persona
+    # output is unchanged. Mirrors the Fargate dual-write's labeling.
+    label_chunks(chunks, load_labels())
     vectors = embedder.embed([c.text for c in chunks])
     embedded = [EmbeddedChunk(c, v) for c, v in zip(chunks, vectors, strict=True)]
     for ec in embedded:
@@ -205,8 +245,10 @@ def _cmd_vector_query(args: argparse.Namespace) -> int:
     embedder = _embedder(args)
     if isinstance(store, MemoryVectorStore):  # offline: populate by chunk+embed now
         _index_corpus(store, embedder, Path(args.community), Path(args.enhancements))
-    result = vector_search(store, embedder, args.q, k=args.k)
+    clearance = _clearance(args)
+    result = vector_search(store, embedder, args.q, k=args.k, clearance=clearance)
     print("== vector-query ==")
+    _print_persona(clearance)
     print(result.render())
     return 0
 
@@ -222,9 +264,16 @@ def _offline_label(embedder: Embedder, synthesizer: Synthesizer) -> str:
 
 def _cmd_hybrid_query(args: argparse.Namespace) -> int:
     if getattr(args, "function_url", None):
-        # Live: thin SigV4 Function-URL client to the in-VPC query Lambda.
-        result = _function_url_query(args.function_url, args.q, args.region)
+        # Live: thin SigV4 Function-URL client to the in-VPC query Lambda. Resolve the
+        # persona client-side first (fail-closed on an unknown one, before the network
+        # call), and print the same persona banner the offline verbs print so the
+        # synthetic-stand-in framing is consistent across ingresses.
+        clearance = _clearance(args)
+        result = _function_url_query(
+            args.function_url, args.q, args.region, getattr(args, "persona", None)
+        )
         print("== hybrid-query (live function-url) ==")
+        _print_persona(clearance)
         print(f"seeds: {json.dumps(result.get('seeds', []))}")
         print(f"hops: {json.dumps(result.get('hops', []))}")
         print("trace:")
@@ -252,6 +301,7 @@ def _cmd_hybrid_query(args: argparse.Namespace) -> int:
         aliases=load_aliases(),
         k=args.k,
         max_hops=args.max_hops,
+        clearance=_clearance(args),
     )
     print("== hybrid-query (offline) ==")
     print(_offline_label(embedder, synthesizer))
@@ -266,6 +316,7 @@ def _cmd_compare(args: argparse.Namespace) -> int:
     synthesizer = _synthesizer(args)
     if isinstance(vstore, MemoryVectorStore):
         _index_corpus(vstore, embedder, Path(args.community), Path(args.enhancements))
+    clearance = _clearance(args)
     result = run_modes(
         args.q,
         vector_store=vstore,
@@ -275,9 +326,11 @@ def _cmd_compare(args: argparse.Namespace) -> int:
         aliases=load_aliases(),
         k=args.k,
         max_hops=args.max_hops,
+        clearance=clearance,
     )
     print("== compare (offline) ==")
     print(_offline_label(embedder, synthesizer))
+    _print_persona(clearance)
     print(result.render())
     return 0
 
@@ -312,8 +365,10 @@ def _cmd_graph_query(args: argparse.Namespace) -> int:
     store = _populated_store(args)
     seed = _seed_id(args.start, args.start_kind, aliases)
     steps = _parse_steps(args.steps)
-    result = traverse(store, [seed], steps, max_hops=args.max_hops)
+    clearance = _clearance(args)
+    result = traverse(store, [seed], steps, max_hops=args.max_hops, clearance=clearance)
     print("== graph-query ==")
+    _print_persona(clearance)
     print(result.render())
     return 0
 
@@ -327,6 +382,16 @@ def _cmd_resolve_eval(args: argparse.Namespace) -> int:
     ok = res.passes(args.bar)
     print("PASS" if ok else "FAIL")
     return 0 if ok else 1
+
+
+def _add_persona_arg(p: argparse.ArgumentParser) -> None:
+    """Add the slice-4 ``--persona`` filter (a synthetic ACL stand-in, not real authz)."""
+    p.add_argument(
+        "--persona",
+        help="synthetic visibility persona to permission-filter retrieval by — a TEACHING "
+        f"stand-in for ACLs, not real authz. One of: {', '.join(sorted(PERSONAS))}. "
+        "Omit for unrestricted (slice-1-3 behavior).",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -351,6 +416,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--steps", required=True, help="edge steps, e.g. 'TECH_LEADS>,OWNS>' ('<KIND' = incoming)"
     )
     p_query.add_argument("--max-hops", type=int, default=2)
+    _add_persona_arg(p_query)
     p_query.set_defaults(func=_cmd_graph_query)
 
     p_eval = sub.add_parser("resolve-eval", help="score the resolver (open confirmation)")
@@ -384,6 +450,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_vector_corpus_args(p_vquery)
     p_vquery.add_argument("--q", required=True, help="the natural-language query")
     p_vquery.add_argument("--k", type=int, default=5, help="number of chunks to return")
+    _add_persona_arg(p_vquery)
     p_vquery.set_defaults(func=_cmd_vector_query)
 
     p_veval = sub.add_parser(
@@ -428,6 +495,7 @@ def build_parser() -> argparse.ArgumentParser:
             "--synthesis-model-id",
             help="override the Bedrock Claude synthesis model id (with --bedrock)",
         )
+        _add_persona_arg(p)
 
     p_hybrid = sub.add_parser(
         "hybrid-query", help="seed-and-expand hybrid retrieval with a dual-seed trace"

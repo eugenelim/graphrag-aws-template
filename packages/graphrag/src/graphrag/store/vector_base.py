@@ -39,8 +39,16 @@ class VectorStore(ABC):
     def index_chunk(self, embedded: EmbeddedChunk) -> None: ...
 
     @abstractmethod
-    def knn(self, vector: list[float], k: int) -> list[VectorHit]:
-        """The ``k`` nearest chunks to ``vector`` by cosine similarity, score-descending."""
+    def knn(
+        self, vector: list[float], k: int, *, allowed_labels: frozenset[str] | None = None
+    ) -> list[VectorHit]:
+        """The ``k`` nearest chunks to ``vector`` by cosine similarity, score-descending.
+
+        ``allowed_labels`` is the slice-4 permission filter (a teaching stand-in for an
+        ACL, never real authz): when not ``None``, only chunks whose ``visibility`` is in
+        the set are eligible, applied **during** the k-NN search (an OpenSearch metadata
+        ``filter`` on the ANN query; the in-memory equivalent). ``None`` = unfiltered.
+        """
 
     @abstractmethod
     def count(self) -> int: ...

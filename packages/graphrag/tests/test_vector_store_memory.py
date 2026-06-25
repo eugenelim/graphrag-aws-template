@@ -51,3 +51,23 @@ def test_zero_vector_scores_zero_not_nan() -> None:
     store.index_chunk(_ec("z", [0.0, 0.0, 0.0]))
     hits = store.knn([1.0, 0.0, 0.0], k=1)
     assert hits[0].score == 0.0
+
+
+# --- slice-4: in-memory permission filter during k-NN (AC4) ---------------------------
+
+
+def _ec_vis(cid: str, vector: list[float], visibility: str) -> EmbeddedChunk:
+    return EmbeddedChunk(
+        Chunk(cid, cid, "src", f"{cid}.md", "H", [], visibility=visibility), vector
+    )
+
+
+def test_knn_filters_chunks_above_clearance() -> None:
+    store = MemoryVectorStore()
+    store.index_chunk(_ec_vis("pub", [1.0, 0.0, 0.0], "public"))
+    store.index_chunk(_ec_vis("res", [1.0, 0.0, 0.0], "restricted"))
+    # public-reader sees only the public chunk (the restricted one is not a candidate).
+    hits = store.knn([1.0, 0.0, 0.0], k=10, allowed_labels=frozenset({"public"}))
+    assert {h.chunk.id for h in hits} == {"pub"}
+    # no clearance -> unfiltered (both).
+    assert {h.chunk.id for h in store.knn([1.0, 0.0, 0.0], k=10)} == {"pub", "res"}
