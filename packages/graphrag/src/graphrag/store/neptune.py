@@ -304,3 +304,30 @@ class NeptuneGraphStore(GraphStore):
     def clear(self) -> None:
         """Remove every node and edge — the ``--rebuild`` ground-truth reset (slice 5)."""
         self._run(f"MATCH (n:{_NODE_LABEL}) DETACH DELETE n", {})
+
+    def replace_node(self, node: Node) -> None:
+        """Set a node's full state exactly (slice-5 reconciliation).
+
+        ``SET n = $props`` *replaces* the whole property map (id/kind/doc_paths included), so a
+        shrunk ``doc_paths`` and a stale prop key from a removed contributor are both cleared —
+        unlike ``upsert_node``'s ``+=`` overlay."""
+        props = _write_props(node.props, node.doc_paths)
+        props["id"] = node.id
+        props["kind"] = node.kind.value
+        self._run(
+            f"MERGE (n:{_NODE_LABEL} {{id: $id}}) SET n = $props",
+            {"id": node.id, "props": props},
+        )
+
+    def replace_edge(self, edge: Edge) -> None:
+        """Set an edge's full state exactly (slice-5 reconciliation).
+
+        The relationship's ``kind`` is part of its MERGE identity, so the property replace keeps
+        ``kind`` and resets the rest (``doc_paths`` is one JSON-string prop, overwritten)."""
+        props = _write_props(edge.props, edge.doc_paths)
+        props["kind"] = edge.kind.value
+        self._run(
+            f"MATCH (a:{_NODE_LABEL} {{id: $src}}), (b:{_NODE_LABEL} {{id: $dst}}) "
+            f"MERGE (a)-[r:{_REL_TYPE} {{kind: $kind}}]->(b) SET r = $props",
+            {"src": edge.src_id, "dst": edge.dst_id, "kind": edge.kind.value, "props": props},
+        )

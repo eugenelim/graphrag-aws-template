@@ -136,5 +136,13 @@ class Graph:
         """Delete one edge by its ``(src, kind, dst)`` identity (slice-5 orphan removal)."""
         self._edges.pop((src_id, kind.value, dst_id), None)
 
+    def set_node(self, node: Node) -> None:
+        """Set a node's full state exactly (slice-5 reconciliation) — *replaces*, not unions."""
+        self.nodes[node.id] = node
+
+    def set_edge(self, edge: Edge) -> None:
+        """Set an edge's full state exactly (slice-5 reconciliation) — *replaces*, not unions."""
+        self._edges[edge.key()] = edge
+
     def get_node(self, node_id: str) -> Node | None:
         return self.nodes.get(node_id)
