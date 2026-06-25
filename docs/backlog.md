@@ -164,19 +164,9 @@ break the delta-only cost claim for high-fan-in nodes like a SIG) needs per-docu
 provenance — deferred. Unblocked by storing per-doc prop provenance, or by making KEP `title`
 singly-sourced (README sets it only for legacy KEPs without a `kep.yaml`).
 
-## opencypher-templates
-
-### opencypher-templates-live-smoke
-
-**AC9 (deferred).** Live-AWS verification of the governed Cypher-Templates path: against
-the deployed stack with the corpus dual-written, a SigV4-signed `mode: governed` call to the
-Function URL selects a template, binds a question-extracted parameter, executes the
-parameterized openCypher **live on Neptune**, and returns the audit trace (executed cypher +
-param map + real rows) plus a Bedrock Claude answer; then `cdk destroy` leaves no billable
-resource. Blocked on a live AWS account (this PR ships and synth-tests the IaC, runs the
-whole orchestration offline + against mocks, but cannot deploy from CI). Unblocked by a
-maintainer running the documented deploy + `graphrag governed-query --function-url <url>` on a
-clean account and recording the result (the slice-1 / hybrid-orchestration live-AC precedent).
+<!-- opencypher-templates: AC9 (live governed-query smoke) was verified live on
+     2026-06-25 and the deferral closed — no open items. See
+     docs/architecture/deployment-and-verification.md. -->
 
 <!-- Add one section per spec with open work, e.g.:
 

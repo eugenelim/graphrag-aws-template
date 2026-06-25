@@ -279,14 +279,20 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   model with **no wildcard `Resource`**, and the Budgets value is asserted
   **unchanged at the literal `150`**. Per ADR-0002. *(goal-based synth,
   CDK-env-gated)*
-- [ ] **AC9 — Live deploy + governed-query smoke (in-VPC).** (deferred: opencypher-templates-live-smoke)
-  Against the deployed stack with the corpus dual-written, a SigV4-signed `mode: governed`
-  call to the Function URL selects a template, binds a question-extracted parameter, executes
-  the parameterized openCypher **live on Neptune**, and returns the audit trace (the executed
-  cypher + param map + real rows) and a Bedrock Claude answer; then the stack is destroyed
-  (teardown-first). **Deferred:** live AWS access (creds, CDK bootstrap, Bedrock model access)
-  is unavailable in this build environment; the offline + mocked path (AC2–AC8, AC10) proves
-  the orchestration, and the live smoke is the only step left — the slice-1 precedent. *(live
+- [x] **AC9 — Live deploy + governed-query smoke (in-VPC).** Against the deployed stack with
+  the corpus dual-written, a SigV4-signed `mode: governed` call to the Function URL selects a
+  template, binds a question-extracted parameter, executes the parameterized openCypher
+  **live on Neptune**, and returns the audit trace (the executed cypher + param map + real
+  rows) and a Bedrock Claude answer; then the stack is destroyed (teardown-first). **Verified
+  live (2026-06-25):** `GraphragSlice1` deployed to `us-east-1` (`CREATE_COMPLETE`), corpus
+  dual-written (graph 22 nodes / 28 edges / 6 cross-source merges; vector 13 chunks via live
+  Bedrock Titan); three SigV4 `mode: governed` calls to the IAM-auth Function URL selected
+  **three different templates** live — `sig_owned_keps` ($sig=sig:sig-network → kep-1880,
+  kep-2086, with a Claude answer naming both KEP titles, 9.9 s), `sig_tech_leads` (→
+  person:aojea, danwinship, thockin), and `kep_owning_sig` ($kep=kep-2086) — each executing
+  its distinct parameterized openCypher on live Neptune; then `scripts/destroy.sh` (teardown-
+  first, no billable resource remains). Full trace in
+  [`deployment-and-verification.md`](../../architecture/deployment-and-verification.md). *(live
   smoke)*
 - [x] **AC10 — Governed showcase set + the governed-vs-risky teaching framing.** A
   `governed_queries` section in the showcase `queries.yaml` holds **≥4** queries,
@@ -350,5 +356,7 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   green: ruff/mypy/pytest). New modules `templates.py`/`params.py`/`select.py`/`governed.py`,
   `governed-query` CLI verb, additive `mode: governed` query-Lambda dispatch, governed
   showcase set + the governed-vs-risky explanation doc; no new dependency, no new infra.
-  AC9 (live deploy smoke) deferred — live AWS unavailable in the build environment (backlog
-  `opencypher-templates-live-smoke`).
+- 2026-06-25 — **AC9 verified live** (the deferral is closed). Deployed `GraphragSlice1`,
+  dual-wrote the corpus, ran three live `mode: governed` Function-URL queries selecting three
+  different templates against live Neptune + Bedrock, then destroyed the stack. The backlog
+  anchor `opencypher-templates-live-smoke` is removed. All 10 ACs met.
