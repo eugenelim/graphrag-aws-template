@@ -116,9 +116,15 @@ def test_delta_does_not_reembed_unchanged_docs(tmp_path: Path) -> None:
     _add_kep(enhancements)  # change exactly one document set (a new KEP)
     spy.embedded.clear()
     ingest_delta(manifest, community, enhancements, g, v, spy)
-    # Only the new KEP README's chunks were embedded — far fewer than a full re-embed.
-    assert 0 < len(spy.embedded) < full_count
-    assert all("Brand New" in t or "node things" in t for t in spy.embedded)
+    # Only the new KEP's chunks were embedded — exactly the delta doc's chunk count, far fewer
+    # than a full re-embed (pins "only delta docs embedded" without coupling to prose wording).
+    from graphrag.chunk import chunk_corpus
+    from graphrag.sources import load_corpus
+
+    new_kep_docs = [d for d in load_corpus(community, enhancements) if "4242-brand-new" in d.path]
+    expected = len(chunk_corpus(new_kep_docs))
+    assert expected > 0
+    assert len(spy.embedded) == expected < full_count
 
 
 # --- AC3 + AC4: both stores updated; orphan removal keeps referenced nodes -------------
@@ -200,7 +206,10 @@ def _mutate(community: Path, enhancements: Path) -> None:
     kep_yaml.write_text(kep_yaml.read_text(encoding="utf-8") + "\n# touched\n", encoding="utf-8")
 
 
-def test_delta_converges_to_same_state_as_rebuild(tmp_path: Path) -> None:
+def test_delta_converges_to_rebuild_for_structural_delta(tmp_path: Path) -> None:
+    # AC6 oracle for a STRUCTURAL delta (add + delete + kep.yaml change) — these reconcile
+    # exactly. The one out-of-scope case (a README-H1 edit / single-co-contributor delete that
+    # diverges on a multiply-contributed prop) is backlog incremental-delta-multicontributed-prop.
     # Path A: ingest snapshot, then delta to the mutated snapshot.
     ca, ea = _snapshot(tmp_path, "a")
     ga, va = _full_ingest(ca, ea)
@@ -236,6 +245,52 @@ def test_delta_converges_to_same_state_as_rebuild(tmp_path: Path) -> None:
 
 
 # --- AC7: rebuild + AC8b idempotency --------------------------------------------------
+
+
+class _FlakyVectorStore(MemoryVectorStore):
+    """A vector store that raises on the Nth index_chunk — to simulate a crash mid-delta."""
+
+    def __init__(self, fail_on: int) -> None:
+        super().__init__()
+        self._fail_on = fail_on
+        self._calls = 0
+
+    def index_chunk(self, embedded: object) -> None:  # type: ignore[override]
+        self._calls += 1
+        if self._calls == self._fail_on:
+            raise RuntimeError("simulated mid-delta crash")
+        super().index_chunk(embedded)  # type: ignore[arg-type]
+
+
+def test_partial_failure_then_retry_converges_to_rebuild(tmp_path: Path) -> None:
+    # The at-least-once posture (manifest written last): a delta that crashes mid-index leaves the
+    # stores partly mutated and the manifest unchanged; re-running with the SAME prev_manifest must
+    # converge to the rebuild oracle (proving the claim, not just asserting it in a docstring).
+    ca, ea = _snapshot(tmp_path, "a")
+    graph = MemoryGraphStore()
+    flaky = _FlakyVectorStore(fail_on=-1)  # never fail during the base full ingest
+    ingest_delta(None, ca, ea, graph, flaky, HashEmbedder())
+    manifest = build_manifest(ca, ea)
+    _add_kep(ea)
+
+    # First attempt crashes partway through indexing the delta chunks.
+    flaky._calls = 0
+    flaky._fail_on = 1  # fail on the first delta chunk
+    with pytest.raises(RuntimeError, match="simulated mid-delta crash"):
+        ingest_delta(manifest, ca, ea, graph, flaky, HashEmbedder())
+
+    # Retry with the same (unadvanced) manifest, now non-flaky.
+    flaky._fail_on = -1  # never fail
+    ingest_delta(manifest, ca, ea, graph, flaky, HashEmbedder())
+
+    # Oracle: a clean rebuild of the same snapshot.
+    cb, eb = _snapshot(tmp_path, "b")
+    _add_kep(eb)
+    gb, vb = MemoryGraphStore(), MemoryVectorStore()
+    rebuild(cb, eb, gb, vb, HashEmbedder())
+
+    assert {n.id for n in graph.all_nodes()} == {n.id for n in gb.all_nodes()}
+    assert _chunk_ids(flaky) == _chunk_ids(vb)  # no duplicate / missing chunks after retry
 
 
 def test_rebuild_clears_then_reingests(tmp_path: Path) -> None:

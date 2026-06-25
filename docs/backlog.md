@@ -140,11 +140,25 @@ committed pre-commit config). Unblocked by adding a `gitleaks`/`detect-secrets` 
 ### incremental-delta-multicontributed-prop
 
 **AC6 documented limit.** A KEP's `title` is contributed by both its `kep.yaml` and its
-README H1. The incremental delta reconciles multiply-contributed props **last-writer-wins**,
-so a README-only prose edit that changes the H1 while `kep.yaml` is unchanged makes the delta
-keep the README's title where a full `--rebuild` keeps `kep.yaml`'s (resolve's first-writer
-order). AC6's equivalence is scoped to the structural sets (nodes/edges/chunks/provenance) +
-props on delta-touched nodes; this single multiply-contributed-prop case is out of scope.
+README H1. The incremental delta reconciles multiply-contributed props **last-writer-wins** and
+cannot subtract a removed contributor's unique prop from a surviving node, so two cases diverge
+from a full `--rebuild`: (a) a README-only prose edit that changes the H1 while `kep.yaml` is
+unchanged (delta keeps the README's title; rebuild keeps `kep.yaml`'s, resolve's first-writer
+order); and (b) deleting **one** co-contributor document (e.g. a README) while another survives
+— the surviving node retains a prop only the deleted document set. Both touch only the KEP
+`title` in this corpus. AC6's equivalence is scoped to the structural sets
+(nodes/edges/chunks/provenance) + props on delta-touched nodes; these multiply-contributed-prop
+cases are out of scope (the demo/tests delete or move whole KEP *directories*, not single
+co-contributor files, so they reconcile exactly).
+
+### incremental-delta-full-mode-triple-parse
+
+**Perf nit (deferred).** `MODE=full` in `apps/ingestion/entrypoint.py` parses the corpus three
+times — `ingest()`, `_vector_dual_write()`, and `build_manifest()`. Harmless on the already-slow
+full-ingest path, but wasteful. Deferred rather than fixed now because threading one parsed
+`docs` list through all three would touch the slice-1–4 full path that this slice deliberately
+keeps byte-unchanged. Unblocked by refactoring the full path to parse once and pass `docs`
+(+ `manifest_from_docs`) through, the way the delta path already does.
 Resolving it without re-parsing a touched node's *unchanged* co-contributor docs (which would
 break the delta-only cost claim for high-fan-in nodes like a SIG) needs per-document property
 provenance — deferred. Unblocked by storing per-doc prop provenance, or by making KEP `title`
