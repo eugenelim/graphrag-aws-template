@@ -39,6 +39,27 @@ def test_ingest_narrates_counts_and_merges(capsys: pytest.CaptureFixture[str]) -
     assert "person:thockin" in out
 
 
+def test_rebuild_narrates_delta_report_and_writes_manifest(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    out_path = tmp_path / "manifest.json"
+    rc = main(["rebuild", *_corpus_args(), "--manifest-out", str(out_path)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "== delta re-ingest ==" in out
+    assert "nodes:" in out and "chunks:" in out
+    assert out_path.is_file() and '"docs"' in out_path.read_text(encoding="utf-8")
+
+
+def test_delta_without_prev_manifest_falls_back_to_full(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    rc = main(["delta", *_corpus_args()])  # no --prev-manifest -> full ingest fallback (AC8b)
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "(full ingest — no prior manifest)" in out
+
+
 def test_graph_query_prints_ordered_trace(capsys: pytest.CaptureFixture[str]) -> None:
     rc = main(
         [

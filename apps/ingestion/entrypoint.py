@@ -28,15 +28,49 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Protocol
 
+from graphrag.delta import Manifest, build_manifest, manifest_from_json, manifest_to_json
 from graphrag.embed import Embedder
-from graphrag.ingest import IngestReport, ingest
+from graphrag.ingest import DeltaReport, IngestReport, ingest, ingest_delta, rebuild
 from graphrag.store.base import GraphStore
 from graphrag.store.vector_base import VectorStore
+
+# The ingest manifest (doc id -> content hash) lives at the corpus prefix root in S3; a --delta
+# diffs the new snapshot against it, and every run writes it back **last** (slice 5; AC8).
+MANIFEST_FILENAME = "manifest.json"
 
 
 class S3Client(Protocol):
     def list_objects_v2(self, **kwargs: Any) -> dict[str, Any]: ...
     def download_file(self, Bucket: str, Key: str, Filename: str) -> None: ...  # noqa: N803
+    def get_object(self, Bucket: str, Key: str) -> dict[str, Any]: ...  # noqa: N803
+    def put_object(self, Bucket: str, Key: str, Body: bytes) -> Any: ...  # noqa: N803
+
+
+def _is_not_found(exc: Exception) -> bool:
+    """Whether an S3 ``get_object`` error means "no such key" (the first-delta case, AC8b)."""
+    if isinstance(exc, FileNotFoundError):
+        return True
+    response = getattr(exc, "response", None)
+    code = response.get("Error", {}).get("Code") if isinstance(response, dict) else None
+    return code in {"NoSuchKey", "404", "NotFound"}
+
+
+def read_manifest(s3_client: S3Client, bucket: str, key: str) -> Manifest | None:
+    """Read the stored manifest from S3, or ``None`` when it does not exist yet (first --delta)."""
+    try:
+        resp = s3_client.get_object(Bucket=bucket, Key=key)
+    except Exception as exc:  # a missing manifest is expected on the first delta (AC8b)
+        if _is_not_found(exc):
+            return None
+        raise
+    body = resp["Body"].read()
+    text = body.decode("utf-8") if isinstance(body, bytes) else str(body)
+    return manifest_from_json(text)
+
+
+def write_manifest(s3_client: S3Client, bucket: str, key: str, manifest: Manifest) -> None:
+    """Persist the manifest to S3 — called **last**, after both stores are updated (AC8)."""
+    s3_client.put_object(Bucket=bucket, Key=key, Body=manifest_to_json(manifest).encode("utf-8"))
 
 
 def download_corpus(bucket: str, prefix: str, dest: Path, s3_client: S3Client) -> tuple[Path, Path]:
@@ -115,6 +149,26 @@ def _vector_dual_write(
     return len(chunks)
 
 
+def _resolve_vector(
+    env: Mapping[str, str], vector_store: VectorStore | None, embedder: Embedder | None
+) -> tuple[VectorStore, Embedder]:
+    """Resolve the vector store + embedder for the delta/rebuild dual-write (deploy-or-injected)."""
+    region = env.get("AWS_REGION", "us-east-1")
+    if embedder is None:  # pragma: no cover - exercised only in the deployed task
+        from graphrag.embed import BedrockTitanEmbedder
+
+        embedder = BedrockTitanEmbedder(region=region)
+    if vector_store is None:  # pragma: no cover - exercised only in the deployed task
+        endpoint = env.get("OPENSEARCH_ENDPOINT")
+        if not endpoint:
+            raise RuntimeError("MODE=delta/rebuild requires a vector store (OPENSEARCH_ENDPOINT)")
+        from graphrag.store.opensearch import OpenSearchVectorStore
+
+        vector_store = OpenSearchVectorStore(endpoint, region)
+    vector_store.create_index()  # no-op for in-memory; creates the k-NN index on OpenSearch
+    return vector_store, embedder
+
+
 def run(
     env: Mapping[str, str],
     *,
@@ -122,10 +176,16 @@ def run(
     store: GraphStore | None = None,
     vector_store: VectorStore | None = None,
     embedder: Embedder | None = None,
-) -> IngestReport:
+) -> IngestReport | DeltaReport:
+    """Run the ingestion task. ``MODE`` selects ``full`` (default — the slice-1–4 dual-write,
+    unchanged), ``delta`` (slice-5 incremental re-ingest against the stored manifest), or
+    ``rebuild`` (clear both stores + full ingest). Every mode writes the manifest to S3 **last**,
+    after both stores are updated, so the next ``--delta`` has a baseline (AC8)."""
     bucket = env["CORPUS_BUCKET"]
     prefix = env.get("CORPUS_PREFIX", "")
     region = env.get("AWS_REGION", "us-east-1")
+    mode = env.get("MODE", "full").lower()
+    manifest_key = f"{prefix}{MANIFEST_FILENAME}"
 
     if s3_client is None:  # pragma: no cover - exercised only in the deployed task
         import boto3
@@ -134,12 +194,30 @@ def run(
     if store is None:  # pragma: no cover - exercised only in the deployed task
         store = _build_store(env["NEPTUNE_ENDPOINT"], region)
 
+    report: IngestReport | DeltaReport
     with tempfile.TemporaryDirectory() as tmp:
         community, enhancements = download_corpus(bucket, prefix, Path(tmp), s3_client)
-        report = ingest(community, enhancements, store)
-        _vector_dual_write(env, community, enhancements, vector_store, embedder)
+        if mode == "full":
+            report = ingest(community, enhancements, store)
+            _vector_dual_write(env, community, enhancements, vector_store, embedder)
+            new_manifest = build_manifest(community, enhancements)
+        elif mode == "rebuild":
+            vstore, emb = _resolve_vector(env, vector_store, embedder)
+            report = rebuild(community, enhancements, store, vstore, emb)
+            new_manifest = report.new_manifest
+        elif mode == "delta":
+            vstore, emb = _resolve_vector(env, vector_store, embedder)
+            prev = read_manifest(s3_client, bucket, manifest_key)
+            report = ingest_delta(prev, community, enhancements, store, vstore, emb)
+            new_manifest = report.new_manifest
+        else:
+            raise ValueError(f"unknown MODE {mode!r}: expected full | delta | rebuild")
 
-    print(report.render())
+        print(report.render())
+        # Written last, only after both stores are updated: a crash leaves the old manifest, so
+        # the next --delta re-attempts the same delta (at-least-once, idempotent).
+        write_manifest(s3_client, bucket, manifest_key, new_manifest)
+
     return report
 
 
