@@ -70,6 +70,10 @@ _INTERFACE_ENDPOINTS = {
 _OPENSEARCH_DOMAIN_NAME = "graphrag-vectors"
 _TITAN_MODEL_ID = "amazon.titan-embed-text-v2:0"
 
+# Slice 5: the ingest manifest object key (doc id -> content hash) at the corpus bucket root.
+# Must match the entrypoint's MANIFEST_FILENAME (CORPUS_PREFIX is "" on the deployed task).
+MANIFEST_KEY = "manifest.json"
+
 # Synthesis Claude model (slice 3). Must equal the library
 # `graphrag.synthesize.DEFAULT_SYNTHESIS_MODEL_ID` — a synth test asserts the equality
 # so the Bedrock IAM grant scope and the runtime default can't drift. This is a
@@ -289,10 +293,13 @@ class GraphragStack(Stack):
             removal_policy=RemovalPolicy.DESTROY,
         )
 
-        # Least privilege: read only the corpus bucket; Neptune data access scoped
-        # to this cluster only. (Bedrock-invoke + OpenSearch-data access are granted
-        # to this same role in __init__ — scoped, no wildcard.)
+        # Least privilege: read the corpus bucket; write ONLY the ingest manifest
+        # (slice 5 — the delta task records doc-id->hash at the bucket root and reads it
+        # back on the next --delta); Neptune data access scoped to this cluster only.
+        # (Bedrock-invoke + OpenSearch-data access are granted to this same role in
+        # __init__ — scoped, no wildcard.)
         bucket.grant_read(task_role)
+        bucket.grant_put(task_role, MANIFEST_KEY)  # PutObject scoped to manifest.json only
         task_role.add_to_policy(self._neptune_data_access(cluster))
 
         task_def = ecs.FargateTaskDefinition(
