@@ -18,12 +18,13 @@ for the contract and the module map.
 | `eval.py` | Pairwise precision/recall of the resolver vs. a labeled sample (the open confirmation). |
 | `store/` | `GraphStore` ABC + `MemoryGraphStore` + `NeptuneGraphStore`. |
 | `query.py` | Bounded multi-hop traversal over `neighbors()`, with a trace. |
-| `ingest.py` | Orchestration + the narratable `IngestReport`. |
+| `ingest.py` | Orchestration + the narratable `IngestReport`. (slice 5) `ingest_delta` (provenance-set orphan reconciliation across both stores; `prev_manifest=None` → full-ingest fallback) + `rebuild` (clear + full) + `DeltaReport`. |
+| `delta.py` | (slice 5) **Ingest-path only** (imports `sources`, uses yaml): content hash, the ingest `Manifest` (`{source}/{path}` doc id → sha256), and `diff_manifests` → add/change/delete/**move** (move = same hash, new path). The no-NAT detection source; **never imported by the query Lambda**. |
 | `chunk.py` | (slice 2) Chunk the prose-rich subset (SIG/KEP READMEs) → `Chunk` with provenance + owning-entity IDs (== graph node IDs). |
 | `embed.py` | (slice 2) `Embedder` protocol — `BedrockTitanEmbedder` (Titan v2, 256-dim) + offline `HashEmbedder`. |
 | `vector.py` | (slice 2) `vector_search` + the retrieval trace (`VectorQueryResult`). |
 | `vector_eval.py` | (slice 2) Curated-query-set hit@k over frozen real Titan v2 vectors (credible-baseline confirmation). |
-| `store/` | `GraphStore` (+ memory/Neptune) **and** `VectorStore` ABC + `MemoryVectorStore` + `OpenSearchVectorStore` (slice 2). |
+| `store/` | `GraphStore` (+ memory/Neptune) **and** `VectorStore` ABC + `MemoryVectorStore` + `OpenSearchVectorStore` (slice 2). (slice 5) both ABCs gain delete/clear + exact-set `replace_*` (graph) / `delete_by_doc` (vector, keyed on source+doc_path together) for delta reconciliation; Neptune round-trips `doc_paths` as a JSON-string property. |
 | `vector_smoke_lambda.py` | (slice 2) In-VPC probe: embed → index → k-NN-retrieve an ingested chunk → cleanup. |
 | `entity_link.py` | (slice 3) Pure question→entity-ID linking over the controlled vocabulary, built on `normalize` (`@handles`/slugs/KEP numbers + the display-name alias table). |
 | `synthesize.py` | (slice 3) `Synthesizer` seam — `BedrockClaudeSynthesizer` (Bedrock Claude via the Converse API) + offline deterministic `TemplateSynthesizer`; `DEFAULT_SYNTHESIS_MODEL_ID`. |
@@ -34,7 +35,7 @@ for the contract and the module map.
 | `showcase/` | (slice 3) The consolidated showcase query set (`queries.yaml`) + `load_showcase()` loader (CLI/test-only; uses yaml, never imported by the Lambda). (slice 4) `queries.yaml` also carries `permission_queries` (the two-persona contrast) + `load_permission_showcase()`. |
 | `visibility.py` | (slice 4) **Pure, PyYAML-free** read-side of the synthetic permission filter (a TEACHING stand-in for ACLs, not real authz): the ordered `Visibility` tiers, most-restrictive-wins `compose`, `Clearance`, `PERSONAS`, and `resolve_clearance` (fail-closed — unknown persona raises `ValueError`). Imported by the query path (hybrid/compare/query_lambda) — must stay yaml-free. |
 | `labels.py` | (slice 4) **Ingest-path only** (uses yaml): loads the packaged `labels.yaml` (entity-id→tier) and stamps node/edge (`label_graph`, edge = `compose(src,dst)`) + chunk (`label_chunks`, = `compose(owners)`) visibility during the dual-write. **Never imported by the query Lambda** (a `sys.modules` test guards it). |
-| `cli.py` | `graphrag` CLI: `ingest`, `graph-query`, `resolve-eval`, `vector-ingest`, `vector-query`, `vector-eval`, and (slice 3) `hybrid-query` / `compare` (offline default + live SigV4 Function-URL client). |
+| `cli.py` | `graphrag` CLI: `ingest`, `graph-query`, `resolve-eval`, `vector-ingest`, `vector-query`, `vector-eval`, (slice 3) `hybrid-query` / `compare` (offline default + live SigV4 Function-URL client), and (slice 5) `delta` / `rebuild` / `delta-demo` (the before/after freshness demo; `scripts/delta-demo.sh` drives it from real git history). |
 
 ## Dependencies (recorded per AGENTS.md "record new dependencies before adding")
 
