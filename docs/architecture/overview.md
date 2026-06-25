@@ -37,7 +37,13 @@ delta re-ingest — plus the first **pattern-catalog** slice, `opencypher-templa
 governed **Cypher Templates** path: a fixed library of expert-authored parameterized
 openCypher templates the LLM only *selects*, with parameters extracted/validated
 deterministically and a full audit trace; the governed half of the governed-vs-risky
-teaching pair). Current layout:
+teaching pair) and its contrast `text2opencypher-guarded` (the **Text2Cypher** path: the
+LLM *writes* the openCypher, executed read-only behind a layered guard — a static
+validator + bounded self-heal + **IAM read-only data-action scoping** + a Neptune engine
+query timeout, ADR-0004; the risky half of the pair). For building/exercising any of these
+without a deployed stack — and the decision record for *why* text2cypher executes offline
+against a labeled bounded subset rather than a local Neptune — see
+[`develop-and-test-offline.md`](develop-and-test-offline.md). Current layout:
 
 | Path | What | Stack |
 | --- | --- | --- |

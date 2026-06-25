@@ -58,8 +58,10 @@ modes. The OpenSearch `visibility` keyword field lands only on a **fresh** index
 
 > The governed half of the governed-vs-risky pair. Its security property is **injection-safe
 > and read-only by construction**, so — unlike the LLM-authored `text2opencypher-guarded`
-> path — it does **not** rely on Neptune's read-replica enforcement (RFC-0001 §2). See the
-> [governed-vs-risky explanation](../guides/explanation/governed-vs-risky-graph-queries.md).
+> path — it does **not** rely on a run-time read-only guard. (RFC-0001 §2 named Neptune's
+> read-replica for text2cypher; that path instead guards with **IAM read-only data-action
+> scoping** per [ADR-0004](../adr/0004-text2cypher-read-only-guard.md) — see the
+> [governed-vs-risky explanation](../guides/explanation/governed-vs-risky-graph-queries.md).)
 
 | Boundary | Control |
 | --- | --- |
@@ -69,6 +71,22 @@ modes. The OpenSearch `visibility` keyword field lands only on a **fresh** index
 | Untrusted rows → Claude synthesis | Same posture as the hybrid path: returned rows ride Converse `messages` as data, the answer is display-only, the client is the default-TLS botocore chain. |
 | Live ingress + IAM | The governed path rides the **existing** IAM-auth, scoped-principal Function URL via an additive `mode` field; it adds **no new resource and no new IAM statement** — selection reuses the already-granted `bedrock:Converse` on the synthesis model and the existing Neptune data-access (a *different* selection model would be the only thing that widens the grant). |
 | Audit envelope (cypher + params + dropped candidates) → caller | The governed **success** envelope returns the executed cypher, the bound parameter map, and `dropped_candidates` (graph node ids that matched a slot's kind but failed store confirmation) — by design: the audit trace *is* the governed path's pedagogy. This relaxes the slice-3 "no internal detail crosses the Function URL" rule for the success path, contained by the **same trusted-ingress argument as slice 4's filtered-out trace**: the envelope crosses the IAM-auth, scoped-principal Function URL only to the trusted operator role, never to an end-user. `dropped_candidates` is a node-enumeration oracle if that ingress is ever widened to a less-trusted caller — re-decide this boundary first if so. (The *error* envelope stays fully sanitized.) |
+
+## Trust boundaries (text2opencypher-guarded — the flexible query path)
+
+> The risky half of the governed-vs-risky pair: the LLM **writes** the openCypher, so the
+> executable surface is whatever it emits. Safety is **layered defense**
+> ([ADR-0004](../adr/0004-text2cypher-read-only-guard.md)), and the load-bearing layer is
+> **below the app** — the validator is layer 1, *not* the guarantee.
+
+| Boundary | Control |
+| --- | --- |
+| Untrusted question → LLM query writer (LLM01/LLM05/LLM08) | The Bedrock Claude (Converse) generator receives the schema + question + any self-heal feedback as **data** in `messages` (never `system`); the `system` block directs it to emit **only a read query**, regardless of embedded instructions; `maxTokens` is bounded. The self-heal feedback is partly attacker-influenced/schema-bearing, so it too rides `messages` as untrusted data — the self-heal is not a prompt-injection amplifier. |
+| Model-authored query → execution (layer 1: validation) | `validate.py` rejects any mutating clause / **any `CALL`** / multi-statement / `RETURN`-less / **unbounded variable-length path** and bounds the `LIMIT`, before the query is ever sent. Conservative (a forbidden keyword inside a string literal rejects). Known classes it cannot catch (Unicode-escape, backtick/dynamic identifier) are explicitly left to the backstops below. |
+| Model-authored query → write (the backstop, the real guarantee) | The query Lambda's Neptune grant is **read-only** — `neptune-db:ReadDataViaQuery` + `connect` only, **no** `WriteDataViaQuery`/`DeleteDataViaQuery`. A write the validator missed is denied by **AWS IAM before the engine runs it**, so the read-only guarantee does not depend on the parser's completeness. (RFC-0001 §2 named the read-replica reader endpoint; ADR-0004 records why this single-node Serverless topology guards with IAM scoping instead — a reader endpoint needs a standing replica that breaks the cost posture.) Proven live by an out-of-band IAM-deny on a direct mutating call under the query-Lambda role. |
+| Model-authored query → runaway read (read-cost backstop) | `LIMIT` bounds rows *returned*, not rows *expanded*. The validator rejects unbounded `[*]` paths (layer 1) and the Neptune **engine `neptune_query_timeout`** (cluster parameter group) kills a runaway traversal — the read analog of IAM-for-writes. |
+| Neptune error / refusal → caller | A store execution error — including the IAM `AccessDenied` when the write backstop fires on a validator-missed write — surfaces as a **sanitized envelope** (`_serialize_text2cypher`): the generated queries + validation verdicts are returned (the audit value), but the raw error / ARN is **never** crossed to the caller (logged in-VPC, fed only to the internal self-heal). Generated-query *text* the model wrote IS returned — by design, the trace is the pedagogy; same trusted-ingress argument as the governed envelope. |
+| Live ingress + IAM | Rides the **existing** IAM-auth, scoped-principal Function URL via the additive `mode: "text2cypher"` value. Generation reuses the already-granted synthesis-model `bedrock:Converse` (no widened Bedrock grant — the generator's default model id equals `DEFAULT_SYNTHESIS_MODEL_ID`). The only IaC change is the query-Lambda Neptune grant **narrowing** to read-only + the query-timeout parameter group; no new billable/compute resource (Budgets held at 150). The IAM-auth named-principal grant is the accepted aggregate-abuse bound for the demo. |
 
 ## Least privilege
 
@@ -81,9 +99,12 @@ the adapter's SigV4 signing service come from a single `"es"` constant so they c
 drift. The execution role's `ecr:GetAuthorizationToken` is the one legitimate `"*"`
 (an AWS requirement) and is out of that assertion's scope.
 
-The slice-3 **query Lambda role** carries the same scoped grants (Neptune-data on the
-cluster, `es:ESHttp*` on the domain, Titan `bedrock:InvokeModel`) **plus** the
-synthesis Claude grant: `bedrock:InvokeModel` + `bedrock:Converse` scoped to **both**
+The slice-3 **query Lambda role** carries scoped grants (`es:ESHttp*` on the domain,
+Titan `bedrock:InvokeModel`) **plus** the synthesis Claude grant, and — since
+`text2opencypher-guarded` — its Neptune grant is **read-only** (`neptune-db:ReadDataViaQuery`
++ `connect` only, **no** `WriteDataViaQuery`/`DeleteDataViaQuery`; the ingestion task and
+smoke probe retain the full read-write set, both legitimately write). This is the ADR-0004
+write backstop, asserted per-role by `test_stack.py`. The synthesis Claude grant: `bedrock:InvokeModel` + `bedrock:Converse` scoped to **both**
 the cross-region inference-profile ARN (`inference-profile/us.anthropic.claude-sonnet-4-6`,
 account+region-qualified) **and** each underlying regional foundation-model ARN
 (`foundation-model/anthropic.claude-sonnet-4-6` in the profile's routing regions) — a

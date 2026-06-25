@@ -40,9 +40,10 @@ import only yaml-free modules and extending the existing `sys.modules` guard tes
 
 - **Charter coverage table** (*Cypher Templates* row) — this slice ships that row;
   it is the governed half of the governed-vs-risky pair.
-- **RFC-0001 feasibility §2** — Neptune parameterized openCypher is VERIFIED; the
-  read-replica is the *text2cypher* guardrail, **not** this slice's (templates are
-  read-only by review + lint, not by endpoint enforcement).
+- **RFC-0001 feasibility §2** — Neptune parameterized openCypher is VERIFIED; a run-time
+  read-only guard is the *text2cypher* guardrail, **not** this slice's (templates are
+  read-only by review + lint). The text2cypher guard is IAM read-only scoping (ADR-0004),
+  not RFC-0001 §2's named read-replica.
 - **ADR-0001** — reuse the `Synthesizer` seam + `link_question`; no new matching
   model.
 - **ADR-0002** — ride the existing in-VPC query Lambda + IAM-auth Function URL; add
@@ -318,8 +319,8 @@ update. It is finalization, not scope creep.)*
 - Update the `graphrag` AGENTS.md module map (templates/select/params/governed) +
   invariants (template dual-form; governed PyYAML-free).
 - Update `architecture/overview.md` (governed path) + `security.md` (governed query
-  posture: read-only library, parameterized binding, validated params, no
-  read-replica needed — the text2cypher contrast).
+  posture: read-only library, parameterized binding, validated params, no run-time
+  guard needed — the text2cypher contrast, which guards with IAM scoping per ADR-0004).
 - Add the spec to `docs/specs/README.md`; tick met ACs; flip Status. **Verify** any
   deferral token (AC9, created atomically by T11) resolves to a real `docs/backlog.md`
   heading (CONVENTIONS § 4) — T11 owns the anchor+token creation; T10 only checks it.

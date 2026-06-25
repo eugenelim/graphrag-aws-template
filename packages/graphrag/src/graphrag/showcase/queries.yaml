@@ -249,3 +249,35 @@ governed_queries:
     gold:
       - "sig:sig-network"
     highlight: "A KEP parameter resolved from the question; the OWNS edge is traversed inbound to the owning SIG."
+
+# text2opencypher-guarded (flexible / risky path). The LLM WRITES the openCypher; these are
+# the side-by-side teaching set. At least one question is SHARED with a governed template (the
+# head-to-head — same question, both paths), and the rest are OPEN-ENDED questions no governed
+# template covers (authorship, approvals, subprojects) — the coverage text2cypher buys at the
+# cost of needing the read-only guard. `gold` are nodes that resolve in the fixture corpus (a
+# test asserts this); `shared_with_template` names the governed template for the head-to-head.
+text2cypher_queries:
+  - id: t2c-sig-owned-keps
+    query: "Which KEPs does SIG Network own?"
+    shared_with_template: sig_owned_keps
+    gold:
+      - "kep-1880"
+      - "kep-2086"
+    highlight: "The head-to-head: the SAME question the governed sig_owned_keps template answers; here the model WRITES the OWNS query instead of selecting a vetted one."
+  - id: t2c-keps-authored-by-aojea
+    query: "Which KEPs did @aojea author?"
+    gold:
+      - "kep-1880"
+    highlight: "Open-ended: no governed template covers AUTHORS - the flexibility text2cypher buys, at the cost of the read-only guard."
+  - id: t2c-keps-approved-by-thockin
+    query: "Which KEPs has @thockin approved?"
+    gold:
+      - "kep-1287"
+      - "kep-1880"
+      - "kep-2086"
+    highlight: "Open-ended: APPROVES is untemplated - the model authors the traversal the question needs."
+  - id: t2c-sig-node-subprojects
+    query: "What subprojects does SIG Node have?"
+    gold:
+      - "subproject:sig-node/cri-api"
+    highlight: "Open-ended: HAS_SUBPROJECT is untemplated - coverage of a question no one wrote a template for."

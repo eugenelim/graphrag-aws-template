@@ -21,6 +21,7 @@ from graphrag import query_lambda
 from graphrag.chunk import Chunk
 from graphrag.model import Direction, Edge, EdgeKind, EntityKind, Node
 from graphrag.store.base import GraphStore
+from graphrag.store.neptune import NeptuneGraphStore
 from graphrag.store.vector_base import EmbeddedChunk, VectorHit
 
 
@@ -245,6 +246,11 @@ def test_query_lambda_import_graph_is_pyyaml_free() -> None:
             "graphrag.templates",
             "graphrag.select",
             "graphrag.params",
+            # text2opencypher-guarded: the text2cypher import graph also rides the bundle.
+            "graphrag.text2cypher",
+            "graphrag.generate",
+            "graphrag.validate",
+            "graphrag.cypher_eval",
         ):
             importlib.import_module(mod)
         # Slice-4: threading `visibility` (pure) must NOT transitively drag in `labels`
@@ -353,3 +359,133 @@ def test_governed_no_match_logs_warning_and_returns_reason(
     assert result["no_match_reason"]
     assert result["cypher"] == ""
     assert any("governed no-match" in r.message for r in caplog.records)
+
+
+# --- text2opencypher-guarded: text2cypher-mode dispatch through the Lambda (AC8) ------
+
+
+class _FakeGenerator:
+    def __init__(self, *a: Any, **k: Any) -> None:
+        pass
+
+    @property
+    def model_id(self) -> str:
+        return "fake-generator"
+
+    def generate(self, question: str, schema: str, *, feedback: str | None = None) -> str:
+        # a within-subset OWNS hop the offline evaluator can run over the fake store.
+        return (
+            "MATCH (a:Entity {id: 'sig:sig-network'})-[r:REL {kind: 'OWNS'}]->(n:Entity) "
+            "RETURN n LIMIT 25"
+        )
+
+
+class _ScriptedLambdaGenerator:
+    """Emits an invalid query first, then a valid one — to drive a multi-attempt self-heal
+    *through* the Lambda so the serialized envelope's `attempts` join is exercised."""
+
+    def __init__(self, *a: Any, **k: Any) -> None:
+        self._queries = [
+            "MATCH (n:Entity) DELETE n RETURN n LIMIT 5",  # rejected by the validator
+            "MATCH (a:Entity {id: 'sig:sig-network'})-[r:REL {kind: 'OWNS'}]->(n:Entity) "
+            "RETURN n LIMIT 5",  # valid on the heal retry
+        ]
+        self._i = 0
+
+    @property
+    def model_id(self) -> str:
+        return "scripted-lambda"
+
+    def generate(self, question: str, schema: str, *, feedback: str | None = None) -> str:
+        out = self._queries[self._i] if self._i < len(self._queries) else ""
+        self._i += 1
+        return out
+
+
+class _CannedRowsNeptune(NeptuneGraphStore):
+    """A REAL NeptuneGraphStore subclass whose live `run_read_query` returns canned rows — so
+    the Lambda happy path takes the production `run_read_query` branch (not the offline
+    evaluator), matching what the deployed handler actually runs."""
+
+    def run_read_query(self, cypher: str) -> list[Node]:
+        return [Node("kep-2086", EntityKind.KEP), Node("kep-1880", EntityKind.KEP)]
+
+
+def test_text2cypher_mode_self_heals_and_serializes_both_attempts_via_live_branch(
+    wired: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The integrated journey THROUGH the Lambda: generate → reject → self-heal → regenerate →
+    # run_read_query (the live branch, real NeptuneGraphStore subclass) → serialize. Guards the
+    # multi-attempt envelope join (a regression dropping the rejected attempt would pass the
+    # direct-orchestrator tests but fail here).
+    monkeypatch.setattr(query_lambda, "BedrockText2CypherGenerator", _ScriptedLambdaGenerator)
+    monkeypatch.setattr(query_lambda, "NeptuneGraphStore", _CannedRowsNeptune)
+    result = query_lambda.lambda_handler(
+        {"question": "Which KEPs does SIG Network own?", "mode": "text2cypher"}, None
+    )
+    assert result["refusal_reason"] is None
+    assert [a["valid"] for a in result["attempts"]] == [False, True]  # rejected then healed
+    assert result["attempts"][0]["violated_rule"]  # the rejection is legible
+    assert result["executed_query"]
+    assert sorted(result["rows"]) == ["kep-1880", "kep-2086"]  # via the live run_read_query branch
+
+
+class _AccessDeniedNeptune(NeptuneGraphStore):
+    """A **real** NeptuneGraphStore subclass whose live read raises an IAM-AccessDenied-shaped
+    error — exercises the **live** execution branch (`run_read_query`, the production failure
+    mode when the write backstop fires on a validator-missed write), not the offline evaluator.
+    `__init__` is inherited (validates the https endpoint; no network at construction)."""
+
+    def run_read_query(self, cypher: str) -> list[Node]:
+        raise RuntimeError(
+            "AccessDeniedException: User is not authorized to perform "
+            "neptune-db:WriteDataViaQuery on resource arn:aws:neptune-db:us-east-1:123:cluster/abc"
+        )
+
+
+def test_text2cypher_mode_returns_audit_envelope(
+    wired: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(query_lambda, "BedrockText2CypherGenerator", _FakeGenerator)
+    result = query_lambda.lambda_handler(
+        {"question": "Which KEPs does SIG Network own?", "mode": "text2cypher"}, None
+    )
+    assert result["executed_query"]
+    assert "kep-2086" in result["rows"]  # the executed rows from the fake store
+    assert result["answer"] == "grounded answer"
+    assert result["refusal_reason"] is None
+    assert result["attempts"][0]["valid"] is True
+    assert "executed query:" in result["trace"]
+
+
+def test_text2cypher_execution_error_is_sanitized(
+    wired: None, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    monkeypatch.setattr(query_lambda, "BedrockText2CypherGenerator", _FakeGenerator)
+    # the REAL NeptuneGraphStore subclass, so text2cypher._execute takes the live
+    # run_read_query branch (not the offline evaluator) — the actual production path.
+    monkeypatch.setattr(query_lambda, "NeptuneGraphStore", _AccessDeniedNeptune)
+    with caplog.at_level(logging.WARNING):
+        result = query_lambda.lambda_handler(
+            {"question": "Which KEPs does SIG Network own?", "mode": "text2cypher"}, None
+        )
+    # the validator-missed-write backstop firing as an IAM denial must NOT leak across the URL.
+    blob = json.dumps(result)
+    assert "AccessDenied" not in blob
+    assert "arn:" not in blob
+    assert "WriteDataViaQuery" not in blob
+    # the caller sees a clean refusal; the attempt records the failure as a boolean only.
+    assert result["refusal_reason"]
+    assert result["executed_query"] is None
+    assert any(a["execution_failed"] for a in result["attempts"])
+
+
+def test_text2cypher_pyyaml_free_import_graph_guarded() -> None:
+    # T8: the guard test above (test_query_lambda_import_graph_is_pyyaml_free) now also imports
+    # the text2cypher modules with yaml blocked; this asserts they import cleanly here too.
+    import graphrag.cypher_eval  # noqa: F401
+    import graphrag.generate  # noqa: F401
+    import graphrag.text2cypher  # noqa: F401
+    import graphrag.validate  # noqa: F401
