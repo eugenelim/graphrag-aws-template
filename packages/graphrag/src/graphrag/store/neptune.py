@@ -270,7 +270,16 @@ class NeptuneGraphStore(GraphStore):
         returns its rows under the alias ``n``; the app-layer evaluator returns the same
         set, and ``governed.execute_template`` sorts both so the backends are identical."""
         res = self._run(query, params)
-        return [_node_from_result(row["n"]) for row in res.get("results", [])]
+        rows = res.get("results", [])
+        try:
+            return [_node_from_result(row["n"]) for row in rows]
+        except KeyError as exc:
+            # Every governed template RETURNs under the alias `n`; a row without it means the
+            # template/result shape drifted — fail with a diagnosable message, not a bare
+            # KeyError that surfaces as an opaque sanitized envelope.
+            raise RuntimeError(
+                f"template result row missing expected 'n' alias (key {exc})"
+            ) from exc
 
     def all_nodes(self) -> list[Node]:
         res = self._run(f"MATCH (n:{_NODE_LABEL}) RETURN n", {})

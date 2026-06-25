@@ -26,7 +26,7 @@ from .select import TemplateSelector
 from .store.base import GraphStore
 from .store.neptune import NeptuneGraphStore
 from .synthesize import Synthesizer
-from .templates import TEMPLATES, Template, get_template
+from .templates import TEMPLATES, Template
 
 
 def execute_template(
@@ -39,7 +39,14 @@ def execute_template(
     paired app-layer ``template.evaluate`` over the ``GraphStore`` seam (offline/CI). Both
     results are sorted by node id here so the trace is byte-identical across backends — the
     same invariant ``neighbors_batch`` lives under.
+
+    Read-only is enforced **at the seam**, not only by the library's CI lint: a template that
+    is not read-only is refused before any query runs, so the governance property holds even
+    for a template that escaped test coverage (the trade-off that lets this path skip the
+    read-replica enforcement the text2cypher path needs — see the governed-vs-risky doc).
     """
+    if not template.is_read_only():
+        raise ValueError(f"refusing to execute non-read-only template {template.id!r}")
     if isinstance(store, NeptuneGraphStore):
         nodes = store.run_template_query(template.cypher, dict(params))
     else:
@@ -121,8 +128,14 @@ def governed_query(
     governed refusal, never a fabricated query.
     """
     alias_map: dict[str, str] = dict(aliases or {})
+    by_id = {t.id: t for t in templates}
     selected_id = selector.select(question, _catalog(templates))
-    template = get_template(selected_id) if selected_id is not None else None
+    # Resolve against the catalog the selector actually saw (not the global registry), so a
+    # caller passing a subset can't have an out-of-subset id slip through. The unknown-id
+    # branch is belt-and-suspenders: the selectors already validate their output against this
+    # same set, so selected_id is always None or a real id — but the guard keeps the
+    # "never execute an id we didn't vet" invariant local and obvious.
+    template = by_id.get(selected_id) if selected_id is not None else None
     if template is None:
         reason = (
             "no template fit the question"

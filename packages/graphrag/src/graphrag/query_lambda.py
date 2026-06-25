@@ -134,12 +134,21 @@ def lambda_handler(event: Any, context: Any) -> dict[str, Any]:
                 synthesizer=synthesizer_g,
                 aliases={},  # PyYAML-free Lambda: mechanical normalizers only (no alias table)
             )
-            logger.info(
-                "query_lambda governed ok (correlation_id=%s) template=%s rows=%d",
-                correlation_id,
-                governed.template_id,
-                len(governed.rows),
-            )
+            if governed.no_match_reason is not None:
+                # A live mis-selection / unbindable param must be diagnosable from CloudWatch
+                # and distinct from a real empty result (no question text — no PII).
+                logger.warning(
+                    "query_lambda governed no-match (correlation_id=%s) reason=%s",
+                    correlation_id,
+                    governed.no_match_reason,
+                )
+            else:
+                logger.info(
+                    "query_lambda governed ok (correlation_id=%s) template=%s rows=%d",
+                    correlation_id,
+                    governed.template_id,
+                    len(governed.rows),
+                )
             return _serialize_governed(governed)
         if mode != "hybrid":
             return {"error": f"unknown mode {mode!r}", "correlation_id": correlation_id}
