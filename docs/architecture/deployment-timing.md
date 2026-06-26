@@ -57,6 +57,7 @@ endpoints, Lambdas, Fargate task def, Budgets) is minutes or seconds around them
 | &nbsp;&nbsp;• hybrid (`mode:hybrid`) | ~20–25 s | M (2026-06-24, 22.7 s) | Vector + multi-hop + Bedrock Claude synthesis. |
 | &nbsp;&nbsp;• governed templates (`mode:governed`) | ~10 s/query | M (2026-06-25, 9.9 s) | Bedrock select + bound openCypher + Claude answer. |
 | &nbsp;&nbsp;• text2cypher (`mode:text2cypher`) | ~8–11 s | M (2026-06-25, 11 s cold / 8 s warm) | Bedrock generate + validate + Neptune read + Claude answer. |
+| &nbsp;&nbsp;• self-query (`mode:selfquery`) | ~15 s cold | M (2026-06-26, 15.2 s cold) | Bedrock filter-extraction + OpenSearch filtered k-NN (Lucene engine, **during-ANN**) + Claude answer; warm persona/no-filter calls faster. |
 
 ### 3. Teardown (`scripts/destroy.sh` → `cdk destroy`)
 
@@ -97,3 +98,9 @@ endpoints, Lambdas, Fargate task def, Budgets) is minutes or seconds around them
   store provisioning/teardown left as E pending a clean measured run. Added the
   rollback-detour note (K-0027: a bad Neptune engine pin fails fast but forces a
   delete-before-redeploy). text2cypher live latency TBD on the AC10 run.
+- 2026-06-26 — metadata-filtering (self-query) live run: added the **self-query**
+  per-mode latency M-value (15.2 s cold). Deploy wall clock measured again at **~17m24s**
+  (cdk total 1069.87 s; consistent with the ~19 min row — OpenSearch ∥ Neptune still the
+  critical path). Dual-write again ~90 s (22 nodes / 28 edges / 13 chunks). The k-NN engine
+  switch (`nmslib`→`lucene`) did not change deploy time (it's an app-side `create_index`
+  mapping, not a CDK resource).
