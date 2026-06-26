@@ -37,6 +37,12 @@ from .normalize import kep_id, person_id, sig_id
 from .query import Step, traverse
 from .resolve import load_aliases
 from .select import BedrockTemplateSelector, RuleTemplateSelector, TemplateSelector
+from .selfquery import (
+    BedrockMetadataExtractor,
+    MetadataExtractor,
+    RuleMetadataExtractor,
+    selfquery_query,
+)
 from .sources import load_corpus
 from .store.base import GraphStore
 from .store.memory import MemoryGraphStore
@@ -183,9 +189,9 @@ def _function_url_query(
     A ``persona`` (slice-4 permission filter) rides the body when set, so the live query is
     permission-filtered server-side by the same clearance the offline path applies.
 
-    ``mode`` selects the server path (``hybrid`` default | ``governed``); it rides the body
-    only when non-default, so a hybrid call's wire form is byte-unchanged (the additive,
-    back-compat Function-URL extension the opencypher-templates slice ships)."""
+    ``mode`` selects the server path (``hybrid`` default | ``governed`` | ``text2cypher`` |
+    ``selfquery``); it rides the body only when non-default, so a hybrid call's wire form is
+    byte-unchanged (the additive, back-compat Function-URL extension the catalog slices ship)."""
     from botocore.auth import SigV4Auth
     from botocore.awsrequest import AWSRequest
     from botocore.session import Session
@@ -401,6 +407,75 @@ def _cmd_governed_query(args: argparse.Namespace) -> int:
     print("== governed-query (offline) ==")
     print(_offline_governed_label(selector, synthesizer))
     print(result_g.render())
+    return 0
+
+
+def _metadata_extractor(args: argparse.Namespace) -> MetadataExtractor:
+    """Real Bedrock Claude extractor when ``--bedrock`` (needs creds), else the offline
+    deterministic, non-semantic rule extractor."""
+    if getattr(args, "bedrock", False):
+        model_id = getattr(args, "synthesis_model_id", None) or DEFAULT_SYNTHESIS_MODEL_ID
+        return BedrockMetadataExtractor(model_id=model_id, region=args.region)
+    return RuleMetadataExtractor()
+
+
+def _offline_selfquery_label(extractor: MetadataExtractor, synthesizer: Synthesizer) -> str:
+    return (
+        f"extractor: {extractor.model_id}\n"
+        f"synthesizer: {synthesizer.model_id}\n"
+        "(offline extractor/synthesizer are NON-SEMANTIC — structural demo only; "
+        "semantic extraction/quality is the live path)"
+    )
+
+
+def _cmd_selfquery_query(args: argparse.Namespace) -> int:
+    """The self-query path: Bedrock extracts a structured filter (source/entity_ids) from the
+    question, the vector search applies it DURING the ANN scan, and the trace is printed."""
+    if getattr(args, "function_url", None):
+        # Live: thin SigV4 Function-URL client, mode=selfquery (persona rides the body too).
+        clearance = _clearance(args)
+        result = _function_url_query(
+            args.function_url, args.q, args.region, getattr(args, "persona", None), mode="selfquery"
+        )
+        print("== selfquery-query (live function-url) ==")
+        _print_persona(clearance)
+        print(f"extracted filter: {json.dumps(result.get('extracted_filter', {}))}")
+        if result.get("dropped"):
+            print(f"dropped: {json.dumps(result['dropped'])}")
+        print("trace:")
+        print(result.get("trace", "(none)"))
+        print("citations:")
+        for cite in result.get("citations", []) or []:
+            print(f"  - {cite}")
+        print("answer:")
+        print(f"  {result.get('answer', '')}")
+        return 0
+
+    # Offline: in-memory stores from the fixture corpus + rule extractor + offline synthesizer.
+    vstore = _vector_store(args)
+    embedder = _embedder(args)
+    if isinstance(vstore, MemoryVectorStore):
+        _index_corpus(vstore, embedder, Path(args.community), Path(args.enhancements))
+    extractor = _metadata_extractor(args)
+    synthesizer = _synthesizer(args)
+    clearance = _clearance(args)
+    graph = _populated_store(args) if args.mode == "hybrid" else None
+    result_s = selfquery_query(
+        args.q,
+        extractor=extractor,
+        vector_store=vstore,
+        embedder=embedder,
+        synthesizer=synthesizer,
+        aliases=load_aliases(),
+        mode=args.mode,
+        graph_store=graph,
+        k=args.k,
+        clearance=clearance,
+    )
+    print(f"== selfquery-query (offline, mode={args.mode}) ==")
+    print(_offline_selfquery_label(extractor, synthesizer))
+    _print_persona(clearance)
+    print(result_s.render())
     return 0
 
 
@@ -750,6 +825,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="live: SigV4-signed POST (mode=governed) to the in-VPC query Lambda's Function URL",
     )
     p_governed.set_defaults(func=_cmd_governed_query)
+
+    p_selfquery = sub.add_parser(
+        "selfquery-query",
+        help="self-query metadata filtering: Bedrock extracts a structured filter "
+        "(source/entity_ids) from the question; the vector search applies it DURING the ANN scan",
+    )
+    add_hybrid_args(
+        p_selfquery
+    )  # community/enhancements/endpoints/region/q/k/max-hops/bedrock/persona
+    p_selfquery.add_argument(
+        "--mode",
+        choices=("vector", "hybrid"),
+        default="vector",
+        help="apply the self-query filter to vector retrieval (default) or hybrid's vector leg",
+    )
+    p_selfquery.add_argument(
+        "--function-url",
+        help="live: SigV4-signed POST (mode=selfquery) to the in-VPC query Lambda's Function URL",
+    )
+    p_selfquery.set_defaults(func=_cmd_selfquery_query)
 
     p_text2cypher = sub.add_parser(
         "text2cypher-query",

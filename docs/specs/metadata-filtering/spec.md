@@ -53,7 +53,9 @@ same seam.
 The LLM's authority is **bounded by construction**: it may only emit filters over a
 **fixed, declared field schema** (`source` — the cross-source repo; `entity_ids` —
 a SIG / KEP / person), and every value is **validated deterministically** before it
-touches OpenSearch — `source` against the closed enum of the two corpus repos,
+touches OpenSearch — `source` against the closed enum of the two corpus repos
+(`community`, `enhancements` — the `sources.COMMUNITY`/`ENHANCEMENTS` values the chunk
+carries),
 entity values resolved through the slice-1 resolvers to a *normalized* graph-node id.
 An undeclared field, or a value that does not resolve, is **dropped and recorded**,
 never passed through; the model never authors raw query DSL. The self-query filter
@@ -82,7 +84,7 @@ proceeding; *Never do* is a hard rule, even under time pressure.
   query string. This is the slice's load-bearing correctness property.
 - **Bound extraction to the fixed, declared field schema.** The extractor may only
   produce filters over the declared fields — `source` (validated against the closed
-  enum `{kubernetes/community, kubernetes/enhancements}`) and `entity_ids` (each
+  enum `{community, enhancements}`) and `entity_ids` (each
   value run as a surface string through the slice-1 `link_question`/`normalize`
   resolvers — which are **pure**, no store/network — to a *normalized* graph-node id). An
   **undeclared field**, or a value whose surface matches **no declared-entity pattern**
@@ -224,8 +226,8 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
 
 - [ ] **AC1 — Declared filterable-field schema + structured-filter model (pure,
   PyYAML-free).** A `graphrag.selfquery` module declares the **fixed** set of
-  filterable fields: `source` (kind `enum`, the closed set `{kubernetes/community,
-  kubernetes/enhancements}`) and `entity_ids` (kind `entity`, resolved to a graph-node
+  filterable fields: `source` (kind `enum`, the closed set `{community,
+  enhancements}` — the `sources.COMMUNITY`/`ENHANCEMENTS` values) and `entity_ids` (kind `entity`, resolved to a graph-node
   id). A `MetadataFilter` value type carries the validated `{field: [values]}` map and
   is empty when nothing was extracted; its match semantics are **OR within a field**
   (a chunk matches if its field value intersects the filter's value set) and **AND
@@ -254,7 +256,15 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   `k`). Filter values ride the request body, never interpolated. The in-memory store
   applies the **identical** predicate; for a given filter both backends return the
   **same** filtered hit set (sorted; backend-identical). `metadata_filter=None` and the
-  empty filter leave the candidate set unfiltered. *(TDD + goal-based mapping check)*
+  empty filter leave the candidate set unfiltered. **Composition preserves the permission
+  slice's fail-closed `Clearance` semantics:** the metadata `terms` and the visibility
+  `terms` are **independent** clauses on the same `bool`/`filter`, so a `None` clearance
+  contributes **no** visibility clause (unrestricted) while a `Clearance` with an **empty**
+  `allowed` set still contributes a visibility clause that **matches nothing** (zero hits) —
+  regardless of `metadata_filter`. An empty metadata filter (unfiltered) can never cause the
+  clearance clause to be dropped, and a self-query filter can only narrow, never re-admit a
+  chunk above clearance. Pinned at the composed `knn` seam for both backends. *(TDD +
+  goal-based mapping check)*
 - [ ] **AC4 — Bedrock self-query extractor (Converse), validated, with an offline
   deterministic counterpart.** `BedrockMetadataExtractor.extract(question, *, aliases)`
   issues a well-formed Converse request — a configurable `modelId` (default
@@ -274,7 +284,10 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   leg.** `vector_search(..., metadata_filter)` and `hybrid_query(..., metadata_filter)`/
   `run_modes(..., metadata_filter)` thread the validated filter into the vector k-NN
   call (composed with `clearance`), so a constrained question's vector hits **and** the
-  vector leg of its hybrid result exclude every non-matching chunk. A `selfquery_query`
+  vector leg of its hybrid result exclude every non-matching chunk. When a `clearance` is
+  **also** supplied, the two compose AND (a chunk must match the filter **and** be within
+  clearance) and the fail-closed clearance semantics of AC3 hold through `hybrid_query`/
+  `run_modes` — a self-query filter never re-admits an above-clearance chunk. A `selfquery_query`
   orchestrator (`extractor.extract` → validated `FilterExtraction` → filtered search →
   synthesize) returns a result
   whose `.render()` narrates, in order, **question → extracted filter → validated filter
@@ -317,8 +330,12 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   call extracts a structured filter from a constrained question (a `source` and/or an
   `entity_ids` constraint), runs filtered k-NN **live on OpenSearch with the filter applied
   during ANN**, and returns the trace (extracted + validated filter, the filtered hits) and
-  a Bedrock Claude answer; a contrasting no-filter question runs unfiltered; then the stack
-  is destroyed (teardown-first). If live AWS access is unavailable in the build environment,
+  a Bedrock Claude answer; a contrasting no-filter question runs unfiltered. A third call pairs
+  an extracted filter with a **non-default persona/clearance** and asserts the live filtered
+  hits exclude **both** above-clearance chunks **and** non-matching chunks — proving the two
+  `terms` clauses compose AND **during ANN on the Lucene engine** (the one place engine-level
+  composition runs for real). Then the stack is destroyed (teardown-first). If live AWS access
+  is unavailable in the build environment,
   this criterion ships deferred against a backlog anchor, with the offline + mocked path
   proving the orchestration. *(live smoke)*
 - [ ] **AC10 — Self-query showcase set + the self-query teaching framing.** A
@@ -347,7 +364,7 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   `apps/infra/stacks/graphrag_stack.py:487`; `store/opensearch.py:89,181-188`; RFC-0001
   §4; user confirmation 2026-06-25).
 - Technical: the filterable chunk fields already mapped as `keyword` are `source` (the
-  cross-source repo: `kubernetes/community` vs `kubernetes/enhancements`) and
+  cross-source repo: `community` vs `enhancements`, per `sources.COMMUNITY`/`ENHANCEMENTS`) and
   `entity_ids`; the self-query schema exposes exactly these two — `visibility` stays the
   *permission* filter, not a self-query field (source: `store/opensearch.py:_knn_mapping`;
   user confirmation 2026-06-25).

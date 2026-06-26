@@ -22,6 +22,7 @@ PyYAML-free import graph (mirrors ``hybrid.py``) — CLI/test use only.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from .embed import Embedder
 from .entity_link import link_question
@@ -33,6 +34,9 @@ from .store.vector_base import VectorStore
 from .synthesize import Synthesizer
 from .vector import vector_search
 from .visibility import DEFAULT_VISIBILITY, Clearance
+
+if TYPE_CHECKING:
+    from .selfquery import MetadataFilter
 
 
 def _node_visibility(node: Node) -> str:
@@ -83,6 +87,7 @@ def run_modes(
     max_hops: int = DEFAULT_MAX_HOPS,
     seed_cap: int = DEFAULT_SEED_CAP,
     clearance: Clearance | None = None,
+    metadata_filter: MetadataFilter | None = None,
 ) -> ComparisonResult:
     """Run the three retrieval modes independently and return their traced results.
 
@@ -90,10 +95,23 @@ def run_modes(
     vector-only, which must filter its own chunks or it would leak restricted chunks the
     other two modes drop (a per-mode divergence the demo must not have). ``None`` =
     unfiltered (slice-3 behavior unchanged).
+
+    A ``metadata_filter`` (the self-query structured filter) is threaded into the **vector
+    legs** (vector-only and hybrid's vector leg) — graph-only has no vector leg, so the
+    self-query filter does not apply there. It composes with ``clearance`` and can only
+    narrow. ``None``/empty = unfiltered.
     """
     return ComparisonResult(
         question=question,
-        vector=_vector_only(question, vector_store, embedder, synthesizer, k, clearance=clearance),
+        vector=_vector_only(
+            question,
+            vector_store,
+            embedder,
+            synthesizer,
+            k,
+            clearance=clearance,
+            metadata_filter=metadata_filter,
+        ),
         graph=_graph_only(
             question, graph_store, synthesizer, aliases, max_hops=max_hops, clearance=clearance
         ),
@@ -108,6 +126,7 @@ def run_modes(
             max_hops=max_hops,
             seed_cap=seed_cap,
             clearance=clearance,
+            metadata_filter=metadata_filter,
         ),
     )
 
@@ -120,8 +139,11 @@ def _vector_only(
     k: int,
     *,
     clearance: Clearance | None = None,
+    metadata_filter: MetadataFilter | None = None,
 ) -> ModeResult:
-    vresult = vector_search(vector_store, embedder, question, k=k, clearance=clearance)
+    vresult = vector_search(
+        vector_store, embedder, question, k=k, clearance=clearance, metadata_filter=metadata_filter
+    )
     synth = synthesizer.synthesize(question, vresult.hits, [])
     # the entity IDs vector-only surfaces are the chunk owners (no graph expansion).
     owner_ids: list[str] = []
@@ -203,6 +225,7 @@ def _hybrid(
     max_hops: int,
     seed_cap: int,
     clearance: Clearance | None = None,
+    metadata_filter: MetadataFilter | None = None,
 ) -> ModeResult:
     result = hybrid_query(
         question,
@@ -215,6 +238,7 @@ def _hybrid(
         max_hops=max_hops,
         seed_cap=seed_cap,
         clearance=clearance,
+        metadata_filter=metadata_filter,
     )
     surfaced: list[str] = [n.id for n in result.graph_nodes]
     return ModeResult(
