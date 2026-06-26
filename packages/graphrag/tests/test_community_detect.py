@@ -124,6 +124,78 @@ def test_unlabeled_member_composes_as_public() -> None:
     assert specs[0].tier == Visibility.PUBLIC.value
 
 
+# --- AC3: summarization -----------------------------------------------------------------
+
+
+class SpySynthesizer:
+    """Records each synthesize call and returns a deterministic answer naming the facts."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, list, list]] = []
+
+    @property
+    def model_id(self) -> str:
+        return "spy"
+
+    def synthesize(self, question, context_chunks, graph_facts):
+        from graphrag.synthesize import SynthesisResult
+
+        self.calls.append((question, list(context_chunks), list(graph_facts)))
+        ids = ",".join(n.id for n in graph_facts)
+        return SynthesisResult(answer=f"summary[{ids}]", citations=[])
+
+
+def test_summarize_one_call_per_community_over_member_subgraph() -> None:
+    from graphrag.community_detect import detect_communities, summarize_communities
+
+    nodes, edges = _two_cluster_graph()
+    specs = detect_communities(nodes, edges)
+    spy = SpySynthesizer()
+    communities = summarize_communities(specs, nodes, edges, spy)
+
+    # one synthesize call per community
+    assert len(spy.calls) == len(specs)
+    assert len(communities) == len(specs)
+    # the context is the community's OWN members, never unrelated entities
+    for spec, (_question, ctx, graph_facts) in zip(specs, spy.calls, strict=True):
+        assert ctx == []  # community summaries use graph_facts, not chunk context
+        assert {n.id for n in graph_facts} == set(spec.entity_ids)
+    # the summary is the synthesized text; tier/size carried from the spec
+    by_id = {c.id: c for c in communities}
+    for spec in specs:
+        c = by_id[spec.id]
+        assert c.summary == f"summary[{','.join(spec.entity_ids)}]"
+        assert c.tier == spec.tier and c.size == spec.size
+        assert c.entity_ids == spec.entity_ids
+
+
+def test_summarize_passes_relationships_as_data_in_the_question() -> None:
+    from graphrag.community_detect import detect_communities, summarize_communities
+
+    nodes, edges = _two_cluster_graph()
+    specs = detect_communities(nodes, edges)
+    spy = SpySynthesizer()
+    summarize_communities(specs, nodes, edges, spy)
+    # at least one community's question names an intra-community relationship (the subgraph)
+    questions = " ".join(q for q, _c, _g in spy.calls)
+    assert "-OWNS->" in questions
+
+
+def test_summarize_offline_template_is_deterministic() -> None:
+    from graphrag.community_detect import detect_communities, summarize_communities
+    from graphrag.synthesize import TemplateSynthesizer
+
+    nodes, edges = _two_cluster_graph()
+    specs = detect_communities(nodes, edges)
+    first = summarize_communities(specs, nodes, edges, TemplateSynthesizer())
+    second = summarize_communities(specs, nodes, edges, TemplateSynthesizer())
+    assert [(c.id, c.summary, c.title) for c in first] == [
+        (c.id, c.summary, c.title) for c in second
+    ]
+    # title is member-derived (carries the whole-community gate)
+    assert all(c.title for c in first)
+
+
 def test_module_import_is_networkx_free() -> None:
     # importing community_detect must NOT pull in networkx (lazy import inside the function);
     # this is the ingest-side analogue of the PyYAML-free Lambda discipline.

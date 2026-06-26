@@ -23,6 +23,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .model import Edge, Node
+from .store.community_base import Community
+from .synthesize import Synthesizer
 from .visibility import DEFAULT_VISIBILITY, compose
 
 # Pinned Louvain random seed — Louvain is randomized, so a fixed seed makes the partition
@@ -99,3 +101,73 @@ def detect_communities(
             CommunitySpec(id=f"community-{index}", entity_ids=members, size=len(members), tier=tier)
         )
     return specs
+
+
+def _entity_label(node: Node) -> str:
+    """A short human label for an entity (its title/name prop, else its id) — member-derived,
+    so a community ``title`` built from it inherits the whole-community clearance gate."""
+    title = node.props.get("title") or node.props.get("name")
+    return str(title) if title else node.id
+
+
+def _community_title(member_nodes: list[Node]) -> str:
+    """A stable, member-derived community label: the first member's label, '+N more' for the
+    rest. Deterministic because ``member_nodes`` is in the spec's sorted-member order."""
+    if not member_nodes:
+        return "(empty community)"
+    primary = _entity_label(member_nodes[0])
+    extra = len(member_nodes) - 1
+    return f"{primary} +{extra} more" if extra else primary
+
+
+def summarize_communities(
+    specs: list[CommunitySpec], nodes: list[Node], edges: list[Edge], synthesizer: Synthesizer
+) -> list[Community]:
+    """Generate one summary per community via the ``Synthesizer`` seam — the **member subgraph**
+    (member entities + the relationships among them) is the synthesis context.
+
+    For each ``CommunitySpec`` this builds the member ``Node`` list and the **intra-community**
+    edges (relationships where both endpoints are members), passes the members as the
+    synthesizer's ``graph_facts`` and the relationships as untrusted data in the summarization
+    question, and calls ``synthesizer.synthesize`` once. The resulting ``Community`` carries the
+    synthesized text as its ``summary``, a stable member-derived ``title``, and the spec's
+    composed ``tier``/``size``.
+
+    One Converse call per community: at the locked demo corpus scale the community count and
+    each member subgraph are small (bounded ingest fan-out + bounded prompt); an unbounded
+    large-corpus fan-out is the named LLM10 scale-out residual (ADR-0005). Offline,
+    ``TemplateSynthesizer`` makes each summary deterministic and non-semantic.
+    """
+    by_id = {node.id: node for node in nodes}
+    communities: list[Community] = []
+    for spec in specs:
+        member_set = set(spec.entity_ids)
+        member_nodes = [by_id[eid] for eid in spec.entity_ids if eid in by_id]
+        intra_edges = [
+            edge for edge in edges if edge.src_id in member_set and edge.dst_id in member_set
+        ]
+        rels = (
+            "; ".join(
+                f"{edge.src_id} -{edge.kind.value}-> {edge.dst_id}" for edge in intra_edges
+            )
+            or "(no internal relationships)"
+        )
+        question = (
+            "Summarize this community of related Kubernetes organizational entities for a "
+            "corpus-wide overview: describe what the group is about and how its members "
+            f"relate. Relationships within the community: {rels}"
+        )
+        # Member subgraph is the context: members as graph_facts, relationships as data in the
+        # question (which the synthesizer places in `messages`, never `system`).
+        result = synthesizer.synthesize(question, [], member_nodes)
+        communities.append(
+            Community(
+                id=spec.id,
+                title=_community_title(member_nodes),
+                summary=result.answer,
+                entity_ids=spec.entity_ids,
+                tier=spec.tier,
+                size=spec.size,
+            )
+        )
+    return communities
