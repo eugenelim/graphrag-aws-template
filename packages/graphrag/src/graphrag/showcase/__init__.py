@@ -94,6 +94,22 @@ class SelfQueryShowcaseQuery:
     highlight: str = ""
 
 
+@dataclass
+class ParentChildShowcaseQuery:
+    """A parent-child-retrieval demo query: the gold ``expected_matched_child`` (the small,
+    precise chunk whose vector matches) and the ``expected_parent`` (the document whose full
+    body is returned for synthesis — the ``{source}/{doc_path}`` key), plus the ``contrast``
+    against flat ``vector`` mode (same question, single matched chunk vs. the whole parent
+    body). All ids resolve in the fixture corpus."""
+
+    id: str
+    query: str
+    expected_matched_child: str
+    expected_parent: str
+    contrast: str = ""
+    highlight: str = ""
+
+
 def load_showcase() -> list[ShowcaseQuery]:
     """Load the packaged showcase query set as ``ShowcaseQuery`` objects."""
     text = resources.files("graphrag.showcase").joinpath("queries.yaml").read_text(encoding="utf-8")
@@ -169,6 +185,26 @@ def load_selfquery_showcase() -> list[SelfQueryShowcaseQuery]:
                 expected_filter={k: [str(v) for v in vs] for k, vs in expected.items()},
                 visible=[str(g) for g in entry.get("visible", [])],
                 excluded=[str(g) for g in entry.get("excluded", [])],
+                highlight=str(entry.get("highlight", "")),
+            )
+        )
+    return out
+
+
+def load_parentchild_showcase() -> list[ParentChildShowcaseQuery]:
+    """Load the packaged parent-child-retrieval demo queries."""
+    text = resources.files("graphrag.showcase").joinpath("queries.yaml").read_text(encoding="utf-8")
+    data = yaml.safe_load(text) or {}
+    raw = data.get("parentchild_queries", []) if isinstance(data, dict) else []
+    out: list[ParentChildShowcaseQuery] = []
+    for entry in raw:
+        out.append(
+            ParentChildShowcaseQuery(
+                id=str(entry["id"]),
+                query=str(entry["query"]),
+                expected_matched_child=str(entry["expected_matched_child"]),
+                expected_parent=str(entry["expected_parent"]),
+                contrast=str(entry.get("contrast", "")),
                 highlight=str(entry.get("highlight", "")),
             )
         )

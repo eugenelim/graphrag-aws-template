@@ -653,3 +653,34 @@ def test_selfquery_metadata_filtering_adds_no_new_infra(template: Template) -> N
         if "bedrock:Converse" in actions:
             saw_converse = True
     assert saw_converse, "self-query extraction reuses the existing bedrock:Converse grant"
+
+
+# --- parent-child-retrieval: additive mode, app-side nested index, no new infra (AC7) ---
+def test_parentchild_retrieval_adds_no_new_infra(template: Template) -> None:
+    # The parent-child path rides the existing query Lambda via the additive `mode: parentchild`
+    # value. The only store change is a NEW nested index (graphrag-parents) created at
+    # create_index on the existing OpenSearch domain — app code, not CDK. It reuses the
+    # already-granted Titan embed + synthesis-model Converse + OpenSearch data-access, and the
+    # path builds NO Neptune store, so it adds no Neptune statement of its own. Nothing new is
+    # provisioned: the product Lambda set, the single IAM-auth Function URL, the one OpenSearch
+    # domain, and the Budgets value all hold from the prior slices.
+    fns = [r for r in _resources(template).values() if r["Type"] == "AWS::Lambda::Function"]
+    product = [f for f in fns if str(f["Properties"].get("Handler", "")).startswith("graphrag.")]
+    assert len(product) == 3  # smoke + vector-smoke + query — no new parent-child function
+    template.resource_count_is("AWS::Lambda::Url", 1)  # still only the IAM-auth query URL
+    template.resource_count_is("AWS::OpenSearchService::Domain", 1)  # the nested index rides it
+    template.has_resource_properties(
+        "AWS::Budgets::Budget",
+        {"Budget": Match.object_like({"BudgetLimit": {"Amount": 150, "Unit": "USD"}})},
+    )
+    # the bedrock grant is unchanged: Converse on the synthesis model, no wildcard resource
+    # (synthesis reuses it). Re-assert the no-wildcard invariant across every bedrock grant.
+    saw_converse = False
+    for stmt in _iam_statements(template):
+        actions = _as_list(stmt["Action"])
+        if not any(a.startswith("bedrock:") for a in actions):
+            continue
+        assert "*" not in _as_list(stmt["Resource"]), "bedrock grant must not be wildcard resource"
+        if "bedrock:Converse" in actions:
+            saw_converse = True
+    assert saw_converse, "parent-child synthesis reuses the existing bedrock:Converse grant"

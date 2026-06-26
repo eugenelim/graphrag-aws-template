@@ -33,6 +33,7 @@ from graphrag.delta import Manifest, build_manifest, manifest_from_json, manifes
 from graphrag.embed import Embedder
 from graphrag.ingest import DeltaReport, IngestReport, ingest, ingest_delta, rebuild
 from graphrag.store.base import GraphStore
+from graphrag.store.parentchild_base import ParentChildStore
 from graphrag.store.vector_base import VectorStore
 
 # The ingest manifest (doc id -> content hash) lives at the corpus prefix root in S3; a --delta
@@ -115,12 +116,21 @@ def _vector_dual_write(
     enhancements: Path,
     vector_store: VectorStore | None,
     embedder: Embedder | None,
+    parentchild_store: ParentChildStore | None = None,
 ) -> int:
     """Write the vector half from the same corpus read. Returns the chunk count.
 
     The same Fargate run reads one immutable S3 snapshot, so the graph and vector
     writes can't diverge (charter pattern 2). A no-op when neither an injected store
     (tests) nor ``OPENSEARCH_ENDPOINT`` (deploy) is present.
+
+    The **parent-child** nested index (the Parent-Child Retriever slice) rides the *same*
+    parse + embed pass: the chunks are embedded **once**, written to the flat index, then
+    grouped into parents (a document's chunks, ordered) and written to the nested index — the
+    child vectors are the chunk vectors, reused (no second embed pass, no extra Bedrock cost).
+    The parent-child index is built only on this full-ingest path; it lands on the same
+    OpenSearch domain. Skipped when neither an injected parent-child store nor
+    ``OPENSEARCH_ENDPOINT`` is present (a flat-only / graph-only deploy is unchanged).
     """
     endpoint = env.get("OPENSEARCH_ENDPOINT")
     if vector_store is None and not endpoint:
@@ -134,6 +144,10 @@ def _vector_dual_write(
         from graphrag.store.opensearch import OpenSearchVectorStore
 
         vector_store = OpenSearchVectorStore(endpoint or "", region)
+    if parentchild_store is None and endpoint:  # pragma: no cover - deployed task only
+        from graphrag.store.parentchild_opensearch import OpenSearchParentChildStore
+
+        parentchild_store = OpenSearchParentChildStore(endpoint, region)
 
     from graphrag.chunk import chunk_corpus
     from graphrag.labels import label_chunks, load_labels
@@ -141,15 +155,31 @@ def _vector_dual_write(
     from graphrag.store.vector_base import EmbeddedChunk
 
     vector_store.create_index()  # no-op for in-memory; creates the k-NN index on OpenSearch
-    chunks = chunk_corpus(load_corpus(community, enhancements))
+    docs = load_corpus(community, enhancements)
+    chunks = chunk_corpus(docs)
     # Stamp synthetic visibility on every chunk from the same parse (slice 4) so the vector
     # store carries the permission-filter metadata, consistent with the graph's labels.
     label_chunks(chunks, load_labels())
+    # Embed ONCE; both indexes consume the same EmbeddedChunk list (no re-embed).
     vectors = embedder.embed([c.text for c in chunks])
-    for chunk, vector in zip(chunks, vectors, strict=True):
-        vector_store.index_chunk(EmbeddedChunk(chunk, vector))
-    print(f"vector dual-write: indexed {len(chunks)} chunks")
-    return len(chunks)
+    embedded = [EmbeddedChunk(chunk, vector) for chunk, vector in zip(chunks, vectors, strict=True)]
+    for ec in embedded:
+        vector_store.index_chunk(ec)
+    print(f"vector dual-write: indexed {len(embedded)} chunks")
+
+    if parentchild_store is not None:
+        from graphrag.parentchild import group_into_parents
+
+        parentchild_store.create_index()  # no-op in-memory; creates the nested index on OpenSearch
+        # The parent body is the document's full prose (app-stored, read back from the hit —
+        # RFC-0001 §3, not a has_child join). Built from the SAME parsed docs this pass read.
+        bodies = {d.doc_id: d.markdown.body for d in docs if d.markdown is not None}
+        parents = group_into_parents(embedded, bodies)
+        for parent in parents:
+            parentchild_store.index_parent(parent)
+        print(f"parent-child dual-write: indexed {len(parents)} parents")
+
+    return len(embedded)
 
 
 def _resolve_vector(
@@ -179,6 +209,7 @@ def run(
     store: GraphStore | None = None,
     vector_store: VectorStore | None = None,
     embedder: Embedder | None = None,
+    parentchild_store: ParentChildStore | None = None,
 ) -> IngestReport | DeltaReport:
     """Run the ingestion task. ``MODE`` selects ``full`` (default — the slice-1–4 dual-write,
     unchanged), ``delta`` (slice-5 incremental re-ingest against the stored manifest), or
@@ -202,7 +233,9 @@ def run(
         community, enhancements = download_corpus(bucket, prefix, Path(tmp), s3_client)
         if mode == "full":
             report = ingest(community, enhancements, store)
-            _vector_dual_write(env, community, enhancements, vector_store, embedder)
+            _vector_dual_write(
+                env, community, enhancements, vector_store, embedder, parentchild_store
+            )
             new_manifest = build_manifest(community, enhancements)
         elif mode == "rebuild":
             vstore, emb = _resolve_vector(env, vector_store, embedder)
