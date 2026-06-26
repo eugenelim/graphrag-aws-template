@@ -58,6 +58,7 @@ def _community(cid: str, tier: str, *, size: int = 2) -> Community:
         entity_ids=tuple(f"{cid}-e{i}" for i in range(size)),
         tier=tier,
         size=size,
+        doc_paths=(f"src/{cid}.md",),
     )
 
 
@@ -84,6 +85,7 @@ def test_upsert_community_is_parameterized() -> None:
     assert params["tier"] == Visibility.PUBLIC.value
     assert params["size"] == 2
     assert json.loads(params["entity_ids"]) == list(c.entity_ids)
+    assert json.loads(params["doc_paths"]) == list(c.doc_paths)
     assert "community-0" not in query and "summary of" not in query
 
 
@@ -132,6 +134,7 @@ def _props(cid: str, tier: str, size: int) -> dict:
         "tier": tier,
         "size": size,
         "entity_ids": json.dumps([f"{cid}-e{i}" for i in range(size)]),
+        "doc_paths": json.dumps([f"src/{cid}.md"]),
     }
 
 

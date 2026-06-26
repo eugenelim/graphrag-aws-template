@@ -39,6 +39,11 @@ class Community:
     entity_ids: tuple[str, ...]
     tier: str
     size: int
+    # The member documents (union of member entities' doc_paths) — carried on the community so
+    # the read-only query path can cite real source documents without an Entity lookup. All
+    # members are within the served clearance once the tier gate passes, so these never exceed
+    # the gate (the citation set is a subset of in-clearance member documents).
+    doc_paths: tuple[str, ...] = ()
 
 
 class CommunityStore(ABC):

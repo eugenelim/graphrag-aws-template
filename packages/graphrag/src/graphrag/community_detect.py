@@ -160,6 +160,11 @@ def summarize_communities(
         # Member subgraph is the context: members as graph_facts, relationships as data in the
         # question (which the synthesizer places in `messages`, never `system`).
         result = synthesizer.synthesize(question, [], member_nodes)
+        # Member documents (union of member entities' provenance) — carried on the community so
+        # the read-only query path cites real source docs without an Entity lookup.
+        doc_paths: set[str] = set()
+        for node in member_nodes:
+            doc_paths |= node.doc_paths
         communities.append(
             Community(
                 id=spec.id,
@@ -168,6 +173,7 @@ def summarize_communities(
                 entity_ids=spec.entity_ids,
                 tier=spec.tier,
                 size=spec.size,
+                doc_paths=tuple(sorted(doc_paths)),
             )
         )
     return communities
