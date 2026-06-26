@@ -56,7 +56,7 @@ def _community_from_props(props: dict[str, Any]) -> Community:
 
 
 class NeptuneCommunityStore(CommunityStore):
-    """A ``CommunityStore`` over Neptune openCypher — ``Community`` nodes on the existing cluster."""
+    """A ``CommunityStore`` over Neptune openCypher — ``Community`` nodes on the live cluster."""
 
     def __init__(
         self,
