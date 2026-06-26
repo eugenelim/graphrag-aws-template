@@ -447,3 +447,58 @@ dispatch — over the fixture corpus.
 > clean on the first deploy. The engine switch (`nmslib`→`lucene`, `space_type` kept `cosinesimil`)
 > created the index without error and filtered during ANN as designed — the headline mechanism the
 > slice exists to demonstrate.
+
+## parent-child-retrieval — live parent-child smoke (AC9)
+
+The parent-child slice adds **no new infrastructure** (an additive `mode: parentchild` on the
+existing query Lambda + a **new nested index** `graphrag-parents` created app-side on the existing
+OpenSearch domain). The offline build proves the machinery — the nested store (mock HTTP), the
+backend-identical in-memory store, `group_into_parents`, the embed-once dual-write, the parent-child
+Lambda dispatch (mocked) — over the fixture corpus.
+
+| Check | Status |
+| --- | --- |
+| Live deploy + dual-write (incl. the **new nested index**) | **PASS (2026-06-26)** — `GraphragSlice1` `CREATE_COMPLETE` (`us-east-1`); OpenSearch domain was the ~20m long pole. Fargate `MODE=full` dual-write: graph **22 nodes / 28 edges / 6 cross-source merges**, vector **13 chunks**, and **parent-child: 6 parents** on the `graphrag-parents` nested index — all from **one** Bedrock Titan embed pass (the child vectors are the flat index's vectors, reused). |
+| Live parent-child query (AC9) | **PASS (2026-06-26)** — a SigV4 `mode: parentchild` POST matched a **precise child** on the **live Lucene nested ANN** and returned the **whole parent body** for a Bedrock Claude answer. Trace below. |
+| Filter ∧ clearance compose (the narrow-only guard) | **PASS (2026-06-26)** — the same question under `public-reader` vs `maintainer` diverged: the restricted `kep-1287` **parent absent** for the reader, **present** for the maintainer — the visibility `bool.filter` composes AND with the nested child match, narrow-only. |
+| Teardown | **PASS (2026-06-26)** — `scripts/destroy.sh`; no billable resource remains. |
+
+> **Status: PASS (2026-06-26).** Deployed `GraphragSlice1` (`us-east-1`), dual-wrote the corpus
+> (the new nested `graphrag-parents` index populated alongside the flat index from one embed pass),
+> then drove the **parent-child path live** via `graphrag parentchild-query --function-url …`
+> (`mode: parentchild`):
+>
+> ```text
+> "what does the in-place pod resize KEP say about its risks and rollout?"     (no persona)
+>     matched child (live Lucene nested ANN, score_mode=max):
+>       kep-1287 README#1 "Risks and Mitigations"   score=0.7838 (real cosine)
+>     returned PARENT: keps/sig-node/1287-…/README.md  (the WHOLE body, 444 chars, 2 child chunks)
+>     answer (Bedrock Claude over the PARENT BODY): surfaced the feature-gate + per-container
+>       resize-policy rollout context from the parent's Summary — i.e. context BEYOND the matched
+>       "Risks" child fragment (the decoupling the pattern exists for); cited the parent doc_path
+> "what does the in-place pod resize KEP say about its risks?"  persona=public-reader  (allows [public])
+>     returned parents: 4 PUBLIC parents — the restricted kep-1287 parent is ABSENT
+>       (Claude: "the retrieved context does not contain the in-place pod resize KEP")
+> "what does the in-place pod resize KEP say about its risks?"  persona=maintainer    (allows all tiers)
+>     returned parents: kep-1287 parent PRESENT (rank 1) — Claude answers about KEP-1287 risks
+> ```
+>
+> This is the parent-child path proven **live** end to end: a small **child** chunk's vector matched
+> precisely on the **nested `knn_vector`** index (Lucene HNSW, `score_mode: max`, `inner_hits`
+> surfacing the matched child) while the **whole parent document body** — app-stored on the same
+> nested document, **not** a `has_child` join (RFC-0001 §3) — was returned and synthesized over. The
+> public-reader/maintainer divergence on the *same* question is the live proof that the visibility
+> `terms` (a parent-level `bool.filter`) composes **AND** with the child match — a parent above
+> clearance is never returned. The flat-vs-parent-child *context* contrast is visible **within the
+> parentchild trace itself** (`matched child …` small + `returned parents … (full body)` large) and is
+> exercised directly offline (`vector-query` vs `parentchild-query` + the `parentchild_queries`
+> showcase); the Function URL has no standalone `vector` mode (its flat-chunk retrieval is hybrid's
+> vector leg), so the dedicated flat contrast is the offline check, not a separate live mode. Then
+> `scripts/destroy.sh` (teardown-first); no billable resource remains. Satisfies AC9.
+>
+> **No code bug surfaced** (offline + mocked + synth already covered the path); the live run was clean
+> on the first deploy — the nested index created without error and the nested ANN matched children +
+> returned parents as designed. **One minor CLI wart (not a defect):** `parentchild-query
+> --function-url` still requires `--community/--enhancements` (unused on the live path) because they
+> ride the shared corpus-arg group — consistent with the sibling `selfquery-query`/`vector-query`
+> verbs; pass any path.

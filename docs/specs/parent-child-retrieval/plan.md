@@ -1,7 +1,7 @@
 # Plan: parent-child-retrieval
 
 - **Spec:** [`spec.md`](spec.md)
-- **Status:** Drafting <!-- Drafting | Executing | Done -->
+- **Status:** Done <!-- Drafting | Executing | Done -->
 
 > **Plan contract:** this is the implementation strategy. Unlike the spec, this
 > document is allowed to change as you learn. When it changes substantially
@@ -142,7 +142,9 @@ verb), mirroring `selfquery.py`/`vector.py`/`store/vector_*`.
   `create_index()`, `index_parent(parent: ParentDoc)`, `search(vector, k, *, allowed_labels:
   frozenset[str] | None = None) -> list[ParentHit]`, `count()`, `clear()`. The Function URL request
   gains the `mode: "parentchild"` value (additive); the parent-child response envelope is
-  `{mode, hits (parent ids), matched_children, answer, citations, trace}`. Traces to: AC2, AC5, AC6.
+  `{hits (parent ids), matched_children, answer, citations, trace}` (no `mode` field — parent-child has a
+  single retrieval shape, unlike self-query's vector/hybrid; consistent with the sibling serializers).
+  Traces to: AC2, AC5, AC6.
 
 ### Component / module decomposition
 - New: `store/parentchild_base.py` (`ChildVector`, `ParentDoc`, `ParentHit`, `ParentChildStore`
@@ -440,6 +442,12 @@ scope creep.)*
 
 ## Changelog
 
+- 2026-06-26: shipped. T1–T8 implemented offline (gates green); T9 AC9 verified live (deployed,
+  dual-wrote incl. the new nested index — parent-child 6 parents from one embed pass, ran live
+  `mode: parentchild` calls proving precise child match → parent body + the clearance compose, then
+  destroyed); T10 drift closure (Status→Shipped, ACs ticked, charter coverage `◔ Planned`→`✅ Have`,
+  brief row, AGENTS/architecture docs). Review-finding tweaks: AC2 offline-parity wording, response
+  envelope `mode` drop, best-child `-inf` seed, trace label; `k`-clamp hardening deferred to backlog.
 - 2026-06-25: initial plan. Parent-Child Retriever: a new nested `knn_vector` index
   (`graphrag-parents`) whose parents hold their children + an app-stored body; a `ParentChildStore`
   seam (OpenSearch nested + in-memory, backend-identical); `group_into_parents` + `parentchild_query`

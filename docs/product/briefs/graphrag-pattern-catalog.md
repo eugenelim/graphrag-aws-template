@@ -83,5 +83,5 @@ Ordered by value; all depend on the demo's stores (sibling slices 1–2). -->
 | `opencypher-templates` | Cypher Templates | Shipped (all 10 ACs incl. AC9 verified live) |
 | `text2opencypher-guarded` | Text2Cypher | Shipped (all 12 ACs incl. AC10 verified live) |
 | `metadata-filtering` | Metadata Filtering / Self-Query | Shipped (all 10 ACs incl. AC9 verified live) |
-| `parent-child-retrieval` | Parent-Child Retriever | _not yet scaffolded_ |
+| `parent-child-retrieval` | Parent-Child Retriever | Shipped (all 9 ACs incl. AC9 verified live) |
 | `global-community-summary` | Global Community Summary | _not yet scaffolded_ |
