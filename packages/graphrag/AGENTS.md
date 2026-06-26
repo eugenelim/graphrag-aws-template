@@ -31,7 +31,7 @@ for the contract and the module map.
 | `query.py` | Bounded multi-hop `traverse` (over `neighbors()`) **and** (slice 3) `expand_neighborhood` (undirected-over-all-edge-kinds neighborhood expansion for seed-and-expand) over the `neighbors_batch` seam (default fan-out; Neptune-batched override), with a sorted, backend-identical trace. |
 | `hybrid.py` | (slice 3) The seed-and-expand orchestration: dual-seed (vector-owners ∪ question-links) → cap → expand → merge → synthesize → `HybridResult.render()` trace. |
 | `compare.py` | (slice 3) The three-mode runner — `vector-only` / `graph-only` / `hybrid` independently, with a side-by-side `ComparisonResult.render()`. |
-| `query_lambda.py` | (slice 3) In-VPC query Lambda handler behind an IAM-auth Function URL; reuses the same `hybrid_query`; PyYAML-free import graph; entity-links with `aliases={}` (mechanical normalizers only — no display-name table in the bundle). (opencypher-templates) additive `mode` dispatch (`hybrid` default \| `governed` \| `text2cypher`); `governed` runs `governed_query`; (text2opencypher-guarded) `text2cypher` runs `text2cypher_query` and returns a **sanitized** audit envelope (no raw Neptune error / ARN crosses the URL); unknown mode → client error. |
+| `query_lambda.py` | (slice 3) In-VPC query Lambda handler behind an IAM-auth Function URL; reuses the same `hybrid_query`; PyYAML-free import graph; entity-links with `aliases={}` (mechanical normalizers only — no display-name table in the bundle). (opencypher-templates) additive `mode` dispatch (`hybrid` default \| `governed` \| `text2cypher`); `governed` runs `governed_query`; (text2opencypher-guarded) `text2cypher` runs `text2cypher_query` and returns a **sanitized** audit envelope (no raw Neptune error / ARN crosses the URL); (metadata-filtering) `selfquery` runs `selfquery_query` (OpenSearch + extractor + synthesizer; **builds no Neptune store** — entity validation is pure) and returns the extracted-filter envelope; unknown mode → client error. |
 | `validate.py` | (text2opencypher-guarded) Read-only **static validator** for LLM-authored openCypher — the flexible path's layer 1: rejects any mutating clause / **any `CALL`** / multi-statement / `RETURN`-less / **unbounded variable-length path**, and bounds the `LIMIT`. Conservative (a forbidden keyword even inside a string literal rejects). **Not** the guarantee — the IAM read-only scope (writes) + the Neptune engine query timeout (runaway reads) back it (ADR-0004). Pure-Python, PyYAML-free. |
 | `generate.py` | (text2opencypher-guarded) Text2openCypher **generation** seam — `BedrockText2CypherGenerator` (Converse; schema+question+self-heal feedback ride `messages` as untrusted data, never `system`; default model = `DEFAULT_SYNTHESIS_MODEL_ID` so no widened grant) + offline non-semantic `RuleText2CypherGenerator` (emits within the offline subset). The LLM **writes** the query (contrast with `select.py`). Holds `GRAPH_SCHEMA_DESCRIPTION`. PyYAML-free. |
 | `cypher_eval.py` | (text2opencypher-guarded) The **bounded read-subset evaluator** — runs a model-authored query offline over the `GraphStore` seam (node-by-id / nodes-by-kind / one-hop `REL`), sorted by id; anything outside the subset raises `UnsupportedOfflineQuery`. Explicitly a labeled SUBSET (there is no local Neptune — see `docs/architecture/develop-and-test-offline.md`); live Neptune is the fidelity oracle. Pure-Python, PyYAML-free. |
@@ -40,10 +40,11 @@ for the contract and the module map.
 | `params.py` | (opencypher-templates) Deterministic parameter extraction + validation (the governance boundary): entity slots via `link_question`/`normalize` confirmed against the store, enum/int slots validated; a bad required slot → `ExtractionFailure` (no query runs). |
 | `select.py` | (opencypher-templates) Template **selection** seam — `BedrockTemplateSelector` (Converse, returns one validated template id; an id outside the fixed set → `None`) + offline non-semantic `RuleTemplateSelector`. The LLM selects only; params are extracted deterministically. |
 | `governed.py` | (opencypher-templates) The governed orchestration: `governed_query` (select → extract → `execute_template` → synthesize) + `GovernedResult.render()` audit trace; `execute_template` dispatches the dual form (Neptune `run_template_query` live / `evaluate` offline, sorted-identical). PyYAML-free. |
-| `showcase/` | (slice 3) The consolidated showcase query set (`queries.yaml`) + `load_showcase()` loader (CLI/test-only; uses yaml, never imported by the Lambda). (slice 4) `queries.yaml` also carries `permission_queries` (the two-persona contrast) + `load_permission_showcase()`. (opencypher-templates) also `governed_queries` (template + bound param + gold rows per query) + `load_governed_showcase()`. (text2opencypher-guarded) also `text2cypher_queries` (gold rows + optional `shared_with_template` for the head-to-head) + `load_text2cypher_showcase()`. |
+| `selfquery.py` | (metadata-filtering) The **self-query** path: a FIXED field schema (`FIELDS` — `source` enum + `entity_ids` entity) + `MetadataFilter` (OR-within / AND-across `terms`; `as_filter_clauses` for OpenSearch + `matches` for in-memory) + the deterministic **`validate_filter`** chokepoint (pure — no store: `source` against the enum, `entity_ids` via the pure `link_question`, undeclared/unresolvable dropped+recorded) + extractor seam (`BedrockMetadataExtractor` Converse / offline non-semantic `RuleMetadataExtractor`, both returning a validated `FilterExtraction`) + the `selfquery_query` orchestrator (extract → filtered `vector_search`/`hybrid_query` DURING the ANN scan → synthesize) + `SelfQueryResult.render()`. PyYAML-free. |
+| `showcase/` | (slice 3) The consolidated showcase query set (`queries.yaml`) + `load_showcase()` loader (CLI/test-only; uses yaml, never imported by the Lambda). (slice 4) `queries.yaml` also carries `permission_queries` (the two-persona contrast) + `load_permission_showcase()`. (opencypher-templates) also `governed_queries` (template + bound param + gold rows per query) + `load_governed_showcase()`. (text2opencypher-guarded) also `text2cypher_queries` (gold rows + optional `shared_with_template` for the head-to-head) + `load_text2cypher_showcase()`. (metadata-filtering) also `selfquery_queries` (expected_filter + visible/excluded chunk split, spanning vector+hybrid) + `load_selfquery_showcase()`. |
 | `visibility.py` | (slice 4) **Pure, PyYAML-free** read-side of the synthetic permission filter (a TEACHING stand-in for ACLs, not real authz): the ordered `Visibility` tiers, most-restrictive-wins `compose`, `Clearance`, `PERSONAS`, and `resolve_clearance` (fail-closed — unknown persona raises `ValueError`). Imported by the query path (hybrid/compare/query_lambda) — must stay yaml-free. |
 | `labels.py` | (slice 4) **Ingest-path only** (uses yaml): loads the packaged `labels.yaml` (entity-id→tier) and stamps node/edge (`label_graph`, edge = `compose(src,dst)`) + chunk (`label_chunks`, = `compose(owners)`) visibility during the dual-write. **Never imported by the query Lambda** (a `sys.modules` test guards it). |
-| `cli.py` | `graphrag` CLI: `ingest`, `graph-query`, `resolve-eval`, `vector-ingest`, `vector-query`, `vector-eval`, (slice 3) `hybrid-query` / `compare` (offline default + live SigV4 Function-URL client), (slice 5) `delta` / `rebuild` / `delta-demo` (the before/after freshness demo; `scripts/delta-demo.sh` drives it from real git history), and (opencypher-templates) `governed-query` (the governed Cypher-Templates path; offline default + live `--function-url` mode=governed). |
+| `cli.py` | `graphrag` CLI: `ingest`, `graph-query`, `resolve-eval`, `vector-ingest`, `vector-query`, `vector-eval`, (slice 3) `hybrid-query` / `compare` (offline default + live SigV4 Function-URL client), (slice 5) `delta` / `rebuild` / `delta-demo` (the before/after freshness demo; `scripts/delta-demo.sh` drives it from real git history), and (opencypher-templates) `governed-query` (the governed Cypher-Templates path; offline default + live `--function-url` mode=governed), (text2opencypher-guarded) `text2cypher-query`, and (metadata-filtering) `selfquery-query` (self-query metadata filtering; `--mode vector|hybrid`; offline default + live `--function-url` mode=selfquery). |
 
 ## Dependencies (recorded per AGENTS.md "record new dependencies before adding")
 
@@ -89,11 +90,23 @@ Function URL via an **additive, back-compat `mode` field** (absent ⇒ `hybrid`)
 modules (`templates`, `params`, `select`, `governed`) are **PyYAML-free** and join the
 query-Lambda import-graph guard.
 
+**metadata-filtering (self-query) added no new runtime dependency and no new infra
+resource** — extraction uses the existing `boto3` `bedrock-runtime` **Converse** client
+(defaulting to the synthesis model, so the `bedrock:Converse` grant covers it), the
+structured filter rides the existing `OpenSearchVectorStore.knn` request body as a
+parameterized `terms` clause, and the live path rides the existing query Lambda + IAM-auth
+Function URL via the **additive `mode: selfquery`** value. The only store change is the k-NN
+index **method engine** (`nmslib` → **`lucene` HNSW**, in `store/opensearch.py:_knn_mapping`)
+so the filter applies DURING the ANN scan (RFC-0001 §4) — an app-side mapping change applied
+at `create_index` on a fresh index, not CDK. The self-query path **builds no Neptune store**
+(entity validation is pure controlled-vocab resolution), so it adds no Neptune grant.
+`selfquery.py` is **PyYAML-free** and joins the query-Lambda import-graph guard.
+
 **Pure-Python Lambda / PyYAML-free import graph.** `query_lambda.py` is bundled via
 `Code.from_asset` over the package source (boto3/botocore from the runtime, **no
 pyyaml**). It and its transitive imports (`hybrid`, `synthesize`, `entity_link`,
-`compare`, `embed`, `store/*`, `model`, and (opencypher-templates) `governed`, `templates`,
-`select`, `params`) must never `import yaml` at module load. The
+`compare`, `embed`, `store/*`, `model`, (opencypher-templates) `governed`, `templates`,
+`select`, `params`, and (metadata-filtering) `selfquery`) must never `import yaml` at module load. The
 Lambda entity-links with `aliases={}` (the mechanical `@handle`/slug/KEP normalizers
 resolve without the display-name alias table, which `resolve.load_aliases()` loads via
 yaml); `showcase.load_showcase` also uses yaml and is **CLI/test-only**, never imported
@@ -138,3 +151,15 @@ Adding a runtime dependency beyond these is an "Ask first" rail in the spec.
   error cross the Function URL (the `_serialize_text2cypher` envelope is sanitized). Offline,
   arbitrary openCypher runs against a **labeled bounded subset** (`cypher_eval.py`) — live Neptune
   is the dialect-fidelity oracle (`docs/architecture/develop-and-test-offline.md`).
+- **The self-query filter is LLM-extracted but deterministically bounded, applied DURING the ANN
+  scan, and composes with clearance.** The LLM only produces a filter over the FIXED `source`/
+  `entity_ids` schema; `validate_filter` re-validates every value (enum membership; pure
+  `link_question` resolution) and drops anything undeclared/unresolvable — no free-form model
+  value is ever bound, and the value rides the request-body `terms` clause, never interpolated.
+  The k-NN index method is **Lucene HNSW** (not `nmslib`) so the filter prunes candidates *during*
+  the ANN scan (efficient filtering, RFC-0001 §4 — returns `k` from the qualifying subset, not a
+  post-filter over the top-`k`); the in-memory `MetadataFilter.matches` predicate is
+  backend-identical. The self-query `terms` and the slice-4 visibility `terms` are **independent**
+  clauses on the same `knn` call, so a self-query filter can only narrow, never widen past a
+  persona's clearance — and the fail-closed `None`-vs-empty-`Clearance` semantics survive the merge
+  (a self-query filter is question-derived; the permission filter is the fixed persona clearance).

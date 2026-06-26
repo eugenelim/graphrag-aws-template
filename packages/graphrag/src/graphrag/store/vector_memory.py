@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
 from .vector_base import EmbeddedChunk, VectorHit, VectorStore
+
+if TYPE_CHECKING:
+    from ..selfquery import MetadataFilter
 
 
 def cosine(a: list[float], b: list[float]) -> float:
@@ -25,13 +29,20 @@ class MemoryVectorStore(VectorStore):
         self._items[embedded.chunk.id] = embedded
 
     def knn(
-        self, vector: list[float], k: int, *, allowed_labels: frozenset[str] | None = None
+        self,
+        vector: list[float],
+        k: int,
+        *,
+        allowed_labels: frozenset[str] | None = None,
+        metadata_filter: MetadataFilter | None = None,
     ) -> list[VectorHit]:
         hits = [
             VectorHit(ec.chunk, cosine(vector, ec.vector))
             for ec in self._items.values()
             # slice-4 permission filter: a chunk above clearance is not even a candidate.
-            if allowed_labels is None or ec.chunk.visibility in allowed_labels
+            if (allowed_labels is None or ec.chunk.visibility in allowed_labels)
+            # metadata self-query filter: independent clause (AND), composed during the scan.
+            and (metadata_filter is None or metadata_filter.matches(ec.chunk))
         ]
         hits.sort(key=lambda h: h.score, reverse=True)
         return hits[: max(0, k)]

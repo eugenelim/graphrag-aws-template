@@ -49,6 +49,7 @@ from .generate import BedrockText2CypherGenerator
 from .governed import GovernedResult, governed_query
 from .hybrid import HybridResult, hybrid_query
 from .select import BedrockTemplateSelector
+from .selfquery import BedrockMetadataExtractor, SelfQueryResult, selfquery_query
 from .store.neptune import NeptuneGraphStore
 from .store.opensearch import OpenSearchVectorStore
 from .synthesize import DEFAULT_SYNTHESIS_MODEL_ID, BedrockClaudeSynthesizer
@@ -96,9 +97,10 @@ def _extract_persona(payload: dict[str, Any]) -> str | None:
 
 
 def _extract_mode(payload: dict[str, Any]) -> str:
-    """The optional ``mode`` (``hybrid`` default | ``governed`` | ``text2cypher``) — the
-    additive, back-compat Function-URL field (``governed`` added by opencypher-templates,
-    ``text2cypher`` by text2opencypher-guarded). An absent or non-string mode is ``hybrid``,
+    """The optional ``mode`` (``hybrid`` default | ``governed`` | ``text2cypher`` |
+    ``selfquery``) — the additive, back-compat Function-URL field (``governed`` added by
+    opencypher-templates, ``text2cypher`` by text2opencypher-guarded, ``selfquery`` by
+    metadata-filtering). An absent or non-string mode is ``hybrid``,
     so an existing caller is unaffected."""
     mode = payload.get("mode")
     return mode if isinstance(mode, str) and mode else "hybrid"
@@ -183,18 +185,46 @@ def lambda_handler(event: Any, context: Any) -> dict[str, Any]:
                     len(t2c.attempts),
                 )
             return _serialize_text2cypher(t2c)
-        if mode != "hybrid":
-            return {"error": f"unknown mode {mode!r}", "correlation_id": correlation_id}
 
-        # Slice-4 permission filter (a teaching stand-in for an ACL, never real authz):
-        # resolve the optional persona to a clearance, fail-closed. An unknown persona is a
-        # client error (the persona is user-supplied, not internal) — never a silent
-        # fall-through to unrestricted.
+        # The optional persona (slice-4 permission filter) is resolved fail-closed for the
+        # filtering modes (hybrid + selfquery). An unknown persona is a client error (it is
+        # user-supplied, not internal) — never a silent fall-through to unrestricted.
         persona = _extract_persona(payload)
         try:
             clearance = resolve_clearance(persona) if persona is not None else None
         except ValueError:
             return {"error": "unknown persona", "correlation_id": correlation_id}
+
+        if mode == "selfquery":
+            # The self-query path: Bedrock extracts a structured filter (source/entity_ids) from
+            # the question; the vector search applies it DURING the ANN scan, composed with the
+            # persona clearance. It reuses the same OpenSearch data-access + synthesis-model
+            # Converse grant the hybrid path holds — and builds NO Neptune store (entity
+            # validation is pure controlled-vocab resolution, so the path never touches the graph).
+            vector_store_s = OpenSearchVectorStore(os.environ["OPENSEARCH_ENDPOINT"], region)
+            embedder_s = BedrockTitanEmbedder(region=region)
+            extractor = BedrockMetadataExtractor(model_id=model_id, region=region)
+            synthesizer_s = BedrockClaudeSynthesizer(model_id=model_id, region=region)
+            selfq = selfquery_query(
+                question,
+                extractor=extractor,
+                vector_store=vector_store_s,
+                embedder=embedder_s,
+                synthesizer=synthesizer_s,
+                aliases={},  # PyYAML-free Lambda: mechanical normalizers only (no alias table)
+                mode="vector",
+                clearance=clearance,
+            )
+            logger.info(
+                "query_lambda selfquery ok (correlation_id=%s) filter_fields=%s hits=%d",
+                correlation_id,
+                ",".join(sorted(selfq.extraction.filter.terms)) or "(none)",
+                len(selfq.hits),
+            )
+            return _serialize_selfquery(selfq)
+
+        if mode != "hybrid":
+            return {"error": f"unknown mode {mode!r}", "correlation_id": correlation_id}
 
         graph_store = NeptuneGraphStore(os.environ["NEPTUNE_ENDPOINT"], region)
         vector_store = OpenSearchVectorStore(os.environ["OPENSEARCH_ENDPOINT"], region)
@@ -299,6 +329,22 @@ def _serialize_text2cypher(result: Text2CypherResult) -> dict[str, Any]:
         "citations": list(result.citations),
         "trace": _sanitized_text2cypher_trace(result),
         "refusal_reason": result.refusal_reason,
+    }
+
+
+def _serialize_selfquery(result: SelfQueryResult) -> dict[str, Any]:
+    """Shape the SelfQueryResult into the Function-URL envelope (no internal detail).
+
+    The extracted+validated filter and what the validator dropped are returned (the audit
+    value — exactly which structured filter the model produced and how it was bounded)."""
+    return {
+        "mode": result.mode,
+        "extracted_filter": {k: list(v) for k, v in result.extraction.filter.terms.items()},
+        "dropped": [asdict(d) for d in result.extraction.dropped],
+        "hits": [hit.chunk.id for hit in result.hits],
+        "answer": result.answer,
+        "citations": list(result.citations),
+        "trace": result.render(),
     }
 
 

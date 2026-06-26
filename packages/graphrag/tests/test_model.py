@@ -59,9 +59,7 @@ def test_upsert_node_unions_doc_paths_on_collision() -> None:
     # on collision exactly like sources, so a node contributed by several docs records them all.
     g = Graph()
     g.upsert_node(Node("sig:sig-node", EntityKind.SIG, doc_paths={"community/sigs.yaml"}))
-    g.upsert_node(
-        Node("sig:sig-node", EntityKind.SIG, doc_paths={"enhancements/keps/x/kep.yaml"})
-    )
+    g.upsert_node(Node("sig:sig-node", EntityKind.SIG, doc_paths={"enhancements/keps/x/kep.yaml"}))
     node = g.get_node("sig:sig-node")
     assert node is not None
     assert node.doc_paths == {"community/sigs.yaml", "enhancements/keps/x/kep.yaml"}

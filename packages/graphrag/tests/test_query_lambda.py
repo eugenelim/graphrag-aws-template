@@ -46,7 +46,12 @@ class _FakeVectorStore:
         pass
 
     def knn(
-        self, vector: list[float], k: int, *, allowed_labels: frozenset[str] | None = None
+        self,
+        vector: list[float],
+        k: int,
+        *,
+        allowed_labels: frozenset[str] | None = None,
+        metadata_filter: Any = None,
     ) -> list[VectorHit]:
         chunk = Chunk(
             id="ENHANCEMENTS/keps/2086/README.md#0",
@@ -58,6 +63,8 @@ class _FakeVectorStore:
             visibility="public",
         )
         if allowed_labels is not None and chunk.visibility not in allowed_labels:
+            return []
+        if metadata_filter is not None and not metadata_filter.matches(chunk):
             return []
         return [VectorHit(chunk, 0.5)]
 
@@ -251,6 +258,8 @@ def test_query_lambda_import_graph_is_pyyaml_free() -> None:
             "graphrag.generate",
             "graphrag.validate",
             "graphrag.cypher_eval",
+            # metadata-filtering: the self-query import graph also rides the bundle.
+            "graphrag.selfquery",
         ):
             importlib.import_module(mod)
         # Slice-4: threading `visibility` (pure) must NOT transitively drag in `labels`
@@ -329,6 +338,60 @@ def test_unknown_mode_is_a_client_error(wired: None) -> None:
     result = query_lambda.lambda_handler({"question": "hi", "mode": "frobnicate"}, None)
     assert "error" in result
     assert "unknown mode" in result["error"]
+    assert "answer" not in result  # orchestration did not run
+
+
+# --- metadata-filtering: self-query-mode dispatch through the Lambda (AC7) -------------
+
+
+class _FakeMetadataExtractor:
+    def __init__(self, *a: Any, **k: Any) -> None:
+        pass
+
+    @property
+    def model_id(self) -> str:
+        return "fake-extractor"
+
+    def extract(self, question: str, *, aliases: Any = None) -> Any:
+        from graphrag.selfquery import FilterExtraction, MetadataFilter
+
+        # a filter matching the fake vector store's chunk (entity sig:sig-network).
+        return FilterExtraction(filter=MetadataFilter({"entity_ids": ("sig:sig-network",)}))
+
+
+def test_selfquery_mode_returns_filter_envelope(
+    wired: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(query_lambda, "BedrockMetadataExtractor", _FakeMetadataExtractor)
+    result = query_lambda.lambda_handler(
+        {"question": "what does SIG Network own in enhancements?", "mode": "selfquery"}, None
+    )
+    assert result["mode"] == "vector"
+    assert result["extracted_filter"] == {"entity_ids": ["sig:sig-network"]}
+    assert result["hits"] == ["ENHANCEMENTS/keps/2086/README.md#0"]  # the filter-matching chunk
+    assert result["answer"] == "grounded answer"
+    assert "extracted filter:" in result["trace"]
+
+
+def test_selfquery_mode_builds_no_neptune_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    # AC8: the self-query path never touches the graph — it works with NEPTUNE_ENDPOINT unset,
+    # proving it holds the same grants as hybrid minus any Neptune dependency.
+    monkeypatch.setenv("OPENSEARCH_ENDPOINT", "https://vectors.internal.example")
+    monkeypatch.setenv("AWS_REGION", "us-east-1")
+    monkeypatch.delenv("NEPTUNE_ENDPOINT", raising=False)
+    monkeypatch.setattr(query_lambda, "BedrockTitanEmbedder", _FakeEmbedder)
+    monkeypatch.setattr(query_lambda, "OpenSearchVectorStore", _FakeVectorStore)
+    monkeypatch.setattr(query_lambda, "BedrockMetadataExtractor", _FakeMetadataExtractor)
+    monkeypatch.setattr(query_lambda, "BedrockClaudeSynthesizer", _FakeSynth)
+    result = query_lambda.lambda_handler({"question": "q", "mode": "selfquery"}, None)
+    assert result["hits"] == ["ENHANCEMENTS/keps/2086/README.md#0"]  # ran with no Neptune
+
+
+def test_selfquery_unknown_persona_is_a_client_error(wired: None) -> None:
+    result = query_lambda.lambda_handler(
+        {"question": "hi", "mode": "selfquery", "persona": "root"}, None
+    )
+    assert "error" in result
     assert "answer" not in result  # orchestration did not run
 
 

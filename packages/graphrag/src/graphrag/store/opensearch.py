@@ -25,7 +25,7 @@ import ssl
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from botocore.auth import SigV4Auth
 from botocore.awsrequest import AWSRequest
@@ -33,6 +33,9 @@ from botocore.session import Session
 
 from ..chunk import Chunk
 from .vector_base import EmbeddedChunk, VectorHit, VectorStore
+
+if TYPE_CHECKING:
+    from ..selfquery import MetadataFilter
 
 OPENSEARCH_SERVICE = "es"  # SigV4 signing service AND the IAM es:ESHttp* action prefix
 DEFAULT_INDEX = "graphrag-chunks"
@@ -86,7 +89,12 @@ def _knn_mapping(dimensions: int) -> dict[str, Any]:
                 "vector": {
                     "type": "knn_vector",
                     "dimension": dimensions,
-                    "method": {"name": "hnsw", "space_type": "cosinesimil", "engine": "nmslib"},
+                    # Lucene HNSW (not nmslib): the Lucene engine applies a `filter` DURING
+                    # the ANN scan and returns k from the qualifying subset (efficient
+                    # filtering, RFC-0001 §4) — so the self-query + visibility `terms` filters
+                    # bite during retrieval, not as a post-filter over the top-k. `cosinesimil`
+                    # is Lucene-supported on OpenSearch 2.11 (space unchanged, no re-embed).
+                    "method": {"name": "hnsw", "space_type": "cosinesimil", "engine": "lucene"},
                 },
                 "chunk_id": {"type": "keyword"},
                 "source": {"type": "keyword"},
@@ -172,25 +180,32 @@ class OpenSearchVectorStore(VectorStore):
         )
 
     def knn(
-        self, vector: list[float], k: int, *, allowed_labels: frozenset[str] | None = None
+        self,
+        vector: list[float],
+        k: int,
+        *,
+        allowed_labels: frozenset[str] | None = None,
+        metadata_filter: MetadataFilter | None = None,
     ) -> list[VectorHit]:
         knn_clause: dict[str, Any] = {"knn": {"vector": {"vector": vector, "k": k}}}
-        if allowed_labels is None:
+        # The filter is the union of two INDEPENDENT clauses, both pruning the candidate set
+        # DURING the ANN scan (Lucene engine, RFC-0001 §4 — not a post-filter):
+        #   - slice-4 permission: a `visibility` terms-filter (when a clearance is applied).
+        #     `allowed_labels=None` ⇒ no clause (unrestricted); an EMPTY set ⇒ a terms clause
+        #     matching nothing (the fail-closed permission semantics) — never dropped.
+        #   - self-query: the `source`/`entity_ids` terms-filters (when a filter is extracted).
+        #     `None`/empty ⇒ no clause (unfiltered).
+        # Both ride the request body, never interpolated into a path/query. An empty self-query
+        # filter never drops the visibility clause, so a self-query filter can only narrow.
+        filter_clauses: list[dict[str, Any]] = []
+        if allowed_labels is not None:
+            filter_clauses.append({"terms": {"visibility": sorted(allowed_labels)}})
+        if metadata_filter is not None and not metadata_filter.is_empty:
+            filter_clauses.extend(metadata_filter.as_filter_clauses())
+        if not filter_clauses:
             query: dict[str, Any] = knn_clause
         else:
-            # Slice-4 permission filter: the k-NN clause is the scoring `must`, the
-            # visibility terms-filter prunes the candidate set. The allowed tiers ride the
-            # request body, never interpolated into a path/query. (Recall caveat: on the
-            # nmslib/HNSW engine a `bool` `filter` can behave as a post-filter over the k
-            # ANN candidates, so a persona may get *fewer than k* visible hits — a
-            # retrieval-quality nuance, never a leak, since a restricted chunk is never
-            # returned. Demo-scale corpus; the live-path eval owns recall.)
-            query = {
-                "bool": {
-                    "must": [knn_clause],
-                    "filter": [{"terms": {"visibility": sorted(allowed_labels)}}],
-                }
-            }
+            query = {"bool": {"must": [knn_clause], "filter": filter_clauses}}
         body = {"size": k, "_source": {"excludes": ["vector"]}, "query": query}
         res = self._request("POST", f"/{self.index}/_search", body)
         return [self._hit(h) for h in res.get("hits", {}).get("hits", [])]

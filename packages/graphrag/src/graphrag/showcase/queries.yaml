@@ -281,3 +281,60 @@ text2cypher_queries:
     gold:
       - "subproject:sig-node/cri-api"
     highlight: "Open-ended: HAS_SUBPROJECT is untemplated - coverage of a question no one wrote a template for."
+
+# metadata-filtering (self-query) path. The LLM reads a STRUCTURED FILTER out of the question
+# over the fixed schema (`source` = community|enhancements; `entity_ids` = a resolved graph-node
+# id), and the vector search applies it DURING the ANN scan (Lucene engine). `expected_filter`
+# is the structured filter a correct extractor reads from the question; `mode` is the leg the
+# filter applies in (vector | hybrid's vector leg); `visible`/`excluded` are fixture chunk ids
+# the filter should keep / prune. A loader/test asserts every named entity + chunk id resolves
+# in the fixture corpus. (Contrast with permission_queries: that filter is the FIXED persona
+# clearance; this one is QUESTION-derived.)
+selfquery_queries:
+  - id: sq-enhancements-sig-network-vector
+    query: "in the enhancements repo, which KEPs are owned by SIG Network?"
+    mode: vector
+    expected_filter:
+      source: ["enhancements"]
+      entity_ids: ["sig:sig-network"]
+    visible:
+      - "enhancements/keps/sig-network/1880-multiple-service-cidrs/README.md#0"
+      - "enhancements/keps/sig-network/2086-service-internal-traffic-policy/README.md#0"
+    excluded:
+      - "community/sig-network/README.md#0"
+    highlight: "source=enhancements AND entity=SIG Network: the self-query filter narrows the k-NN candidates to SIG Network's KEP docs in the enhancements repo, dropping its community charter DURING the ANN scan."
+  - id: sq-community-sig-node-vector
+    query: "what does the SIG Node community charter cover?"
+    mode: vector
+    expected_filter:
+      source: ["community"]
+      entity_ids: ["sig:sig-node"]
+    visible:
+      - "community/sig-node/README.md#0"
+    excluded:
+      - "enhancements/keps/sig-node/0009-legacy-node-allocatable/README.md#0"
+      - "enhancements/keps/sig-node/1287-in-place-update-pod-resources/README.md#0"
+    highlight: "source=community flips the repo filter: the same SIG Node entity now scopes to the charter chunk, excluding its enhancements KEPs — the cross-source filter the question carries."
+  - id: sq-enhancements-sig-node-hybrid
+    query: "in the enhancements repo, what does SIG Node own?"
+    mode: hybrid
+    expected_filter:
+      source: ["enhancements"]
+      entity_ids: ["sig:sig-node"]
+    visible:
+      - "enhancements/keps/sig-node/0009-legacy-node-allocatable/README.md#0"
+      - "enhancements/keps/sig-node/1287-in-place-update-pod-resources/README.md#0"
+    excluded:
+      - "community/sig-node/README.md#0"
+    highlight: "hybrid mode: the self-query filter is threaded into the vector LEG, so the seed-and-expand path seeds only from SIG Node's enhancements chunks — the graph traversal is unchanged."
+  - id: sq-enhancements-only-hybrid
+    query: "across the enhancements repo, summarize the in-place pod resize work"
+    mode: hybrid
+    expected_filter:
+      source: ["enhancements"]
+    visible:
+      - "enhancements/keps/sig-node/1287-in-place-update-pod-resources/README.md#0"
+    excluded:
+      - "community/sig-node/README.md#0"
+      - "community/sig-network/README.md#0"
+    highlight: "a source-only self-query filter (no entity): hybrid's vector leg scans only enhancements chunks, so no community charter can seed the expansion."
