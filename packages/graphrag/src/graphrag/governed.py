@@ -43,7 +43,8 @@ def execute_template(
     Read-only is enforced **at the seam**, not only by the library's CI lint: a template that
     is not read-only is refused before any query runs, so the governance property holds even
     for a template that escaped test coverage (the trade-off that lets this path skip the
-    read-replica enforcement the text2cypher path needs — see the governed-vs-risky doc).
+    run-time read-only guard the text2cypher path needs — IAM read-only data-action scoping
+    per ADR-0004; see the governed-vs-risky doc).
     """
     if not template.is_read_only():
         raise ValueError(f"refusing to execute non-read-only template {template.id!r}")

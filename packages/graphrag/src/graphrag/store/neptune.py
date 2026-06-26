@@ -281,6 +281,27 @@ class NeptuneGraphStore(GraphStore):
                 f"template result row missing expected 'n' alias (key {exc})"
             ) from exc
 
+    def run_read_query(self, cypher: str) -> list[Node]:
+        """Run a validated, model-authored **read** query (text2opencypher) and decode its
+        ``RETURN n`` rows to nodes — the live half of the *flexible* (risky) path.
+
+        Unlike ``run_template_query``, the query *text* is model-authored: its values are
+        literals the model wrote, not a parameter map, so there is nothing to bind. Safety
+        rests on the read-only validator (``validate.py``) that gates this call **and** the
+        IAM read-only data-action scope + the Neptune engine query timeout (ADR-0004) — never
+        on parameterization. The query runs through the same ``_run`` path as every other
+        method (TLS, SigV4); a row missing the ``n`` alias is a diagnosable ``RuntimeError``,
+        not a bare ``KeyError`` (so it surfaces as a clean self-heal/refusal, not an opaque
+        envelope)."""
+        res = self._run(cypher, {})
+        rows = res.get("results", [])
+        try:
+            return [_node_from_result(row["n"]) for row in rows]
+        except KeyError as exc:
+            raise RuntimeError(
+                f"text2cypher result row missing expected 'n' alias (key {exc})"
+            ) from exc
+
     def all_nodes(self) -> list[Node]:
         res = self._run(f"MATCH (n:{_NODE_LABEL}) RETURN n", {})
         return [_node_from_result(row["n"]) for row in res.get("results", [])]

@@ -8,6 +8,8 @@
 | ---- | --------------------------------------------------------------------- | -------- |
 | [0001](0001-hybrid-orchestration-seed-and-expand.md) | Hybrid retrieval is one *seed-and-expand* orchestration, not single-direction or parallel-merge | Accepted |
 | [0002](0002-ephemeral-vpc-store-topology.md) | The demo stack is an ephemeral, teardown-first VPC topology | Accepted |
+| [0003](0003-iac-tool-aws-cdk-python.md) | Infrastructure-as-code tool is AWS CDK (Python) | Accepted |
+| [0004](0004-text2cypher-read-only-guard.md) | Read-only guard for LLM-authored openCypher: IAM data-action scoping over a read-replica endpoint | Accepted |
 
 ## Adding a new ADR
 

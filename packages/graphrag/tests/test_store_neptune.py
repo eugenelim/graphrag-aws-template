@@ -134,6 +134,31 @@ def test_node_missing_doc_paths_decodes_to_empty_set() -> None:
     assert node is not None and node.doc_paths == set()
 
 
+def test_run_read_query_decodes_n_rows() -> None:
+    # AC6 — the live half of the text2cypher path: a model-authored read query's RETURN n rows
+    # decode to nodes through the same _run path, sorted by the caller (orchestrator).
+    response = {
+        "results": [
+            {"n": {"~properties": {"id": "kep-1880", "kind": "KEP"}}},
+            {"n": {"~properties": {"id": "kep-2086", "kind": "KEP"}}},
+        ]
+    }
+    http = RecordingHttp([HttpResponse(200, json.dumps(response))])
+    rows = _store(http).run_read_query(
+        "MATCH (a:Entity {id: 'sig:sig-network'})-[r:REL {kind: 'OWNS'}]->(n:Entity) RETURN n"
+    )
+    assert [node.id for node in rows] == ["kep-1880", "kep-2086"]
+
+
+def test_run_read_query_missing_n_alias_raises_diagnosable_error() -> None:
+    # A row without the `n` alias must raise a clear RuntimeError (so it surfaces as a clean
+    # self-heal/refusal), not a bare KeyError that becomes an opaque sanitized envelope.
+    response = {"results": [{"m": {"~properties": {"id": "x", "kind": "SIG"}}}]}
+    http = RecordingHttp([HttpResponse(200, json.dumps(response))])
+    with pytest.raises(RuntimeError, match="'n' alias"):
+        _store(http).run_read_query("MATCH (m:Entity) RETURN m LIMIT 5")
+
+
 def test_all_edges_round_trips_doc_paths() -> None:
     response = {
         "results": [
