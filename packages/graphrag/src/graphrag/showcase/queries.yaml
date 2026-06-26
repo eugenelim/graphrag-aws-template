@@ -364,3 +364,37 @@ parentchild_queries:
     expected_parent: "community/sig-node/README.md"
     contrast: "flat vector mode returns just the matched 'Scope' chunk; parent-child returns the whole SIG Node charter so synthesis sees the charter intro and scope together."
     highlight: "a community-charter parent: the precise Scope child match returns the full charter body for synthesis."
+
+# --- global-community-summary: corpus-wide map-reduce over community summaries (AC9) ----
+# Each query is CORPUS-WIDE — there is no single seed entity for the seed-and-expand hybrid to
+# expand from; the answer is the shape of the whole corpus. expected_entities name entities that
+# appear in the contributing communities (all resolve in the fixture corpus AFTER detection).
+# On the fixture corpus Louvain finds three communities: a SIG-Node cluster (restricted), a
+# SIG-Network cluster (internal), and a service-traffic cluster (public).
+global_queries:
+  - id: gl-areas-of-work
+    query: "What are the major areas of work across all the Kubernetes SIGs, and how do they relate?"
+    expected_entities:
+      - "sig:sig-node"
+      - "sig:sig-network"
+      - "kep-2086"
+    theme: "the corpus splits into a SIG-Node cluster, a SIG-Network cluster, and a service-traffic cluster — three areas of work, each its own community."
+    highlight: "no seed entity to expand from — the answer is the corpus-wide community structure, map-reduced over the per-community summaries."
+  - id: gl-key-people
+    query: "Who are the key people across the project and what areas do they work on?"
+    expected_entities:
+      - "person:thockin"
+      - "person:dchen1107"
+      - "person:aojea"
+    theme: "leadership spans the three communities — SIG-Node, SIG-Network, and the service-traffic area each surface their own people."
+    highlight: "a corpus-wide 'who works on what' that no single graph hop answers — synthesized across every community summary in clearance."
+  - id: gl-kep-breadth
+    query: "Summarize the breadth of KEPs in the corpus and the SIGs that own them."
+    expected_entities:
+      - "kep-1287"
+      - "kep-1880"
+      - "kep-2086"
+      - "sig:sig-node"
+      - "sig:sig-network"
+    theme: "each SIG owns a cluster of KEPs — node-lifecycle KEPs under SIG-Node, networking KEPs under SIG-Network — surfaced as distinct community summaries."
+    highlight: "breadth across the whole KEP corpus, reduced from the community summaries rather than a single retrieval."
