@@ -4,10 +4,11 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install the graphrag library (runtime deps: pyyaml + boto3).
+# Install the graphrag library + the ingest extra (runtime deps: pyyaml + boto3; ingest
+# adds networkx for in-task Louvain community detection — ADR-0005, never the query Lambda).
 COPY pyproject.toml ./
 COPY packages/ ./packages/
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir ".[ingest]"
 
 COPY apps/ingestion/ ./apps/ingestion/
 

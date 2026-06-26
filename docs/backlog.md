@@ -185,3 +185,31 @@ singly-sourced (README sets it only for legacy KEPs without a `kep.yaml`).
 - **AC<N> (deferred: <anchor>):** <what's open> — blocked on <X>; unblocked by <Y>.
 
 -->
+
+## global-community-summary
+
+- **share-signed-opencypher-run-helper (hardening, not an AC):** `NeptuneCommunityStore._run`
+  (`store/community_neptune.py`) is a verbatim copy of `NeptuneGraphStore._run` (TLS-enforce +
+  SigV4 + parameter map), mirroring the parent-child adapter's accepted thin-`_request`
+  re-implementation. Correct today, but a future hardening to the canonical signer (a timeout
+  change, a header tweak, a credential fix) would not propagate — the established-helper-drift
+  class flagged by the global-community-summary security review. Unblocked by extracting a shared
+  module-level `_signed_opencypher(endpoint, region, session, http, verify, query, params)` in
+  `store/neptune.py` and having both Neptune stores call it (cross-cutting — touches the shipped
+  `neptune.py` and its tests).
+- **global-community-summary-delta-tier-refresh (security residual, not an AC):**
+  communities are detected + summarized + tier-tagged on **full ingest / `--rebuild` only**;
+  `MODE=delta` does not recompute them. A delta that *raises* a member entity's visibility
+  (`public` → `restricted`) leaves the persisted `Community.tier` stale-low and the summary
+  already generated over the then-lower-tier member — a down-classification leak the
+  query-time clearance gate cannot catch (flagged by the spec-stage security review). Today
+  the demo mitigates by **requiring a full re-ingest after any visibility-label change** (the
+  spec Never-do + the explanation doc state this), consistent with the project's posture that
+  synthetic visibility labels are a teaching stand-in, not real authz (charter principle 5).
+  Unblocked by either (a) recomputing communities on delta when any member visibility
+  changed, or (b) the fail-closed alternative — having `MODE=delta` **clear** `Community`
+  nodes so global search returns "communities unavailable until next full ingest" rather than
+  serving stale-tier summaries. A delta-refresh implementer must handle **both directions**:
+  the stale-**low** case above (a leak), and the symmetric stale-**high** case (a member
+  visibility *lowered* `restricted` → `public` leaves `Community.tier` over-restrictive — an
+  availability/correctness bug, not a leak; same full-re-ingest mitigation today).

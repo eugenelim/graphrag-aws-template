@@ -10,6 +10,7 @@
 | [0002](0002-ephemeral-vpc-store-topology.md) | The demo stack is an ephemeral, teardown-first VPC topology | Accepted |
 | [0003](0003-iac-tool-aws-cdk-python.md) | Infrastructure-as-code tool is AWS CDK (Python) | Accepted |
 | [0004](0004-text2cypher-read-only-guard.md) | Read-only guard for LLM-authored openCypher: IAM data-action scoping over a read-replica endpoint | Accepted |
+| [0005](0005-community-detection-in-fargate-louvain.md) | Community detection runs in the Fargate ingest task (Louvain via networkx), not a standing Neptune Analytics service | Accepted |
 
 ## Adding a new ADR
 

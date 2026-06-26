@@ -502,3 +502,63 @@ Lambda dispatch (mocked) — over the fixture corpus.
 > --function-url` still requires `--community/--enhancements` (unused on the live path) because they
 > ride the shared corpus-arg group — consistent with the sibling `selfquery-query`/`vector-query`
 > verbs; pass any path.
+
+## global-community-summary — live global smoke (AC10)
+
+The global-community-summary slice adds **one scoped IAM grant** (`bedrock:Converse` on the
+ingestion task role, so the Fargate task can generate per-community summaries) and **no new
+billable resource** — community detection runs **in the existing on-demand Fargate ingest task**
+(Louvain via networkx, ADR-0005), **not** a standing Neptune Analytics service, and writes
+`Community` nodes to the **existing** Neptune cluster; the corpus-wide `mode: global` query rides
+the existing query Lambda + IAM-auth Function URL (additive, back-compat). The offline build proves
+the machinery — detection (seeded Louvain), summarization (the `Synthesizer` seam), the
+backend-identical community store (mock HTTP + in-memory), the map-reduce orchestration (clearance
+gate before the map, `NOT RELEVANT` stripped-equality sentinel, citations composed in
+`global_query`), the ingest write-back, and the global Lambda dispatch (mocked) — over the fixture
+corpus.
+
+| Check | Status |
+| --- | --- |
+| Live deploy | **PASS (2026-06-26)** — `GraphragSlice1` `CREATE_COMPLETE` in **~18 min** (`us-east-1`; Neptune + OpenSearch the long poles). |
+| Community detection **in-task** (no standing service) | **PASS (2026-06-26)** — the Fargate `MODE=full` task logged `community write-back: 3 communities (Louvain, in-task)` alongside the dual-write (graph **22 nodes / 28 edges / 6 cross-source merges**, vector **13 chunks**, parent-child **6 parents**). Louvain ran **in the ingest task**; **no Neptune Analytics graph** was provisioned. Bedrock Converse generated the per-community summaries from the ingest task role's new scoped grant. |
+| Live global map-reduce query (AC10) | **PASS (2026-06-26)** — a SigV4 `mode: global` POST map-reduced over the live community summaries into a real corpus-wide answer (SIG-Node + SIG-Network areas of work, related and cited by community), with an honest "context covers only these SIGs" limitation. Trace below. |
+| Clearance gate composes live (whole-community, fail-closed) | **PASS (2026-06-26)** — the same question **unrestricted** considered **3 communities** (`community-0` restricted / `community-1` internal / `community-2` public); under **`public-reader`** it considered **1** (`community-2` public only) — a **strict subset**, the restricted/internal communities (KEP-1287 / KEP-1880) absent from the trace, map verdicts, answer, and citations. |
+| Teardown | **PASS (2026-06-26)** — `scripts/destroy.sh`; no billable resource remains. |
+
+> **Status: PASS (2026-06-26).** Deployed `GraphragSlice1` (`us-east-1`), uploaded the fixture
+> corpus, ran the Fargate `MODE=full` ingest task — which detected communities **in-task** (Louvain)
+> and wrote `Community` nodes with **live Bedrock summaries** to the existing Neptune cluster — then
+> drove the **global path live** via `graphrag global-query --function-url …` (`mode: global`):
+>
+> ```text
+> "Summarize the breadth of KEPs and the SIGs that own them."     (no persona / unrestricted)
+>     communities considered (3):
+>       community-0 [restricted] size=9 — In-place Update of Pod Resources +8 more
+>       community-1 [internal]   size=9 — Multiple Service CIDRs +8 more
+>       community-2 [public]     size=4 — Service Internal Traffic Policy +3 more
+>     map → all three contribute; reduce → a corpus-wide answer naming KEP-1287/1880/2086/9
+>       across SIG-Node and SIG-Network, cited by community
+> "Summarize the breadth of KEPs and the SIGs that own them."     persona=public-reader  (allows [public])
+>     communities considered (1):
+>       community-2 [public] size=4   — the restricted + internal communities are ABSENT
+>     answer mentions only KEP-2086 / KEP-9 (the public community) — KEP-1287/1880 never surface
+> ```
+>
+> This is the Global Community Summary path proven **live** end to end: **Louvain ran in the
+> transient Fargate ingest task** (the log line `community write-back: 3 communities (Louvain,
+> in-task)`) and wrote `Community` nodes with Bedrock-generated summaries to the **existing** cluster
+> — **no standing Neptune Analytics service** was stood up (ADR-0005). The corpus-wide `mode: global`
+> map-reduce then answered a question the seed-and-expand hybrid structurally cannot (no seed). The
+> unrestricted-vs-`public-reader` divergence on the *same* question — **3 communities considered vs
+> 1** — is the live proof that a corpus-wide summary is gated **whole** by its composed
+> (most-restrictive) member tier, fail-closed: a community blending a restricted/internal entity is
+> omitted entirely for a lower-clearance persona, never partially leaked. Then `scripts/destroy.sh`
+> (teardown-first); no billable resource remains. Satisfies AC10.
+>
+> **No code bug surfaced** (offline + mocked + synth already covered the path); the live run was clean
+> on the first deploy. **Two environment-setup gotchas (not code defects):** this Conductor workspace
+> had **no `.venv`** (the deploy/destroy scripts' default `CDK_APP` python path) and **no `docker
+> buildx`** — worked around by overriding `CDK_APP="python3 …/app.py"` with `PYTHONPATH` set to the
+> source tree, and building the X86_64 task image with the **legacy builder** (`DOCKER_BUILDKIT=0
+> docker build --platform linux/amd64`) instead of buildx. The zsh `:l`-modifier image-tag gotcha
+> (K-0027) recurs — use `"${REPO_URI}:latest"` (braces), not `"$REPO_URI:latest"`.

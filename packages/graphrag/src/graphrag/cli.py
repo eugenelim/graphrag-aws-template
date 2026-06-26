@@ -28,6 +28,7 @@ from .generate import (
     RuleText2CypherGenerator,
     Text2CypherGenerator,
 )
+from .globalsearch import global_query
 from .governed import governed_query
 from .hybrid import hybrid_query
 from .ingest import ingest, ingest_delta, rebuild
@@ -193,9 +194,9 @@ def _function_url_query(
     permission-filtered server-side by the same clearance the offline path applies.
 
     ``mode`` selects the server path (``hybrid`` default | ``governed`` | ``text2cypher`` |
-    ``selfquery`` | ``parentchild``); it rides the body only when non-default, so a hybrid call's
-    wire form is byte-unchanged (the additive, back-compat Function-URL extension the catalog
-    slices ship)."""
+    ``selfquery`` | ``parentchild`` | ``global``); it rides the body only when non-default, so a
+    hybrid call's wire form is byte-unchanged (the additive, back-compat Function-URL extension
+    the catalog slices ship)."""
     from botocore.auth import SigV4Auth
     from botocore.awsrequest import AWSRequest
     from botocore.session import Session
@@ -572,6 +573,85 @@ def _cmd_parentchild_query(args: argparse.Namespace) -> int:
     return 0
 
 
+def _offline_community_store(args: argparse.Namespace, synthesizer: Synthesizer) -> Any:
+    """Build an in-memory community store offline: ingest the corpus into a graph (labeled,
+    so ``--persona`` can filter), detect communities (Louvain), summarize each, and stamp
+    ``communityId`` — the offline twin of the Fargate community write-back (ADR-0005)."""
+    from .community_detect import detect_communities, summarize_communities  # lazy: networkx
+    from .store.community_memory import MemoryCommunityStore
+
+    graph = MemoryGraphStore()
+    ingest(Path(args.community), Path(args.enhancements), graph)  # labels nodes (slice-4)
+    nodes, edges = graph.all_nodes(), graph.all_edges()
+    communities = summarize_communities(detect_communities(nodes, edges), nodes, edges, synthesizer)
+    store = MemoryCommunityStore()
+    for community in communities:
+        store.upsert_community(community)
+        for entity_id in community.entity_ids:
+            store.set_community_id(entity_id, community.id)
+    return store
+
+
+def _cmd_global_query(args: argparse.Namespace) -> int:
+    """The Global Community Summary path: answer a corpus-wide question by map-reducing over
+    per-community summaries (MS GraphRAG global), with the clearance-gated trace."""
+    if getattr(args, "function_url", None):
+        # Live: thin SigV4 Function-URL client, mode=global (persona rides the body).
+        clearance = _clearance(args)
+        result = _function_url_query(
+            args.function_url, args.q, args.region, getattr(args, "persona", None), mode="global"
+        )
+        print("== global-query (live function-url) ==")
+        _print_persona(clearance)
+        print("trace:")
+        print(result.get("trace", "(none)"))
+        print("citations:")
+        for cite in result.get("citations", []) or []:
+            print(f"  - {cite}")
+        print("answer:")
+        print(f"  {result.get('answer', '')}")
+        return 0
+
+    # Offline: in-memory community store built by detecting + summarizing the fixture corpus.
+    synthesizer = _synthesizer(args)
+    store = _offline_community_store(args, synthesizer)
+    clearance = _clearance(args)
+    result_g = global_query(
+        args.q,
+        community_store=store,
+        synthesizer=synthesizer,
+        clearance=clearance,
+        top_n=args.top_n,
+    )
+    print("== global-query (offline) ==")
+    print(
+        f"synthesizer: {synthesizer.model_id}\n"
+        "(offline synthesizer is NON-SEMANTIC — structural demo only; semantic quality is the "
+        "live path). Communities: Louvain (networkx, seeded) — in-task, not Neptune Analytics."
+    )
+    _print_persona(clearance)
+    print(result_g.render())
+    return 0
+
+
+def _cmd_detect_communities(args: argparse.Namespace) -> int:
+    """Print the detected community partition + per-community summaries offline (the ingest-side
+    view of the Global Community Summary slice)."""
+    synthesizer = _synthesizer(args)
+    store = _offline_community_store(args, synthesizer)
+    print("== detect-communities (offline) ==")
+    print(
+        "algorithm: Louvain (networkx, seeded) — computed in-task, NOT a standing Neptune "
+        "Analytics service (ADR-0005); algorithm is Louvain, not Leiden (charter honesty note)."
+    )
+    print(f"synthesizer: {synthesizer.model_id} (NON-SEMANTIC offline)")
+    for community in store.all_communities():
+        print(f"  {community.id} [{community.tier}] size={community.size} — {community.title}")
+        print(f"    members: {', '.join(community.entity_ids)}")
+        print(f"    summary: {community.summary}")
+    return 0
+
+
 def _cmd_text2cypher_query(args: argparse.Namespace) -> int:
     """The flexible text2openCypher path: the LLM WRITES the openCypher, executed read-only with
     validation + bounded self-heal, printing the full audit trace (the risky half of the
@@ -939,6 +1019,36 @@ def build_parser() -> argparse.ArgumentParser:
         help="live: SigV4-signed POST (mode=parentchild) to the in-VPC query Lambda's Function URL",
     )
     p_parentchild.set_defaults(func=_cmd_parentchild_query)
+
+    p_global = sub.add_parser(
+        "global-query",
+        help="Global Community Summary (MS GraphRAG global): answer a corpus-wide question by "
+        "map-reducing over per-community summaries, with a clearance-gated trace",
+    )
+    add_hybrid_args(p_global)  # community/enhancements/endpoints/region/q/k/bedrock/persona
+    p_global.add_argument(
+        "--top-n",
+        type=int,
+        default=16,
+        help="max communities to map over (largest first); bounds the map fan-out",
+    )
+    p_global.add_argument(
+        "--function-url",
+        help="live: SigV4-signed POST (mode=global) to the in-VPC query Lambda's Function URL",
+    )
+    p_global.set_defaults(func=_cmd_global_query)
+
+    p_detect = sub.add_parser(
+        "detect-communities",
+        help="print the detected community partition + per-community summaries (offline; "
+        "Louvain in-task, not Neptune Analytics — ADR-0005)",
+    )
+    add_vector_corpus_args(p_detect)  # community/enhancements/opensearch-endpoint/region/bedrock
+    p_detect.add_argument(
+        "--synthesis-model-id",
+        help="override the Bedrock Claude synthesis model id (with --bedrock)",
+    )
+    p_detect.set_defaults(func=_cmd_detect_communities)
 
     p_text2cypher = sub.add_parser(
         "text2cypher-query",

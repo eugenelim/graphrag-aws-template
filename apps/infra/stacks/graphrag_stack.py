@@ -184,6 +184,11 @@ class GraphragStack(Stack):
         for role in (task_role, vector_probe_role):
             role.add_to_policy(self._bedrock_invoke())
             role.add_to_policy(self._opensearch_data_access())
+        # The ingestion task additionally generates per-community summaries via Bedrock Converse
+        # (global-community-summary slice, ADR-0005): community detection runs in this Fargate
+        # task, not a standing Neptune Analytics service. Scoped to the synthesis model (the same
+        # `_bedrock_synthesis_invoke` grant the query Lambda holds), no wildcard Resource.
+        task_role.add_to_policy(self._bedrock_synthesis_invoke())
 
         self._ingestion_task(vpc, bucket, cluster, neptune_sg, task_role, domain, opensearch_sg)
         self._smoke_lambda(vpc, cluster, neptune_sg)
