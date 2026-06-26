@@ -260,6 +260,9 @@ def test_query_lambda_import_graph_is_pyyaml_free() -> None:
             "graphrag.cypher_eval",
             # metadata-filtering: the self-query import graph also rides the bundle.
             "graphrag.selfquery",
+            # parent-child-retrieval: the parent-child import graph also rides the bundle.
+            "graphrag.parentchild",
+            "graphrag.store.parentchild_opensearch",
         ):
             importlib.import_module(mod)
         # Slice-4: threading `visibility` (pure) must NOT transitively drag in `labels`
@@ -390,6 +393,74 @@ def test_selfquery_mode_builds_no_neptune_store(monkeypatch: pytest.MonkeyPatch)
 def test_selfquery_unknown_persona_is_a_client_error(wired: None) -> None:
     result = query_lambda.lambda_handler(
         {"question": "hi", "mode": "selfquery", "persona": "root"}, None
+    )
+    assert "error" in result
+    assert "answer" not in result  # orchestration did not run
+
+
+# --- parent-child-retrieval: parentchild-mode dispatch through the Lambda (AC6) --------
+
+
+class _FakeParentChildStore:
+    def __init__(self, *a: Any, **k: Any) -> None:
+        pass
+
+    def search(self, vector: list[float], k: int, *, allowed_labels: Any = None) -> Any:
+        from graphrag.store.parentchild_base import ChildVector, ParentDoc, ParentHit
+
+        parent = ParentDoc(
+            parent_id="enhancements/keps/2086/README.md",
+            source="enhancements",
+            doc_path="keps/2086/README.md",
+            heading="Summary",
+            entity_ids=("kep-2086", "sig:sig-network"),
+            visibility="public",
+            body="FULL PARENT BODY about service internal traffic policy.",
+            children=(ChildVector("enhancements/keps/2086/README.md#1", "Design", "frag", vector),),
+        )
+        if allowed_labels is not None and parent.visibility not in allowed_labels:
+            return []
+        return [ParentHit(parent=parent, score=0.5, matched_child=parent.children[0])]
+
+
+def test_parentchild_mode_returns_parent_envelope(
+    wired: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(query_lambda, "OpenSearchParentChildStore", _FakeParentChildStore)
+    result = query_lambda.lambda_handler(
+        {"question": "what does the 2086 KEP say?", "mode": "parentchild"}, None
+    )
+    assert result["hits"] == ["enhancements/keps/2086/README.md"]  # the PARENT, returned
+    assert result["matched_children"] == ["enhancements/keps/2086/README.md#1"]  # precise child
+    assert result["answer"] == "grounded answer"
+    assert "returned parents" in result["trace"]
+
+
+def test_parentchild_mode_builds_no_neptune_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    # AC6/AC7: parent-child is vector-only — it works with NEPTUNE_ENDPOINT unset, proving it
+    # holds the same grants as hybrid minus any Neptune dependency.
+    monkeypatch.setenv("OPENSEARCH_ENDPOINT", "https://vectors.internal.example")
+    monkeypatch.setenv("AWS_REGION", "us-east-1")
+    monkeypatch.delenv("NEPTUNE_ENDPOINT", raising=False)
+    monkeypatch.setattr(query_lambda, "BedrockTitanEmbedder", _FakeEmbedder)
+    monkeypatch.setattr(query_lambda, "OpenSearchParentChildStore", _FakeParentChildStore)
+    monkeypatch.setattr(query_lambda, "BedrockClaudeSynthesizer", _FakeSynth)
+    result = query_lambda.lambda_handler({"question": "q", "mode": "parentchild"}, None)
+    assert result["hits"] == ["enhancements/keps/2086/README.md"]  # ran with no Neptune
+
+
+def test_parentchild_mode_persona_filters(wired: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(query_lambda, "OpenSearchParentChildStore", _FakeParentChildStore)
+    # public-reader clearance allows public; the public parent is returned.
+    result = query_lambda.lambda_handler(
+        {"question": "q", "mode": "parentchild", "persona": "public-reader"}, None
+    )
+    assert result["hits"] == ["enhancements/keps/2086/README.md"]
+
+
+def test_parentchild_unknown_persona_is_a_client_error(wired: None) -> None:
+    result = query_lambda.lambda_handler(
+        {"question": "hi", "mode": "parentchild", "persona": "root"}, None
     )
     assert "error" in result
     assert "answer" not in result  # orchestration did not run
