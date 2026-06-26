@@ -168,6 +168,16 @@ singly-sourced (README sets it only for legacy KEPs without a `kep.yaml`).
      2026-06-25 and the deferral closed — no open items. See
      docs/architecture/deployment-and-verification.md. -->
 
+## parent-child-retrieval
+
+- **bound-knn-k-at-vector-adapters (hardening, not an AC):** the `VectorStore.knn` and
+  `ParentChildStore.search` adapters take `k` from the caller and don't clamp it. Not
+  exploitable today — the public Function-URL path pins `k=DEFAULT_K=5` and the CLI `k` is
+  operator-side — so this is defence-in-depth (OWASP API4:2023 Unrestricted Resource
+  Consumption) flagged by the parent-child security review. Unblocked by clamping `k` to a
+  sane ceiling **at both vector adapters together** (a cross-cutting one-liner; doing it on
+  only the new parent-child adapter would leave the sibling flat adapter inconsistent).
+
 <!-- Add one section per spec with open work, e.g.:
 
 ## <spec-name>

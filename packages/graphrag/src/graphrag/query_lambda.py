@@ -48,10 +48,12 @@ from .embed import BedrockTitanEmbedder
 from .generate import BedrockText2CypherGenerator
 from .governed import GovernedResult, governed_query
 from .hybrid import HybridResult, hybrid_query
+from .parentchild import ParentChildResult, parentchild_query
 from .select import BedrockTemplateSelector
 from .selfquery import BedrockMetadataExtractor, SelfQueryResult, selfquery_query
 from .store.neptune import NeptuneGraphStore
 from .store.opensearch import OpenSearchVectorStore
+from .store.parentchild_opensearch import OpenSearchParentChildStore
 from .synthesize import DEFAULT_SYNTHESIS_MODEL_ID, BedrockClaudeSynthesizer
 from .text2cypher import Text2CypherResult, text2cypher_query
 from .visibility import resolve_clearance
@@ -98,10 +100,10 @@ def _extract_persona(payload: dict[str, Any]) -> str | None:
 
 def _extract_mode(payload: dict[str, Any]) -> str:
     """The optional ``mode`` (``hybrid`` default | ``governed`` | ``text2cypher`` |
-    ``selfquery``) — the additive, back-compat Function-URL field (``governed`` added by
-    opencypher-templates, ``text2cypher`` by text2opencypher-guarded, ``selfquery`` by
-    metadata-filtering). An absent or non-string mode is ``hybrid``,
-    so an existing caller is unaffected."""
+    ``selfquery`` | ``parentchild``) — the additive, back-compat Function-URL field (``governed``
+    added by opencypher-templates, ``text2cypher`` by text2opencypher-guarded, ``selfquery`` by
+    metadata-filtering, ``parentchild`` by parent-child-retrieval). An absent or non-string mode
+    is ``hybrid``, so an existing caller is unaffected."""
     mode = payload.get("mode")
     return mode if isinstance(mode, str) and mode else "hybrid"
 
@@ -223,6 +225,28 @@ def lambda_handler(event: Any, context: Any) -> dict[str, Any]:
             )
             return _serialize_selfquery(selfq)
 
+        if mode == "parentchild":
+            # The Parent-Child Retriever path: a small child chunk's vector is matched (precise)
+            # on the nested index, the larger parent document BODY is returned for
+            # context-complete synthesis, composed with the persona clearance. Vector-only — it
+            # builds NO Neptune store (the same posture + grants as the self-query branch above).
+            parent_store = OpenSearchParentChildStore(os.environ["OPENSEARCH_ENDPOINT"], region)
+            embedder_pc = BedrockTitanEmbedder(region=region)
+            synthesizer_pc = BedrockClaudeSynthesizer(model_id=model_id, region=region)
+            pchild = parentchild_query(
+                question,
+                store=parent_store,
+                embedder=embedder_pc,
+                synthesizer=synthesizer_pc,
+                clearance=clearance,
+            )
+            logger.info(
+                "query_lambda parentchild ok (correlation_id=%s) hits=%d",
+                correlation_id,
+                len(pchild.hits),
+            )
+            return _serialize_parentchild(pchild)
+
         if mode != "hybrid":
             return {"error": f"unknown mode {mode!r}", "correlation_id": correlation_id}
 
@@ -342,6 +366,24 @@ def _serialize_selfquery(result: SelfQueryResult) -> dict[str, Any]:
         "extracted_filter": {k: list(v) for k, v in result.extraction.filter.terms.items()},
         "dropped": [asdict(d) for d in result.extraction.dropped],
         "hits": [hit.chunk.id for hit in result.hits],
+        "answer": result.answer,
+        "citations": list(result.citations),
+        "trace": result.render(),
+    }
+
+
+def _serialize_parentchild(result: ParentChildResult) -> dict[str, Any]:
+    """Shape the ParentChildResult into the Function-URL envelope (no internal detail).
+
+    Returns the matched **children** (the precise match) and the returned **parents** (the
+    parent ids — the units whose full body synthesis read), so a caller sees both halves of the
+    decoupling the pattern is about."""
+    return {
+        "hits": [hit.parent.parent_id for hit in result.hits],
+        "matched_children": [
+            hit.matched_child.child_id if hit.matched_child is not None else None
+            for hit in result.hits
+        ],
         "answer": result.answer,
         "citations": list(result.citations),
         "trace": result.render(),

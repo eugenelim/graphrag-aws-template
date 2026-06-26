@@ -162,6 +162,81 @@ def test_rebuild_mode_clears_then_reingests(tmp_path: Path) -> None:
     assert "snap/manifest.json" in s3._objects
 
 
+class CountingEmbedder:
+    """Wraps HashEmbedder and counts embed() calls — to prove the parent-child index reuses
+    the flat dual-write's embeddings (one embed pass, not two)."""
+
+    def __init__(self) -> None:
+        self._inner = HashEmbedder()
+        self.calls = 0
+        self.embedded_texts: list[str] = []
+
+    @property
+    def model_id(self) -> str:
+        return self._inner.model_id
+
+    @property
+    def dimensions(self) -> int:
+        return self._inner.dimensions
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        self.calls += 1
+        self.embedded_texts = list(texts)
+        return self._inner.embed(texts)
+
+
+def test_full_mode_dual_writes_parentchild_index_from_one_embed_pass() -> None:
+    # AC4: the parent-child nested index is written from the SAME parse+embed pass as the flat
+    # index — the embedder is invoked exactly once (no second embed pass for the second index).
+    from graphrag.store.parentchild_memory import MemoryParentChildStore
+
+    graph = MemoryGraphStore()
+    vectors = MemoryVectorStore()
+    parents = MemoryParentChildStore()
+    embedder = CountingEmbedder()
+    run(
+        _env("full"),
+        s3_client=FakeS3(CORPUS, "snap/"),
+        store=graph,
+        vector_store=vectors,
+        embedder=embedder,
+        parentchild_store=parents,
+    )
+    assert embedder.calls == 1  # ONE embed pass shared by both indexes (no re-embed)
+    assert vectors.count() > 0  # flat index written
+    assert parents.count() > 0  # nested parent-child index written from the same vectors
+
+    # every parent carries the document's full body, ordered children, entity_ids, visibility
+    sample = parents.search(embedder.embed(["pod resize"])[0], 1)
+    assert sample
+    parent = sample[0].parent
+    assert parent.body  # the app-stored full parent body
+    assert parent.children  # the nested child chunks (with vectors)
+    assert [c.child_id for c in parent.children] == sorted(
+        (c.child_id for c in parent.children), key=lambda cid: int(cid.rsplit("#", 1)[1])
+    )
+    # a restricted doc's parent inherits the restricted tier (consistent with the flat labels)
+    visibilities = {p.parent.visibility for p in parents.search(embedder.embed(["x"])[0], 50)}
+    assert "restricted" in visibilities
+    assert "public" in visibilities
+
+
+def test_full_mode_no_parentchild_store_and_no_endpoint_is_a_noop() -> None:
+    # AC4: absent both an injected parent-child store and OPENSEARCH_ENDPOINT, the parent-child
+    # write is a no-op — the flat-only / graph-only deploys are unchanged.
+    graph = MemoryGraphStore()
+    vectors = MemoryVectorStore()
+    # no parentchild_store, no OPENSEARCH_ENDPOINT in env → no parent-child write, no error
+    run(
+        _env("full"),
+        s3_client=FakeS3(CORPUS, "snap/"),
+        store=graph,
+        vector_store=vectors,
+        embedder=HashEmbedder(),
+    )
+    assert vectors.count() > 0  # flat write still happens; parent-child simply skipped
+
+
 def test_entrypoint_dual_write_labels_chunks() -> None:
     # Slice 4: the same dual-write stamps synthetic visibility on every chunk, so the
     # vector store carries the permission-filter metadata consistent with the graph labels.
