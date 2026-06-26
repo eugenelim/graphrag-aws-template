@@ -51,6 +51,7 @@ def _community_from_props(props: dict[str, Any]) -> Community:
         entity_ids=_decode_entity_ids(props.get("entity_ids")),
         tier=str(props.get("tier", "")),
         size=int(props.get("size", 0)),
+        doc_paths=_decode_entity_ids(props.get("doc_paths")),
     )
 
 
@@ -95,7 +96,7 @@ class NeptuneCommunityStore(CommunityStore):
         self._run(
             f"MERGE (c:{_COMMUNITY_LABEL} {{id: $id}}) "
             "SET c.title = $title, c.summary = $summary, c.tier = $tier, "
-            "c.size = $size, c.entity_ids = $entity_ids",
+            "c.size = $size, c.entity_ids = $entity_ids, c.doc_paths = $doc_paths",
             {
                 "id": community.id,
                 "title": community.title,
@@ -103,6 +104,7 @@ class NeptuneCommunityStore(CommunityStore):
                 "tier": community.tier,
                 "size": community.size,
                 "entity_ids": json.dumps(list(community.entity_ids)),
+                "doc_paths": json.dumps(list(community.doc_paths)),
             },
         )
 
