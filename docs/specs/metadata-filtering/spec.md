@@ -1,6 +1,6 @@
 # Spec: metadata-filtering
 
-- **Status:** Draft <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Shipped <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** [Charter — Pattern coverage table, *Metadata Filtering / Self-Query* row](../../CHARTER.md#pattern-coverage-against-the-graphragcom-catalog) (the coverage contract this slice ships), [RFC-0001 feasibility note §4](../../rfc/0001-notes/aws-feasibility.md) (efficient filtered k-NN **during** ANN search VERIFIED on **Lucene/Faiss HNSW**, *not* the currently-pinned `nmslib` engine — so this slice switches the k-NN method to Lucene HNSW), [ADR-0001](../../adr/0001-hybrid-orchestration-seed-and-expand.md) (the vector leg of the seed-and-expand hybrid the self-query filter also threads through), [ADR-0002](../../adr/0002-ephemeral-vpc-store-topology.md) (rides the existing in-VPC query Lambda behind the IAM-auth Function URL; the engine switch lands on a fresh index, teardown-first; adds no billable resource), [ADR-0003](../../adr/0003-iac-tool-aws-cdk-python.md) (IaC is AWS CDK Python)
@@ -325,7 +325,7 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   the self-query path: the query Lambda's Bedrock grant still scopes the synthesis model
   with **no wildcard `Resource`**, and the Budgets value is asserted **unchanged at the
   literal `150`**. Per ADR-0002. *(goal-based synth, CDK-env-gated)*
-- [ ] **AC9 — Live deploy + self-query smoke (in-VPC).** Against the deployed stack with
+- [x] **AC9 — Live deploy + self-query smoke (in-VPC).** Against the deployed stack with
   the corpus dual-written on a fresh Lucene-engine index, a SigV4-signed `mode: selfquery`
   call extracts a structured filter from a constrained question (a `source` and/or an
   `entity_ids` constraint), runs filtered k-NN **live on OpenSearch with the filter applied
@@ -334,10 +334,21 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   an extracted filter with a **non-default persona/clearance** and asserts the live filtered
   hits exclude **both** above-clearance chunks **and** non-matching chunks — proving the two
   `terms` clauses compose AND **during ANN on the Lucene engine** (the one place engine-level
-  composition runs for real). Then the stack is destroyed (teardown-first). If live AWS access
-  is unavailable in the build environment,
-  this criterion ships deferred against a backlog anchor, with the offline + mocked path
-  proving the orchestration. *(live smoke)*
+  composition runs for real). Then the stack is destroyed (teardown-first). **Verified live
+  (2026-06-26):** deployed `GraphragSlice1` to `us-east-1` (`CREATE_COMPLETE`, ~17m), corpus
+  dual-written on the fresh **Lucene** index (graph 22 nodes / 28 edges / 6 cross-source
+  merges; vector 13 chunks via live Bedrock Titan). Four SigV4 `mode: selfquery` Function-URL
+  calls: (1) *"in the enhancements repo, which KEPs are owned by SIG Network?"* → live Bedrock
+  extracted a **clean** filter `{source:[enhancements], entity_ids:[sig:sig-network]}`, the
+  Lucene index filtered **during** ANN to the four sig-network enhancement chunks (real cosine
+  scores), Claude named kep-1880 + kep-2086 (~15 s cold); (2) a no-scope question → empty filter
+  → unfiltered hits spanning both repos; (3) `persona=public-reader` + `{source:[enhancements],
+  entity_ids:[sig:sig-node]}` → only **kep-9** (the restricted **kep-1287 absent**); (4)
+  `persona=maintainer` + the same filter → **kep-9 *and* kep-1287** — proving filter ∧ clearance
+  compose AND during ANN. Then `scripts/destroy.sh` (teardown-first; no billable resource
+  remains). Full trace in
+  [`deployment-and-verification.md`](../../architecture/deployment-and-verification.md). *(live
+  smoke)*
 - [x] **AC10 — Self-query showcase set + the self-query teaching framing.** A
   `selfquery_queries` section in the showcase `queries.yaml` holds **≥4** queries spanning
   **vector mode and hybrid mode**, each labeled with the expected extracted filter
@@ -422,3 +433,15 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   the permission filter and threads through vector + hybrid; rides the existing query
   Lambda via an additive `mode: selfquery` (no new infra); offline runs via a non-semantic
   rule extractor + the in-memory backend-identical predicate.
+- 2026-06-26 — Implemented and shipped. AC1–AC8 + AC10 met offline (full gates green:
+  ruff/mypy/pytest). New `selfquery.py` (schema + `MetadataFilter` + `validate_filter` +
+  Bedrock/rule extractors + `selfquery_query`), the k-NN engine switch `nmslib`→`lucene` +
+  `metadata_filter` on the `VectorStore.knn` seam threaded through `vector_search`/`hybrid_query`/
+  `run_modes`, the `selfquery-query` CLI verb, the additive `mode: selfquery` query-Lambda
+  dispatch (no Neptune on the path), the self-query showcase set + explanation doc, and the infra
+  synth test (no new resource/grant, Budgets 150). No new dependency, no new infra resource.
+- 2026-06-26 — **AC9 verified live** (the deferral never opened). Deployed `GraphragSlice1`,
+  dual-wrote the corpus on the fresh Lucene index, ran four live `mode: selfquery` Function-URL
+  calls (clean Bedrock extraction; filter during ANN; no-filter contrast; a public-reader/
+  maintainer persona+filter compose proving the two `terms` clauses AND during ANN), then
+  destroyed the stack. All 10 ACs met.
