@@ -19,6 +19,7 @@ docs/specs/<feature>/
 
 | Spec | Status | Constrained by | Notes |
 | --- | --- | --- | --- |
+| [`global-community-summary`](global-community-summary/spec.md) | Draft | ADR-0005, charter (coverage table: *Global Community Summary* + Louvain-vs-Leiden note), RFC-0001 §1, ADR-0001/0002/0003/0004 | Catalog slice — the **Global Community Summary** pattern (MS GraphRAG *global*). Louvain (via `networkx`, seeded) detected **in the Fargate ingest task** — not a standing Neptune Analytics service (ADR-0005) — Bedrock per-community summaries written back as `Community` nodes; corpus-wide **map-reduce** query mode (`mode: global`) gated **whole** by each community's composed member tier (fail-closed). One IaC grant (Converse on the ingest task role), no new resource, Budgets `150`; `networkx` kept ingest-only / out of the Lambda. States its algorithm is **Louvain, not Leiden**. |
 
 ## Shipped specs (archived)
 
