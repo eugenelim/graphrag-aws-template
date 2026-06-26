@@ -19,6 +19,7 @@ docs/specs/<feature>/
 
 | Spec | Status | Constrained by | Notes |
 | --- | --- | --- | --- |
+| [`metadata-filtering`](metadata-filtering/spec.md) | Draft | charter (coverage table: *Metadata Filtering / Self-Query*), RFC-0001 §4, ADR-0001/0002/0003 | Catalog slice — the **self-query** pattern. Bedrock extracts a structured filter (over a fixed `source`/`entity_ids` schema, validated deterministically by the pure controlled-vocab resolvers) from the question → OpenSearch filtered k-NN with the filter applied **during** ANN on the **Lucene HNSW** engine (switched from `nmslib`, closing the permission slice's post-filter recall caveat); composes with the permission filter, threads through vector + hybrid; new `selfquery-query` CLI verb + additive `mode: selfquery` query-Lambda dispatch; no new dependency, no new infra/IAM. |
 
 ## Shipped specs (archived)
 
