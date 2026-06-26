@@ -105,6 +105,21 @@ modes. The OpenSearch `visibility` keyword field lands only on a **fresh** index
 | Live ingress + IAM | Rides the **existing** IAM-auth, scoped-principal Function URL via the additive `mode: "selfquery"` value. Extraction reuses the already-granted synthesis-model `bedrock:Converse` (no widened grant — the extractor's default model id equals `DEFAULT_SYNTHESIS_MODEL_ID`); the filter uses the existing OpenSearch data-access. The path **builds no Neptune store** (entity validation is pure), so it adds **no Neptune grant**. The only store change is the k-NN index **method engine** (`nmslib` → `lucene` HNSW), an app-side mapping change on a fresh index — no new billable/compute resource (Budgets held at 150). |
 | Audit envelope (extracted + validated filter, dropped) → caller | The success envelope returns the validated filter and what the validator dropped (the audit value — exactly which structured filter the model produced and how it was bounded), contained by the **same trusted-ingress argument** as the governed/text2cypher envelopes: it crosses the IAM-auth, scoped-principal Function URL only to the trusted operator role. The *error* envelope stays fully sanitized (correlation id, no internal detail). |
 
+## Trust boundaries (parent-child-retrieval — the parent-child path)
+
+> The graphrag.com **Parent-Child Retriever** pattern: a small child chunk's vector is matched
+> (precise) on a nested `knn_vector` index, and the larger parent document body is returned for
+> synthesis. It is a **vector-only** path — no graph store. See the
+> [parent-child explanation](../guides/explanation/parent-child-retrieval.md).
+
+| Boundary | Control |
+| --- | --- |
+| Untrusted question → LLM synthesizer (LLM01/LLM08) | Synthesis reuses the audited `BedrockClaudeSynthesizer`: the question + the retrieved **parent bodies** ride `messages` as **data** (never `system`); the `system` block carries the defensive untrusted-data directive; `maxTokens` is bounded; the client is the default-TLS botocore chain; the answer is display-only. No new LLM path. |
+| Nested k-NN query → OpenSearch | The query vector, `k`, and the visibility filter values ride the request **body** (a nested `knn` over `children.vector` + a parent-level `terms` clause) — **never string-interpolated** into a path/query (`ruff S` stays on; injection-safe). HTTPS enforced; TLS verify defaults on; SigV4 via the default botocore chain. The parent body is app-stored and read back from `_source` — no cross-document `has_child` join (RFC-0001 §3). |
+| Parent-child query ∧ permission clearance | The visibility `terms` rides the same nested query as a parent-level `bool.filter` composed AND with the child match, so parent-child can only **narrow** — a document above a persona's clearance is never returned. The fail-closed `None`-vs-empty-`Clearance` semantics hold (an empty clearance matches nothing). A parent's visibility is its document's single composed tier. |
+| Live ingress + IAM | Rides the **existing** IAM-auth, scoped-principal Function URL via the additive `mode: "parentchild"` value. Synthesis reuses the granted `bedrock:Converse`; the child embedding reuses the granted Titan `bedrock:InvokeModel`; the nested index uses the existing OpenSearch `es:ESHttp*` data-access. The path **builds no Neptune store** (vector-only), so it adds **no Neptune grant**. The only store change is a **new index** on the existing domain (`graphrag-parents`), created app-side at `create_index` — no new billable/compute resource (Budgets held at 150). |
+| Audit envelope (matched children + returned parents) → caller | The success envelope returns the matched child ids (the precise match) and the returned parent ids (the units synthesized over) — **never the raw parent body prose** (the trace shows the body by character count, not inline) — contained by the same trusted-ingress argument as the sibling envelopes. The *error* envelope stays fully sanitized (correlation id, no internal detail). |
+
 ## Least privilege
 
 The Fargate **task role** and the **vector probe role** grant only: scoped `s3`
