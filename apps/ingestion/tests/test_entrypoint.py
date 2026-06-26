@@ -237,6 +237,94 @@ def test_full_mode_no_parentchild_store_and_no_endpoint_is_a_noop() -> None:
     assert vectors.count() > 0  # flat write still happens; parent-child simply skipped
 
 
+class CountingSynth:
+    """A deterministic synthesizer that counts synthesize() calls — to prove community
+    summarization runs exactly once per detected community (and not at all on delta)."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    @property
+    def model_id(self) -> str:
+        return "counting-offline"
+
+    def synthesize(
+        self, question: str, context_chunks: list[Any], graph_facts: list[Any]
+    ) -> Any:
+        from graphrag.synthesize import SynthesisResult
+
+        self.calls += 1
+        ids = ",".join(n.id for n in graph_facts)
+        return SynthesisResult(answer=f"summary[{ids}]", citations=[])
+
+
+def test_full_mode_writes_communities_one_summary_each() -> None:
+    # AC5: full ingest detects communities from the written graph and summarizes each ONCE.
+    from graphrag.store.community_memory import MemoryCommunityStore
+
+    graph = MemoryGraphStore()
+    communities = MemoryCommunityStore()
+    synth = CountingSynth()
+    run(
+        _env("full"),
+        s3_client=FakeS3(CORPUS, "snap/"),
+        store=graph,
+        community_store=communities,
+        synthesizer=synth,
+    )
+    stored = communities.all_communities()
+    assert stored  # communities were written
+    assert synth.calls == len(stored)  # exactly one summarize call per community
+    # communityId stamped on members (the entity→community trace affordance)
+    member = stored[0].entity_ids[0]
+    assert communities.community_of(member) == stored[0].id
+    # every member entity resolves in the written graph
+    for community in stored:
+        for entity_id in community.entity_ids:
+            assert graph.get_node(entity_id) is not None
+
+
+def test_full_mode_no_community_store_and_no_neptune_is_a_noop() -> None:
+    # AC5: absent both an injected community store and NEPTUNE_ENDPOINT, the write-back is a
+    # no-op (a vector-only deploy is unchanged) — no error, graph still written.
+    graph = MemoryGraphStore()
+    run(_env("full"), s3_client=FakeS3(CORPUS, "snap/"), store=graph)
+    assert graph.all_nodes()  # the graph half still written; community write-back simply skipped
+
+
+def test_delta_mode_does_not_recompute_communities() -> None:
+    # AC5: MODE=delta never recomputes communities (scoped out — full/rebuild rebuild them).
+    from graphrag.store.community_memory import MemoryCommunityStore
+
+    graph, vectors = MemoryGraphStore(), MemoryVectorStore()
+    communities = MemoryCommunityStore()
+    # Seed a baseline manifest with a full ingest (communities written here).
+    run(
+        _env("full"),
+        s3_client=(s3 := FakeS3(CORPUS, "snap/")),
+        store=graph,
+        vector_store=vectors,
+        embedder=HashEmbedder(),
+        community_store=communities,
+        synthesizer=CountingSynth(),
+    )
+    seeded = communities.count()
+    assert seeded > 0
+    # A delta run with a FRESH counting synth: it must never be invoked (no recompute).
+    delta_synth = CountingSynth()
+    run(
+        _env("delta"),
+        s3_client=s3,
+        store=graph,
+        vector_store=vectors,
+        embedder=HashEmbedder(),
+        community_store=communities,
+        synthesizer=delta_synth,
+    )
+    assert delta_synth.calls == 0  # delta did not summarize any community
+    assert communities.count() == seeded  # community set unchanged by delta
+
+
 def test_entrypoint_dual_write_labels_chunks() -> None:
     # Slice 4: the same dual-write stamps synthetic visibility on every chunk, so the
     # vector store carries the permission-filter metadata consistent with the graph labels.

@@ -33,8 +33,10 @@ from graphrag.delta import Manifest, build_manifest, manifest_from_json, manifes
 from graphrag.embed import Embedder
 from graphrag.ingest import DeltaReport, IngestReport, ingest, ingest_delta, rebuild
 from graphrag.store.base import GraphStore
+from graphrag.store.community_base import CommunityStore
 from graphrag.store.parentchild_base import ParentChildStore
 from graphrag.store.vector_base import VectorStore
+from graphrag.synthesize import Synthesizer
 
 # The ingest manifest (doc id -> content hash) lives at the corpus prefix root in S3; a --delta
 # diffs the new snapshot against it, and every run writes it back **last** (slice 5; AC8).
@@ -202,6 +204,59 @@ def _resolve_vector(
     return vector_store, embedder
 
 
+def _community_writeback(
+    env: Mapping[str, str],
+    store: GraphStore,
+    community_store: CommunityStore | None,
+    synthesizer: Synthesizer | None,
+) -> int:
+    """Detect + summarize communities and write them back to Neptune. Returns the count.
+
+    The Global Community Summary slice (ADR-0005): community detection runs **here**, in the
+    on-demand Fargate ingest task (Louvain via networkx, seeded) — not a standing Neptune
+    Analytics service. It reads the just-written entity graph back from the ``GraphStore``,
+    partitions it, summarizes each community via the ``Synthesizer`` seam, and writes
+    ``Community`` nodes (+ a ``communityId`` stamp on each member ``Entity``) to the existing
+    cluster. Recomputes from scratch (``clear`` first) on every call — communities are rebuilt
+    on **full ingest / ``--rebuild`` only**; delta does not call this (a member visibility
+    change therefore needs a full re-ingest to refresh community tiers — spec Never-do +
+    ``global-community-summary-delta-tier-refresh``).
+
+    The live trigger is **``NEPTUNE_ENDPOINT`` set** (mirroring how ``_vector_dual_write`` keys
+    off ``OPENSEARCH_ENDPOINT``); tests inject ``community_store`` (+ a synthesizer). A no-op
+    when neither is present.
+    """
+    endpoint = env.get("NEPTUNE_ENDPOINT")
+    if community_store is None and not endpoint:
+        return 0
+    region = env.get("AWS_REGION", "us-east-1")
+    if community_store is None:  # pragma: no cover - exercised only in the deployed task
+        from graphrag.store.community_neptune import NeptuneCommunityStore
+
+        community_store = NeptuneCommunityStore(endpoint or "", region)
+    if synthesizer is None:  # pragma: no cover - exercised only in the deployed task
+        from graphrag.synthesize import BedrockClaudeSynthesizer
+
+        synthesizer = BedrockClaudeSynthesizer(region=region)
+
+    from graphrag.community_detect import detect_communities, summarize_communities
+
+    community_store.create()  # no-op in-memory; schema-less Neptune label
+    nodes = store.all_nodes()
+    edges = store.all_edges()
+    specs = detect_communities(nodes, edges)
+    communities = summarize_communities(specs, nodes, edges, synthesizer)
+    # Recompute from scratch — full ingest / rebuild rebuilds the partition (delta never gets
+    # here), so stale communities from a prior run never linger.
+    community_store.clear()
+    for community in communities:
+        community_store.upsert_community(community)
+        for entity_id in community.entity_ids:
+            community_store.set_community_id(entity_id, community.id)
+    print(f"community write-back: {len(communities)} communities (Louvain, in-task)")
+    return len(communities)
+
+
 def run(
     env: Mapping[str, str],
     *,
@@ -210,6 +265,8 @@ def run(
     vector_store: VectorStore | None = None,
     embedder: Embedder | None = None,
     parentchild_store: ParentChildStore | None = None,
+    community_store: CommunityStore | None = None,
+    synthesizer: Synthesizer | None = None,
 ) -> IngestReport | DeltaReport:
     """Run the ingestion task. ``MODE`` selects ``full`` (default — the slice-1–4 dual-write,
     unchanged), ``delta`` (slice-5 incremental re-ingest against the stored manifest), or
@@ -236,10 +293,14 @@ def run(
             _vector_dual_write(
                 env, community, enhancements, vector_store, embedder, parentchild_store
             )
+            # Detect + summarize communities from the just-written graph (ADR-0005), in-task.
+            _community_writeback(env, store, community_store, synthesizer)
             new_manifest = build_manifest(community, enhancements)
         elif mode == "rebuild":
             vstore, emb = _resolve_vector(env, vector_store, embedder)
             report = rebuild(community, enhancements, store, vstore, emb)
+            # Rebuild recomputes communities too (a fresh partition over the rebuilt graph).
+            _community_writeback(env, store, community_store, synthesizer)
             new_manifest = report.new_manifest
         elif mode == "delta":
             vstore, emb = _resolve_vector(env, vector_store, embedder)
