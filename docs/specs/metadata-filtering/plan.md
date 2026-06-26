@@ -1,7 +1,7 @@
 # Plan: metadata-filtering
 
 - **Spec:** [`spec.md`](spec.md)
-- **Status:** Drafting <!-- Drafting | Executing | Done -->
+- **Status:** Done <!-- Drafting | Executing | Done -->
 
 > **Plan contract:** this is the implementation strategy. Unlike the spec, this
 > document is allowed to change as you learn. When it changes substantially
@@ -285,7 +285,7 @@ tests still green; gates clean.
 
 ### T5: Orchestration `selfquery_query` + thread vector AND hybrid (AC5)
 **Depends on:** T2, T3, T4
-**Touches:** packages/graphrag/src/graphrag/selfquery.py, packages/graphrag/src/graphrag/vector.py, packages/graphrag/src/graphrag/hybrid.py, packages/graphrag/tests/test_selfquery.py, packages/graphrag/tests/test_hybrid.py
+**Touches:** packages/graphrag/src/graphrag/selfquery.py, packages/graphrag/src/graphrag/vector.py, packages/graphrag/src/graphrag/hybrid.py, packages/graphrag/src/graphrag/compare.py, packages/graphrag/tests/test_selfquery.py, packages/graphrag/tests/test_hybrid.py
 **Tests:**
 - `# STUB: AC5` vector: `vector_search(..., metadata_filter)` excludes non-matching chunks;
   `selfquery_query(..., mode="vector")` on the exemplar selects+validates the filter, returns
