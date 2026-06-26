@@ -161,3 +161,72 @@ def test_text2cypher_showcase_gold_resolves_and_shared_template_exists(
             assert get_template(q.shared_with_template) is not None, (
                 f"{q.id} names unknown shared template {q.shared_with_template!r}"
             )
+
+
+# --- metadata-filtering: the self-query showcase set (AC10) ---------------------------
+from graphrag.embed import HashEmbedder  # noqa: E402
+from graphrag.selfquery import FIELD_BY_NAME, RuleMetadataExtractor, selfquery_query  # noqa: E402
+from graphrag.showcase import SelfQueryShowcaseQuery, load_selfquery_showcase  # noqa: E402
+from graphrag.store import MemoryVectorStore  # noqa: E402
+from graphrag.store.vector_base import EmbeddedChunk  # noqa: E402
+from graphrag.synthesize import TemplateSynthesizer  # noqa: E402
+
+
+def test_selfquery_showcase_parses_and_spans_both_modes() -> None:
+    queries = load_selfquery_showcase()
+    assert len(queries) >= 4
+    assert all(isinstance(q, SelfQueryShowcaseQuery) for q in queries)
+    modes = {q.mode for q in queries}
+    assert "vector" in modes and "hybrid" in modes, "showcase must span vector AND hybrid"
+
+
+def test_selfquery_showcase_consistent_with_schema_and_fixture(
+    community_root: Path, enhancements_root: Path
+) -> None:
+    docs = load_corpus(community_root, enhancements_root)
+    chunks = chunk_corpus(docs)
+    chunk_ids = {c.id for c in chunks}
+    entity_ids = {eid for c in chunks for eid in c.entity_ids}
+    graph = MemoryGraphStore.from_graph(resolve(docs))
+
+    # one in-memory vector store from the fixture, shared across entries.
+    embedder = HashEmbedder()
+    vstore = MemoryVectorStore()
+    for c, v in zip(chunks, embedder.embed([c.text for c in chunks]), strict=True):
+        vstore.index_chunk(EmbeddedChunk(c, v))
+
+    for q in load_selfquery_showcase():
+        assert q.query.strip()
+        assert q.highlight.strip(), f"{q.id} has an empty highlight"
+        assert q.mode in ("vector", "hybrid")
+        # the expected_filter only names declared fields; its values resolve in the fixture.
+        assert q.expected_filter, f"{q.id} names no expected filter"
+        for field_name, values in q.expected_filter.items():
+            spec = FIELD_BY_NAME.get(field_name)
+            assert spec is not None, f"{q.id} expected_filter names undeclared field {field_name!r}"
+            for value in values:
+                if spec.kind == "enum":
+                    assert spec.choices is not None and value in spec.choices
+                else:  # entity — its normalized id matches >=1 fixture chunk (gold-data, AC10)
+                    assert value in entity_ids, f"{q.id} entity {value!r} matches no fixture chunk"
+        for cid in q.visible + q.excluded:
+            assert cid in chunk_ids, f"{q.id} chunk id {cid!r} missing from fixture"
+
+        # end-to-end: the offline rule extractor + during-ANN filter keep `visible`, prune
+        # `excluded` (no hand-wavy gold — the showcase is consistent with the real filter).
+        result = selfquery_query(
+            q.query,
+            extractor=RuleMetadataExtractor(),
+            vector_store=vstore,
+            embedder=embedder,
+            synthesizer=TemplateSynthesizer(),
+            aliases=load_aliases(),
+            mode=q.mode,
+            graph_store=graph if q.mode == "hybrid" else None,
+            k=len(chunks),  # no top-k truncation; the filter is the only pruning under test
+        )
+        hit_ids = {h.chunk.id for h in result.hits}
+        for vid in q.visible:
+            assert vid in hit_ids, f"{q.id}: expected-visible {vid!r} not returned"
+        for eid in q.excluded:
+            assert eid not in hit_ids, f"{q.id}: expected-excluded {eid!r} leaked into hits"

@@ -66,12 +66,16 @@ def test_bedrock_selector_rejects_unknown_id() -> None:
 
 
 def test_bedrock_selector_handles_null_and_malformed() -> None:
-    assert BedrockTemplateSelector(client=_FakeBedrock('{"template_id": null}')).select(
-        "q", list(TEMPLATES)
-    ) is None
-    assert BedrockTemplateSelector(client=_FakeBedrock("not json at all")).select(
-        "q", list(TEMPLATES)
-    ) is None
+    assert (
+        BedrockTemplateSelector(client=_FakeBedrock('{"template_id": null}')).select(
+            "q", list(TEMPLATES)
+        )
+        is None
+    )
+    assert (
+        BedrockTemplateSelector(client=_FakeBedrock("not json at all")).select("q", list(TEMPLATES))
+        is None
+    )
 
 
 def test_rule_selector_is_deterministic_and_non_semantic() -> None:

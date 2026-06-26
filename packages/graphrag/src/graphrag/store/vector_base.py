@@ -10,8 +10,13 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from ..chunk import Chunk
+
+if TYPE_CHECKING:
+    # Type-only import — avoids a runtime cycle (selfquery imports vector → vector_base).
+    from ..selfquery import MetadataFilter
 
 
 @dataclass
@@ -40,7 +45,12 @@ class VectorStore(ABC):
 
     @abstractmethod
     def knn(
-        self, vector: list[float], k: int, *, allowed_labels: frozenset[str] | None = None
+        self,
+        vector: list[float],
+        k: int,
+        *,
+        allowed_labels: frozenset[str] | None = None,
+        metadata_filter: MetadataFilter | None = None,
     ) -> list[VectorHit]:
         """The ``k`` nearest chunks to ``vector`` by cosine similarity, score-descending.
 
@@ -48,6 +58,14 @@ class VectorStore(ABC):
         ACL, never real authz): when not ``None``, only chunks whose ``visibility`` is in
         the set are eligible, applied **during** the k-NN search (an OpenSearch metadata
         ``filter`` on the ANN query; the in-memory equivalent). ``None`` = unfiltered.
+
+        ``metadata_filter`` is the self-query structured filter (``source``/``entity_ids``):
+        when not ``None``/empty, only chunks the filter ``matches`` are eligible. It composes
+        with ``allowed_labels`` as an **independent** clause (both applied during ANN), so the
+        self-query filter can only *narrow*, never widen past clearance. ``None``/empty =
+        unfiltered. The two have deliberately opposite empty-semantics: an empty
+        ``metadata_filter`` is unfiltered, whereas an **empty** ``allowed_labels`` matches
+        nothing (the fail-closed permission semantics) — neither affects the other.
         """
 
     @abstractmethod

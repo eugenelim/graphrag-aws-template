@@ -312,3 +312,65 @@ def test_hit_parses_visibility() -> None:
     http = RecordingHttp([HttpResponse(200, json.dumps(response))])
     hits = _store(http).knn([0.1], k=1)
     assert hits[0].chunk.visibility == "internal"
+
+
+# --- metadata-filtering: Lucene engine + self-query terms-filter during ANN (AC3) -------
+
+from graphrag.selfquery import MetadataFilter  # noqa: E402  (grouped with its own tests)
+
+
+def test_knn_mapping_uses_lucene_hnsw_engine_for_during_ann_filtering() -> None:
+    http = RecordingHttp([HttpResponse(200, "{}")])
+    _store(http).create_index()
+    method = http.last_body()["mappings"]["properties"]["vector"]["method"]
+    # Lucene (not nmslib): efficient filtering DURING the ANN scan (RFC-0001 §4).
+    assert method["engine"] == "lucene"
+    assert method["name"] == "hnsw"
+    # cosinesimil is Lucene-supported on OpenSearch 2.11 (space unchanged, no re-embed).
+    assert method["space_type"] == "cosinesimil"
+
+
+def test_knn_with_metadata_filter_adds_terms_clauses_in_body() -> None:
+    http = RecordingHttp([HttpResponse(200, json.dumps({"hits": {"hits": []}}))])
+    mfilter = MetadataFilter({"source": ("enhancements",), "entity_ids": ("sig:sig-node",)})
+    _store(http).knn([0.5, 0.5], k=3, metadata_filter=mfilter)
+    body = http.last_body()
+    assert body["query"]["bool"]["must"][0]["knn"]["vector"]["vector"] == [0.5, 0.5]
+    filt = body["query"]["bool"]["filter"]
+    assert {"terms": {"source": ["enhancements"]}} in filt
+    assert {"terms": {"entity_ids": ["sig:sig-node"]}} in filt
+    # values ride the body, never the URL path.
+    assert "sig:sig-node" not in str(http.calls[-1]["url"])
+
+
+def test_knn_composes_metadata_and_visibility_filters_independently() -> None:
+    http = RecordingHttp([HttpResponse(200, json.dumps({"hits": {"hits": []}}))])
+    mfilter = MetadataFilter({"source": ("community",)})
+    _store(http).knn([0.5], k=3, allowed_labels=frozenset({"public"}), metadata_filter=mfilter)
+    filt = http.last_body()["query"]["bool"]["filter"]
+    # both clauses present, independent — visibility AND source compose during ANN.
+    assert {"terms": {"visibility": ["public"]}} in filt
+    assert {"terms": {"source": ["community"]}} in filt
+
+
+def test_knn_empty_metadata_filter_does_not_drop_visibility_clause() -> None:
+    http = RecordingHttp([HttpResponse(200, json.dumps({"hits": {"hits": []}}))])
+    # empty self-query filter ⇒ unfiltered for source, but the clearance clause MUST remain.
+    _store(http).knn(
+        [0.5], k=3, allowed_labels=frozenset({"public"}), metadata_filter=MetadataFilter()
+    )
+    assert http.last_body()["query"]["bool"]["filter"] == [{"terms": {"visibility": ["public"]}}]
+
+
+def test_knn_empty_clearance_emits_match_nothing_terms_regardless_of_filter() -> None:
+    # fail-closed: an EMPTY allowed_labels yields a terms clause matching nothing (zero hits),
+    # never an absent clause — even when a self-query filter is present.
+    http = RecordingHttp([HttpResponse(200, json.dumps({"hits": {"hits": []}}))])
+    _store(http).knn(
+        [0.5],
+        k=3,
+        allowed_labels=frozenset(),
+        metadata_filter=MetadataFilter({"source": ("community",)}),
+    )
+    filt = http.last_body()["query"]["bool"]["filter"]
+    assert {"terms": {"visibility": []}} in filt  # matches nothing — fail-closed preserved

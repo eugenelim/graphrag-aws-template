@@ -77,6 +77,23 @@ class Text2CypherShowcaseQuery:
     highlight: str = ""
 
 
+@dataclass
+class SelfQueryShowcaseQuery:
+    """A metadata-filtering (self-query) demo query: the structured ``expected_filter`` the
+    extractor should read out of the question (a ``{field: [values]}`` map over the declared
+    ``source``/``entity_ids`` schema), the ``mode`` the filter applies in (``vector`` or
+    ``hybrid``), and the gold chunk ids that should be ``visible`` vs. ``excluded`` once the
+    filter is applied during the ANN scan (all resolving in the fixture corpus)."""
+
+    id: str
+    query: str
+    mode: ShowcaseMode
+    expected_filter: dict[str, list[str]] = field(default_factory=dict)
+    visible: list[str] = field(default_factory=list)
+    excluded: list[str] = field(default_factory=list)
+    highlight: str = ""
+
+
 def load_showcase() -> list[ShowcaseQuery]:
     """Load the packaged showcase query set as ``ShowcaseQuery`` objects."""
     text = resources.files("graphrag.showcase").joinpath("queries.yaml").read_text(encoding="utf-8")
@@ -130,6 +147,28 @@ def load_governed_showcase() -> list[GovernedShowcaseQuery]:
                 template=str(entry["template"]),
                 param=str(entry["param"]),
                 gold=[str(g) for g in entry.get("gold", [])],
+                highlight=str(entry.get("highlight", "")),
+            )
+        )
+    return out
+
+
+def load_selfquery_showcase() -> list[SelfQueryShowcaseQuery]:
+    """Load the packaged metadata-filtering (self-query) demo queries."""
+    text = resources.files("graphrag.showcase").joinpath("queries.yaml").read_text(encoding="utf-8")
+    data = yaml.safe_load(text) or {}
+    raw = data.get("selfquery_queries", []) if isinstance(data, dict) else []
+    out: list[SelfQueryShowcaseQuery] = []
+    for entry in raw:
+        expected = entry.get("expected_filter", {}) or {}
+        out.append(
+            SelfQueryShowcaseQuery(
+                id=str(entry["id"]),
+                query=str(entry["query"]),
+                mode=entry["mode"],
+                expected_filter={k: [str(v) for v in vs] for k, vs in expected.items()},
+                visible=[str(g) for g in entry.get("visible", [])],
+                excluded=[str(g) for g in entry.get("excluded", [])],
                 highlight=str(entry.get("highlight", "")),
             )
         )

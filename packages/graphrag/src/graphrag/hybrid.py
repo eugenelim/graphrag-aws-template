@@ -24,7 +24,7 @@ pure-Python Lambda's PyYAML-free bundle.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from .embed import Embedder
 from .entity_link import Candidate, link_question
@@ -35,6 +35,9 @@ from .store.vector_base import VectorHit, VectorStore
 from .synthesize import Synthesizer
 from .vector import vector_search
 from .visibility import DEFAULT_VISIBILITY, Clearance
+
+if TYPE_CHECKING:
+    from .selfquery import MetadataFilter
 
 DEFAULT_K = 5
 DEFAULT_MAX_HOPS = 2
@@ -158,6 +161,7 @@ def hybrid_query(
     max_hops: int = DEFAULT_MAX_HOPS,
     seed_cap: int = DEFAULT_SEED_CAP,
     clearance: Clearance | None = None,
+    metadata_filter: MetadataFilter | None = None,
 ) -> HybridResult:
     """Run the seed-and-expand hybrid path end-to-end and return the traced result.
 
@@ -167,11 +171,19 @@ def hybrid_query(
     entity above clearance is recorded in ``filtered_seeds`` and never seeded; expansion
     filters edges DURING traversal (so a forbidden node never enters the frontier); and the
     final merged node set is filtered as an independent guard. ``None`` = unfiltered.
+
+    When ``metadata_filter`` is set (the self-query structured filter), it is threaded into the
+    **vector leg** so the vector seeds derive only from filter-matching chunks; it composes with
+    ``clearance`` (both during ANN) and can only narrow. The graph traversal is unchanged — the
+    self-query filter is a *vector*-retrieval constraint. ``None``/empty = unfiltered.
     """
     # 1. Vector search → owning entity IDs (source=vector). With a clearance, the chunks are
     #    already filtered by visibility, so their owning entities are within clearance too
-    #    (chunk visibility = compose(owners) = max, and clearance is downward-closed).
-    vresult = vector_search(vector_store, embedder, question, k=k, clearance=clearance)
+    #    (chunk visibility = compose(owners) = max, and clearance is downward-closed). With a
+    #    metadata_filter, only filter-matching chunks (and thus their entities) seed.
+    vresult = vector_search(
+        vector_store, embedder, question, k=k, clearance=clearance, metadata_filter=metadata_filter
+    )
     chunks = _dedupe_chunks(vresult.hits)
 
     vector_seeds: list[Seed] = []

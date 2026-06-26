@@ -401,3 +401,49 @@ dispatch — over the fixture corpus.
 > redeploy was clean. The laptop-direct "out-of-band write to Neptune" the spec first imagined is
 > infeasible (Neptune is VPC-private — ADR-0002), so the backstop's live proof is the deployed
 > read-only role policy, not an impossible cross-VPC write.
+
+## metadata-filtering — live self-query smoke (AC9)
+
+| Check | Status |
+| --- | --- |
+| Live deploy + dual-write (fresh **Lucene** index) | **PASS (2026-06-26)** — `GraphragSlice1` `CREATE_COMPLETE` in **~17m24s** (`us-east-1`, cdk total 1069.87 s); Fargate dual-write (`MODE=full`): graph **22 nodes / 28 edges / 6 cross-source merges**, vector **13 chunks** via live Bedrock Titan. The k-NN index was created on the **`lucene` HNSW** engine (the `nmslib`→`lucene` switch), so the metadata filter applies *during* the ANN scan. |
+| Live self-query (clean Bedrock extraction + during-ANN filter) | **PASS (2026-06-26)** — a SigV4 `mode: selfquery` POST: **Bedrock Claude extracted a structured filter** from the question, validated against the fixed schema, and the **Lucene index filtered during the ANN scan** to the qualifying chunks, with a Claude answer over the real hits. Traces below. |
+| No-filter contrast | **PASS (2026-06-26)** — a question with no scope → empty filter → unfiltered hits spanning both repos (the filter is opt-in, question-derived). |
+| Filter ∧ clearance compose (the fail-closed guard) | **PASS (2026-06-26)** — the same `source`+`entity_ids` filter under `public-reader` vs `maintainer` diverged: the restricted `kep-1287` chunk **absent** for the reader, **present** for the maintainer — the two `terms` clauses compose AND during ANN, and a self-query filter never widens past clearance. |
+| Teardown | **PASS (2026-06-26)** — `scripts/destroy.sh`; no billable resource remains. |
+
+> **Status: PASS (2026-06-26).** Deployed `GraphragSlice1` (`us-east-1`), dual-wrote the corpus
+> on the fresh **Lucene-engine** index, then drove the **self-query path live** via `graphrag
+> selfquery-query --function-url …` (`mode: selfquery`). Four calls:
+>
+> ```text
+> "in the enhancements repo, which KEPs are owned by SIG Network?"            ~15 s (incl. cold start)
+>     extracted (Bedrock): {"source": ["enhancements"], "entity_ids": ["sig:sig-network"]}   (CLEAN —
+>                          no spurious entity, unlike the offline non-semantic rule extractor)
+>     filtered DURING ANN (Lucene): 4 hits, all [enhancements] sig-network (kep-1880 + kep-2086),
+>                          real cosine scores (0.68 / 0.65 / 0.62 / 0.60)
+>     answer (Bedrock Claude): "SIG Network owns KEP-2086 Service Internal Traffic Policy and
+>                          KEP-1880 Multiple Service CIDRs"
+> "give me a general overview of what this corpus contains"                   (no-filter contrast)
+>     extracted: {}  -> retrieval UNFILTERED: 5 hits spanning BOTH [community] and [enhancements]
+> "in the enhancements repo, what does SIG Node own?"  persona=public-reader
+>     extracted: {"source": ["enhancements"], "entity_ids": ["sig:sig-node"]}
+>     hits: kep-9 (KEP-0009) only  — the restricted kep-1287 chunk is ABSENT (clearance allows [public])
+> "in the enhancements repo, what does SIG Node own?"  persona=maintainer
+>     extracted: same filter
+>     hits: kep-9 AND kep-1287 (the restricted "in-place pod resize" KEP)  (clearance allows all tiers)
+> ```
+>
+> This is the self-query path proven **live** end to end: an untrusted question → **Bedrock Claude
+> extracts a structured filter** over the fixed `source`/`entity_ids` schema (and the live semantic
+> extraction is *clean* where the offline rule extractor over-extracts) → `validate_filter` bounds it
+> → the **Lucene engine applies it during the ANN scan** (not a post-filter) → a Claude answer over
+> the qualifying chunks. The public-reader/maintainer divergence on the *same* filter is the live
+> proof that the self-query `terms` and the slice-4 visibility `terms` compose **AND** during ANN —
+> a self-query filter only ever narrows, never re-admits a chunk above clearance. Then
+> `scripts/destroy.sh` (teardown-first); no billable resource remains. Satisfies AC9.
+>
+> **No code bug surfaced** (offline + mocked + synth already covered the path); the live run was
+> clean on the first deploy. The engine switch (`nmslib`→`lucene`, `space_type` kept `cosinesimil`)
+> created the index without error and filtered during ANN as designed — the headline mechanism the
+> slice exists to demonstrate.
