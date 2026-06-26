@@ -169,6 +169,17 @@ necessary, not sufficient.
 
 Append one entry per slice that touches infrastructure. Newest first.
 
+- **Catalog slice — `global-community-summary` (2026-06-26).** **No new resource.** Community
+  detection runs **in the existing on-demand Fargate ingest task** (Louvain via networkx,
+  ADR-0005) — **not** a standing Neptune Analytics service — and writes `Community` nodes to the
+  **existing** Neptune cluster; the corpus-wide `mode: global` query rides the existing query
+  Lambda + IAM-auth Function URL (additive, back-compat). The **one IaC change** is
+  `bedrock:Converse` added to the **ingest task role** (the existing `_bedrock_synthesis_invoke`
+  grant, scoped to the synthesis model, no wildcard) so the task can generate summaries; the
+  query-Lambda Neptune grant is **unchanged read-only** (ADR-0004). `networkx` is an ingest-only
+  dependency (Fargate image + dev, never the Lambda). **Budgets unchanged at $150** (asserted by
+  `test_global_adds_no_new_resource_no_neptune_analytics_budget_held`). Live global smoke is the
+  supervisor's step (AC10).
 - **Slice 4 — `permission-filtered-retrieval` (2026-06-24).** **No new resource.** The
   synthetic visibility permission filter rides the existing topology: the persona is a
   field on the existing query Lambda's request body, the graph filter is a parameterized

@@ -297,3 +297,54 @@ def test_parentchild_showcase_consistent_with_fixture(
         gold_hit = next(h for h in result.hits if h.parent.parent_id == q.expected_parent)
         assert gold_hit.parent.body, f"{q.id}: returned parent has no body for synthesis"
         assert gold_hit.matched_child is not None  # a precise child surfaced the parent
+
+
+# --- global-community-summary: corpus-wide showcase (AC9) -------------------------------
+def test_global_showcase_parses() -> None:
+    from graphrag.showcase import GlobalShowcaseQuery, load_global_showcase
+
+    queries = load_global_showcase()
+    assert len(queries) >= 3
+    assert all(isinstance(q, GlobalShowcaseQuery) for q in queries)
+
+
+def test_fixture_yields_all_three_visibility_tiers(
+    community_root: Path, enhancements_root: Path
+) -> None:
+    # Pins the queries.yaml partition claim AND makes the AC10 persona check non-vacuous: the
+    # fixture must yield communities spanning public/internal/restricted, so a public-reader
+    # call is a STRICT subset of the unrestricted call (an above-public community is omitted).
+    from graphrag.community_detect import detect_communities
+    from graphrag.labels import label_graph, load_labels
+
+    graph = resolve(load_corpus(community_root, enhancements_root))
+    label_graph(graph, load_labels())  # stamp visibility (as ingest() does) so tiers are real
+    tiers = {spec.tier for spec in detect_communities(list(graph.nodes.values()), graph.edges)}
+    assert {"public", "internal", "restricted"} <= tiers, (
+        f"fixture must yield all three visibility tiers (got {tiers}) — AC10 persona check "
+        "relies on at least one above-public community existing"
+    )
+
+
+def test_global_showcase_entities_resolve_and_land_in_communities(
+    community_root: Path, enhancements_root: Path
+) -> None:
+    from graphrag.community_detect import detect_communities
+    from graphrag.showcase import load_global_showcase
+
+    graph = resolve(load_corpus(community_root, enhancements_root))
+    nodes, edges = list(graph.nodes.values()), graph.edges
+    node_ids = {n.id for n in nodes}
+    # entities that landed in some detected community (membership union)
+    in_a_community = {eid for spec in detect_communities(nodes, edges) for eid in spec.entity_ids}
+
+    for q in load_global_showcase():
+        assert q.query.strip()
+        assert q.highlight.strip(), f"{q.id} has an empty highlight"
+        assert q.theme.strip(), f"{q.id} has an empty corpus-wide theme"
+        assert q.expected_entities, f"{q.id} names no expected entities"
+        for entity_id in q.expected_entities:
+            assert entity_id in node_ids, f"{q.id} entity {entity_id!r} missing from fixture"
+            assert entity_id in in_a_community, (
+                f"{q.id} entity {entity_id!r} is in no detected community"
+            )

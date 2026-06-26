@@ -20,10 +20,20 @@ infra = [
     "aws-cdk-lib>=2.140",
     "constructs>=10.3",
 ]
+# Ingest-only: community detection (Louvain) runs in the Fargate ingest task, never the
+# query Lambda (ADR-0005). networkx is imported lazily by graphrag.community_detect and is
+# kept out of the PyYAML-free query-Lambda import graph (a sys.modules guard asserts this).
+# Installed in the Fargate image (apps/ingestion/Dockerfile) and pulled into `dev` so tests
+# can run detection offline.
+ingest = [
+    "networkx>=3.0",
+]
 dev = [
     "pytest>=8.0",
     "ruff>=0.5",
     "mypy>=1.10",
+    # tests detect communities offline, so the dev env needs the ingest extra.
+    "graphrag-aws-demo[ingest]",
 ]
 
 [project.scripts]
@@ -66,7 +76,7 @@ files = ["packages/graphrag/src", "apps"]
 exclude = "(^|/)cdk\\.out/"
 
 [[tool.mypy.overrides]]
-module = ["yaml", "boto3", "boto3.*", "botocore", "botocore.*", "aws_cdk", "aws_cdk.*", "constructs"]
+module = ["yaml", "boto3", "boto3.*", "botocore", "botocore.*", "aws_cdk", "aws_cdk.*", "constructs", "networkx", "networkx.*"]
 ignore_missing_imports = true
 
 # numpy is not a project dependency; it is pulled into some environments transitively

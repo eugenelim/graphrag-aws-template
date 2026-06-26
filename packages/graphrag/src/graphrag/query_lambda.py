@@ -46,11 +46,13 @@ from typing import Any
 
 from .embed import BedrockTitanEmbedder
 from .generate import BedrockText2CypherGenerator
+from .globalsearch import GlobalSearchResult, global_query
 from .governed import GovernedResult, governed_query
 from .hybrid import HybridResult, hybrid_query
 from .parentchild import ParentChildResult, parentchild_query
 from .select import BedrockTemplateSelector
 from .selfquery import BedrockMetadataExtractor, SelfQueryResult, selfquery_query
+from .store.community_neptune import NeptuneCommunityStore
 from .store.neptune import NeptuneGraphStore
 from .store.opensearch import OpenSearchVectorStore
 from .store.parentchild_opensearch import OpenSearchParentChildStore
@@ -100,10 +102,11 @@ def _extract_persona(payload: dict[str, Any]) -> str | None:
 
 def _extract_mode(payload: dict[str, Any]) -> str:
     """The optional ``mode`` (``hybrid`` default | ``governed`` | ``text2cypher`` |
-    ``selfquery`` | ``parentchild``) — the additive, back-compat Function-URL field (``governed``
-    added by opencypher-templates, ``text2cypher`` by text2opencypher-guarded, ``selfquery`` by
-    metadata-filtering, ``parentchild`` by parent-child-retrieval). An absent or non-string mode
-    is ``hybrid``, so an existing caller is unaffected."""
+    ``selfquery`` | ``parentchild`` | ``global``) — the additive, back-compat Function-URL field
+    (``governed`` added by opencypher-templates, ``text2cypher`` by text2opencypher-guarded,
+    ``selfquery`` by metadata-filtering, ``parentchild`` by parent-child-retrieval, ``global`` by
+    global-community-summary). An absent or non-string mode is ``hybrid``, so an existing caller
+    is unaffected."""
     mode = payload.get("mode")
     return mode if isinstance(mode, str) and mode else "hybrid"
 
@@ -247,6 +250,28 @@ def lambda_handler(event: Any, context: Any) -> dict[str, Any]:
             )
             return _serialize_parentchild(pchild)
 
+        if mode == "global":
+            # The Global Community Summary path (MS GraphRAG global): map-reduce a corpus-wide
+            # answer over per-community summaries, clearance-gated. Reads pre-computed Community
+            # nodes from Neptune through a READ-ONLY store — the existing read-only Neptune grant
+            # (ADR-0004) suffices — and DETECTS NOTHING (no networkx in the Lambda). The persona
+            # was already resolved fail-closed above (this branch sits after that block).
+            community_store = NeptuneCommunityStore(os.environ["NEPTUNE_ENDPOINT"], region)
+            synthesizer_g = BedrockClaudeSynthesizer(model_id=model_id, region=region)
+            gresult = global_query(
+                question,
+                community_store=community_store,
+                synthesizer=synthesizer_g,
+                clearance=clearance,
+            )
+            logger.info(
+                "query_lambda global ok (correlation_id=%s) considered=%d survivors=%d",
+                correlation_id,
+                len(gresult.communities_considered),
+                sum(1 for v in gresult.map_verdicts if v.relevant),
+            )
+            return _serialize_global(gresult)
+
         if mode != "hybrid":
             return {"error": f"unknown mode {mode!r}", "correlation_id": correlation_id}
 
@@ -383,6 +408,27 @@ def _serialize_parentchild(result: ParentChildResult) -> dict[str, Any]:
         "matched_children": [
             hit.matched_child.child_id if hit.matched_child is not None else None
             for hit in result.hits
+        ],
+        "answer": result.answer,
+        "citations": list(result.citations),
+        "trace": result.render(),
+    }
+
+
+def _serialize_global(result: GlobalSearchResult) -> dict[str, Any]:
+    """Shape the GlobalSearchResult into the Function-URL envelope (no internal detail).
+
+    Returns the communities considered (id/tier/size — never an above-clearance community, which
+    was filtered before the map), the per-community map verdicts, the reduced answer, and the
+    citations composed in ``global_query`` (community ids + member docs, no synthetic
+    provenance)."""
+    return {
+        "communities": [
+            {"id": c.id, "tier": c.tier, "size": c.size, "title": c.title}
+            for c in result.communities_considered
+        ],
+        "map_verdicts": [
+            {"community_id": v.community_id, "relevant": v.relevant} for v in result.map_verdicts
         ],
         "answer": result.answer,
         "citations": list(result.citations),
