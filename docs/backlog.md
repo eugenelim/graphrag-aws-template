@@ -185,3 +185,22 @@ singly-sourced (README sets it only for legacy KEPs without a `kep.yaml`).
 - **AC<N> (deferred: <anchor>):** <what's open> — blocked on <X>; unblocked by <Y>.
 
 -->
+
+## global-community-summary
+
+- **global-community-summary-delta-tier-refresh (security residual, not an AC):**
+  communities are detected + summarized + tier-tagged on **full ingest / `--rebuild` only**;
+  `MODE=delta` does not recompute them. A delta that *raises* a member entity's visibility
+  (`public` → `restricted`) leaves the persisted `Community.tier` stale-low and the summary
+  already generated over the then-lower-tier member — a down-classification leak the
+  query-time clearance gate cannot catch (flagged by the spec-stage security review). Today
+  the demo mitigates by **requiring a full re-ingest after any visibility-label change** (the
+  spec Never-do + the explanation doc state this), consistent with the project's posture that
+  synthetic visibility labels are a teaching stand-in, not real authz (charter principle 5).
+  Unblocked by either (a) recomputing communities on delta when any member visibility
+  changed, or (b) the fail-closed alternative — having `MODE=delta` **clear** `Community`
+  nodes so global search returns "communities unavailable until next full ingest" rather than
+  serving stale-tier summaries. A delta-refresh implementer must handle **both directions**:
+  the stale-**low** case above (a leak), and the symmetric stale-**high** case (a member
+  visibility *lowered* `restricted` → `public` leaves `Community.tier` over-restrictive — an
+  availability/correctness bug, not a leak; same full-re-ingest mitigation today).
