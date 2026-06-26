@@ -684,3 +684,58 @@ def test_parentchild_retrieval_adds_no_new_infra(template: Template) -> None:
         if "bedrock:Converse" in actions:
             saw_converse = True
     assert saw_converse, "parent-child synthesis reuses the existing bedrock:Converse grant"
+
+
+# --- global-community-summary: ingest-task Converse grant, no new resource (AC8) -------
+def _bedrock_actions_by_role(template: Template, role_prefix: str) -> tuple[set[str], bool]:
+    """Bedrock actions on IAM policies attached to a role whose logical id starts with
+    ``role_prefix``, plus whether any such statement used a wildcard Resource."""
+    actions: set[str] = set()
+    wildcard = False
+    for res in _resources(template).values():
+        if res["Type"] != "AWS::IAM::Policy":
+            continue
+        refs = [r["Ref"] for r in res["Properties"].get("Roles", []) if isinstance(r, dict)]
+        if not any(ref.startswith(role_prefix) for ref in refs):
+            continue
+        for stmt in res["Properties"]["PolicyDocument"]["Statement"]:
+            bedrock = [a for a in _as_list(stmt["Action"]) if a.startswith("bedrock:")]
+            if bedrock:
+                actions.update(bedrock)
+                if "*" in _as_list(stmt["Resource"]):
+                    wildcard = True
+    return actions, wildcard
+
+
+def test_ingestion_task_role_grants_scoped_converse_for_summaries(template: Template) -> None:
+    # AC8: the ingest task generates per-community summaries via Bedrock Converse (ADR-0005),
+    # so its role gains bedrock:Converse — scoped to the synthesis model, no wildcard Resource.
+    actions, wildcard = _bedrock_actions_by_role(template, "IngestionTaskRole")
+    assert "bedrock:Converse" in actions, "ingest task role must grant bedrock:Converse"
+    assert "bedrock:InvokeModel" in actions, "ingest task role still embeds via Titan (InvokeModel)"
+    assert not wildcard, "ingest-task bedrock grant must not be a wildcard Resource"
+
+
+def test_query_lambda_neptune_grant_unchanged_by_global(template: Template) -> None:
+    # AC8: the global read path reads Community nodes through the query Lambda's existing
+    # read-only Neptune grant (ADR-0004) — global adds NO query-side write grant.
+    actions = _neptune_actions_by_role(template, "QueryRole")
+    assert "neptune-db:ReadDataViaQuery" in actions
+    assert "neptune-db:WriteDataViaQuery" not in actions
+    assert "neptune-db:DeleteDataViaQuery" not in actions
+
+
+def test_global_adds_no_new_resource_no_neptune_analytics_budget_held(template: Template) -> None:
+    # AC8: Community nodes ride the existing Neptune cluster — no second cluster, no standing
+    # Neptune Analytics graph; summaries are on-demand Converse calls, not standing cost.
+    template.resource_count_is("AWS::NeptuneGraph::Graph", 0)  # NO Neptune Analytics service
+    template.resource_count_is("AWS::Neptune::DBCluster", 1)  # still the single cluster
+    template.resource_count_is("AWS::ECS::TaskDefinition", 1)  # detection rides the ingest task
+    fns = [r for r in _resources(template).values() if r["Type"] == "AWS::Lambda::Function"]
+    product = [f for f in fns if str(f["Properties"].get("Handler", "")).startswith("graphrag.")]
+    assert len(product) == 3  # smoke + vector-smoke + query — no new global function
+    template.resource_count_is("AWS::Lambda::Url", 1)  # still only the IAM-auth query URL
+    template.has_resource_properties(
+        "AWS::Budgets::Budget",
+        {"Budget": Match.object_like({"BudgetLimit": {"Amount": 150, "Unit": "USD"}})},
+    )
