@@ -493,6 +493,78 @@ def _resources(template: Template) -> dict:
     return template.to_json()["Resources"]
 
 
+# --- text2opencypher-guarded: read-only query-Lambda Neptune grant + read-cost backstop (AC9) ---
+def _neptune_actions_by_role(template: Template, role_prefix: str) -> set[str]:
+    """Neptune data actions on IAM policies attached to a role whose logical id starts with
+    ``role_prefix`` (CDK appends a hash, so match by prefix). Lets AC9 assert per-role grants
+    rather than a cluster-wide property — two peer roles retain write by design."""
+    actions: set[str] = set()
+    for res in _resources(template).values():
+        if res["Type"] != "AWS::IAM::Policy":
+            continue
+        refs = [r["Ref"] for r in res["Properties"].get("Roles", []) if isinstance(r, dict)]
+        if not any(ref.startswith(role_prefix) for ref in refs):
+            continue
+        for stmt in res["Properties"]["PolicyDocument"]["Statement"]:
+            actions.update(a for a in _as_list(stmt["Action"]) if a.startswith("neptune-db:"))
+    return actions
+
+
+def test_query_lambda_neptune_grant_is_read_only(template: Template) -> None:
+    # The load-bearing ADR-0004 backstop: the query Lambda (the only role running LLM-authored
+    # text2cypher openCypher) can read but physically cannot write.
+    actions = _neptune_actions_by_role(template, "QueryRole")
+    assert "neptune-db:ReadDataViaQuery" in actions
+    assert "neptune-db:connect" in actions
+    assert "neptune-db:WriteDataViaQuery" not in actions
+    assert "neptune-db:DeleteDataViaQuery" not in actions
+
+
+def test_ingestion_and_smoke_roles_retain_read_write(template: Template) -> None:
+    # The two roles that legitimately write keep the full grant (the narrowing is query-only).
+    for prefix in ("IngestionTaskRole", "SmokeProbeServiceRole"):
+        actions = _neptune_actions_by_role(template, prefix)
+        assert "neptune-db:WriteDataViaQuery" in actions, f"{prefix} must retain write"
+        assert "neptune-db:DeleteDataViaQuery" in actions, f"{prefix} must retain delete"
+
+
+def test_no_other_role_holds_neptune_write(template: Template) -> None:
+    # No role beyond the two known write-holders was widened (ADR-0004 Confirmation).
+    for res in _resources(template).values():
+        if res["Type"] != "AWS::IAM::Policy":
+            continue
+        stmts = res["Properties"]["PolicyDocument"]["Statement"]
+        if not any("neptune-db:WriteDataViaQuery" in _as_list(s["Action"]) for s in stmts):
+            continue
+        refs = [r["Ref"] for r in res["Properties"].get("Roles", []) if isinstance(r, dict)]
+        assert all(
+            ref.startswith("IngestionTaskRole") or ref.startswith("SmokeProbeServiceRole")
+            for ref in refs
+        ), f"unexpected role holds neptune write: {refs}"
+
+
+def test_neptune_query_timeout_backstop_is_set(template: Template) -> None:
+    # The engine read-cost backstop (ADR-0004): a runaway model-authored read is killed by the
+    # engine even if the validator's unbounded-path guard is bypassed.
+    template.has_resource_properties(
+        "AWS::Neptune::DBClusterParameterGroup",
+        {"Parameters": Match.object_like({"neptune_query_timeout": Match.any_value()})},
+    )
+
+
+def test_text2cypher_adds_no_new_billable_resource_budget_held(template: Template) -> None:
+    # The text2cypher path rides the existing query Lambda via the additive `mode` value; the
+    # only infra change is the query-grant narrowing + the (free, config-only) parameter group.
+    fns = [r for r in _resources(template).values() if r["Type"] == "AWS::Lambda::Function"]
+    product = [f for f in fns if str(f["Properties"].get("Handler", "")).startswith("graphrag.")]
+    assert len(product) == 3  # smoke + vector-smoke + query — no new text2cypher function
+    template.resource_count_is("AWS::Lambda::Url", 1)  # still only the IAM-auth query URL
+    template.has_resource_properties(
+        "AWS::Budgets::Budget",
+        {"Budget": Match.object_like({"BudgetLimit": {"Amount": 150, "Unit": "USD"}})},
+    )
+
+
 def _iam_statements(template: Template) -> list[dict]:
     out: list[dict] = []
     for res in _resources(template).values():

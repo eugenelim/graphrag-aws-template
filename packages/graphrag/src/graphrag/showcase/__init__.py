@@ -62,6 +62,21 @@ class GovernedShowcaseQuery:
     highlight: str = ""
 
 
+@dataclass
+class Text2CypherShowcaseQuery:
+    """A text2opencypher-guarded (flexible/risky-path) demo query: the ``gold`` nodes the
+    model-authored openCypher should return (all resolving in the fixture corpus), and an
+    optional ``shared_with_template`` naming the governed template that answers the **same**
+    question — the head-to-head that lets a watcher choose between the governed and flexible
+    paths."""
+
+    id: str
+    query: str
+    gold: list[str] = field(default_factory=list)
+    shared_with_template: str | None = None
+    highlight: str = ""
+
+
 def load_showcase() -> list[ShowcaseQuery]:
     """Load the packaged showcase query set as ``ShowcaseQuery`` objects."""
     text = resources.files("graphrag.showcase").joinpath("queries.yaml").read_text(encoding="utf-8")
@@ -115,6 +130,26 @@ def load_governed_showcase() -> list[GovernedShowcaseQuery]:
                 template=str(entry["template"]),
                 param=str(entry["param"]),
                 gold=[str(g) for g in entry.get("gold", [])],
+                highlight=str(entry.get("highlight", "")),
+            )
+        )
+    return out
+
+
+def load_text2cypher_showcase() -> list[Text2CypherShowcaseQuery]:
+    """Load the packaged text2opencypher-guarded (flexible-path) demo queries."""
+    text = resources.files("graphrag.showcase").joinpath("queries.yaml").read_text(encoding="utf-8")
+    data = yaml.safe_load(text) or {}
+    raw = data.get("text2cypher_queries", []) if isinstance(data, dict) else []
+    out: list[Text2CypherShowcaseQuery] = []
+    for entry in raw:
+        shared = entry.get("shared_with_template")
+        out.append(
+            Text2CypherShowcaseQuery(
+                id=str(entry["id"]),
+                query=str(entry["query"]),
+                gold=[str(g) for g in entry.get("gold", [])],
+                shared_with_template=str(shared) if shared else None,
                 highlight=str(entry.get("highlight", "")),
             )
         )
