@@ -120,13 +120,33 @@ modes. The OpenSearch `visibility` keyword field lands only on a **fresh** index
 | Live ingress + IAM | Rides the **existing** IAM-auth, scoped-principal Function URL via the additive `mode: "parentchild"` value. Synthesis reuses the granted `bedrock:Converse`; the child embedding reuses the granted Titan `bedrock:InvokeModel`; the nested index uses the existing OpenSearch `es:ESHttp*` data-access. The path **builds no Neptune store** (vector-only), so it adds **no Neptune grant**. The only store change is a **new index** on the existing domain (`graphrag-parents`), created app-side at `create_index` — no new billable/compute resource (Budgets held at 150). |
 | Audit envelope (matched children + returned parents) → caller | The success envelope returns the matched child ids (the precise match) and the returned parent ids (the units synthesized over) — **never the raw parent body prose** (the trace shows the body by character count, not inline) — contained by the same trusted-ingress argument as the sibling envelopes. The *error* envelope stays fully sanitized (correlation id, no internal detail). |
 
+## Trust boundaries (global-community-summary — the corpus-wide path)
+
+> The graphrag.com **Global Community Summary** pattern (MS GraphRAG *global*): detect
+> communities over the entity graph (Louvain, **in the Fargate ingest task** — not a standing
+> Neptune Analytics service, ADR-0005), summarize each via Bedrock, and answer corpus-wide
+> questions by a **map-reduce** over the summaries. See the
+> [global community summary explanation](../guides/explanation/global-community-summary.md).
+
+| Boundary | Control |
+| --- | --- |
+| Untrusted question + persisted summaries → LLM (LLM01/LLM04/LLM08) | Both the ingest **summarize** step and the query **map + reduce** reuse the audited `BedrockClaudeSynthesizer`: all community-derived content (member subgraph, summaries, partials) rides Converse `messages` as **data** (never `system`); the defensive directive + bounded `maxTokens` apply; the answer is display-only. `globalsearch.global_query` builds **no system prompt of its own**. The map drop is matched by **stripped equality** with the `NOT RELEVANT` sentinel (not a substring), so a persisted summary that *embeds* the literal string cannot suppress its own community (LLM04→LLM01 sentinel-collision). |
+| Corpus-wide summary ∧ permission clearance (the leak boundary) | A summary blends **all** its members, so it is gated **whole** by its composed (most-restrictive) member tier (`compose` of member visibilities; an unlabeled member → `public`, the named teaching default). `all_communities` filters by `tier ∈ clearance.allowed` **before** the map step (`None` ⇒ unrestricted; **empty** ⇒ none — fail-closed), so an above-clearance community never reaches the synthesizer, the trace, the member-derived `title`, the map verdicts, or the citations. Citations are composed in `global_query` from surviving community ids + member `doc_paths` (a subset of in-clearance members — never exceeds the gate), **never** the synthesizer's chunk citations. A teaching stand-in for an ACL, not real authz. |
+| `Community` node write/read → Neptune | At ingest the task writes `Community` nodes + stamps `communityId` on member `Entity` nodes via **parameterized** openCypher (every value in the parameter map, labels are fixed constants — **never interpolated**, `ruff S` on); HTTPS enforced, TLS verify on, SigV4 via the default botocore chain (the `store.neptune` posture). At query the Lambda reads `Community` nodes through a **read-only** store. |
+| Detection compute (networkx) | Runs **only** in the Fargate ingest task (`community_detect`, networkx imported lazily); a `sys.modules` guard proves networkx never enters the query Lambda import graph. Louvain is seeded for reproducibility. |
+| Live ingress + IAM | Rides the **existing** IAM-auth, scoped-principal Function URL via the additive `mode: "global"` value, dispatched **after** the shared `resolve_clearance` block (unknown persona → client error before any read). The one IaC change adds `bedrock:Converse` to the **ingest task role** (the existing `_bedrock_synthesis_invoke` grant, scoped, no wildcard) for summarization; the **query-Lambda Neptune grant is unchanged read-only** (ADR-0004 — reading `Community` nodes is a read); `Community` nodes ride the existing cluster — **no new billable/compute resource** (Budgets held at 150). |
+| Delta staleness (named residual) | Communities are recomputed on **full ingest / `--rebuild` only**; a delta that raises a member's visibility leaves `Community.tier` stale-low — a down-classification residual, mitigated by requiring a full re-ingest after a visibility-label change (deferred: `global-community-summary-delta-tier-refresh`). Consistent with the synthetic-labels-are-not-authz posture (charter principle 5). |
+
 ## Least privilege
 
 The Fargate **task role** and the **vector probe role** grant only: scoped `s3`
 read on the corpus bucket (task only), `neptune-db:*` data actions on the specific
 cluster (task only), **`es:ESHttp*` scoped to the one OpenSearch domain ARN**, and
 **`bedrock:InvokeModel` scoped to the one Titan v2 model ARN** — **no wildcard
-`Resource`** (asserted by `apps/infra/tests/test_stack.py`). The `es` IAM prefix and
+`Resource`** (asserted by `apps/infra/tests/test_stack.py`). The task role additionally
+holds **`bedrock:Converse` scoped to the synthesis Claude model** (global-community-summary:
+the Fargate task generates per-community summaries in-task, ADR-0005 — the same scoped grant
+the query Lambda holds, no wildcard). The `es` IAM prefix and
 the adapter's SigV4 signing service come from a single `"es"` constant so they can't
 drift. The execution role's `ecr:GetAuthorizationToken` is the one legitimate `"*"`
 (an AWS requirement) and is out of that assertion's scope.
