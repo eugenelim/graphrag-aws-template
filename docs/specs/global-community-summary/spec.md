@@ -305,7 +305,7 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
 
 ## Acceptance Criteria
 
-- [ ] **AC1 — Community detection: Louvain in-process, seeded, pure (`networkx`-isolated).**
+- [x] **AC1 — Community detection: Louvain in-process, seeded, pure (`networkx`-isolated).**
   A `graphrag.community_detect` module provides `detect_communities(nodes: list[Node],
   edges: list[Edge], *, seed: int = DEFAULT_SEED) -> list[CommunitySpec]` that builds an
   **undirected** `networkx` graph from the entity nodes + edges and partitions it with
@@ -322,7 +322,7 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   isolated node is its own singleton community. `community_detect` is the **only** module
   that imports `networkx`, and it imports it **lazily** (so importing the package does not
   pull it in). *(TDD)*
-- [ ] **AC2 — `Community` node + `CommunityStore` seam (write-back to the existing
+- [x] **AC2 — `Community` node + `CommunityStore` seam (write-back to the existing
   cluster, clearance-gated read).** A `graphrag.store.community_base` module declares
   `Community(id, title, summary, entity_ids, tier, size)` and the `CommunityStore` ABC
   (`create()`, `upsert_community(c)`, `set_community_id(entity_id, community_id)`,
@@ -335,7 +335,7 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   the suite pins the in-memory store's records + predicate and the Neptune adapter's
   request body + parse against a mock HTTP client; full read-back parity is the live AC10
   check. *(TDD + goal-based mapping check)*
-- [ ] **AC3 — Per-community summaries via the existing `Synthesizer` seam.**
+- [x] **AC3 — Per-community summaries via the existing `Synthesizer` seam.**
   `summarize_communities(specs, graph, synthesizer) -> list[Community]` builds, for each
   `CommunitySpec`, the **member entities + the relationships among them** (the community
   subgraph) as the synthesis input and calls `synthesizer.synthesize` once per community
@@ -347,7 +347,7 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   member-subgraph are small (bounded ingest fan-out + bounded per-community prompt) — an
   unbounded large-corpus fan-out (many singleton communities, or a giant community's prompt)
   is the named scale-out residual (LLM10, ADR-0005; not built here). *(TDD)*
-- [ ] **AC4 — Global map-reduce orchestration with a clearance-gated trace.**
+- [x] **AC4 — Global map-reduce orchestration with a clearance-gated trace.**
   `global_query(question, *, community_store, synthesizer, clearance=None, top_n=DEFAULT_TOP_N)`
   reads `community_store.all_communities(allowed_labels=clearance.allowed if clearance
   else None)`, runs the **map** per community (top-N by size) — `synthesizer.synthesize`
@@ -373,7 +373,7 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   `communities_considered` (including their member-derived `title`), the map, the reduce,
   and the trace**; an empty `Clearance.allowed` ⇒ zero communities (fail-closed survives
   the orchestrator). *(TDD + narratability check)*
-- [ ] **AC5 — Ingest detects + summarizes + writes back on full ingest, embed-pass
+- [x] **AC5 — Ingest detects + summarizes + writes back on full ingest, embed-pass
   untouched, delta scoped out.** The full-ingest Fargate path
   (`apps/ingestion/entrypoint.py`), when a `CommunityStore` is injected (tests) **or
   `NEPTUNE_ENDPOINT` is set** (deploy — the live trigger, mirroring how
@@ -387,7 +387,7 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   vector-only deploy is unchanged). **`MODE=delta` does not recompute
   communities** (scoped out — asserted; full / `--rebuild` rebuild them); the existing
   graph + vector dual-write behavior is unchanged. *(TDD)*
-- [ ] **AC6 — CLI verb `global-query`, offline by default, live via SigV4.**
+- [x] **AC6 — CLI verb `global-query`, offline by default, live via SigV4.**
   `graphrag global-query --q "<text>"` runs **offline** (in-memory graph + in-memory
   community store built by detecting + summarizing the fixture corpus with
   `TemplateSynthesizer`) and prints the ordered trace, labeling the synthesizer
@@ -397,7 +397,7 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   the returned trace; a non-2xx raises with the body. A `detect-communities` verb (or
   `--show-communities`) prints the detected partition + per-community summaries offline.
   `--persona` resolves a clearance fail-closed. *(TDD)*
-- [ ] **AC7 — In-VPC query Lambda global dispatch, PyYAML-free + networkx-free,
+- [x] **AC7 — In-VPC query Lambda global dispatch, PyYAML-free + networkx-free,
   sanitized, read-only.** `lambda_handler` reads the optional `mode` and on `"global"`
   builds the live **read-only** `NeptuneCommunityStore` + `BedrockClaudeSynthesizer` from
   the execution role, runs `global_query`, and returns the trace envelope (communities
@@ -415,7 +415,7 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   the Lambda **detects nothing**. Exercised with the store + synthesizer **mocked** (no
   network); reuses the **same** `global_query` the CLI uses. *(TDD with mock; live in
   AC10)*
-- [ ] **AC8 — IaC: one scoped grant added, no new resource, no widened query grant, cost
+- [x] **AC8 — IaC: one scoped grant added, no new resource, no widened query grant, cost
   held.** The only stack change is the **ingest task role** gaining `bedrock:Converse`
   scoped to the synthesis model (via the existing `_bedrock_synthesis_invoke()` helper)
   with **no wildcard `Resource`** — so the Fargate task can generate summaries. A synth
@@ -424,7 +424,7 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   ADR-0004), **no other role's grant is widened**, and the Budgets value is asserted
   **unchanged at the literal `150`**. Per ADR-0002 / ADR-0005. *(goal-based synth,
   CDK-env-gated)*
-- [ ] **AC9 — Global-search showcase set + the global teaching framing (Louvain-not-Leiden
+- [x] **AC9 — Global-search showcase set + the global teaching framing (Louvain-not-Leiden
   stated).** A `global_queries` section in the showcase `queries.yaml` holds **≥3**
   corpus-wide queries, each labeled with the expected contributing communities and the
   corpus-wide theme it surfaces; a loader/test asserts it parses and every named
