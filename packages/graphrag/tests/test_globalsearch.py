@@ -161,6 +161,14 @@ def test_render_trace_is_ordered() -> None:
     assert i_q < i_considered < i_verdicts < i_answer < i_cites
 
 
+def test_render_surfaces_each_relevant_partial() -> None:
+    # the per-community map verdict shows WHAT the community contributed (the partial), not just
+    # a boolean — dropping the partial from render() must fail this.
+    rendered = global_query("themes?", community_store=_store(), synthesizer=StubSynth()).render()
+    assert "contributes — partial[community-0]" in rendered  # the legible contribution line
+    assert "community-3: NOT RELEVANT" in rendered  # the dropped community still shown, no partial
+
+
 def test_top_n_bounds_the_map_fanout() -> None:
     synth = StubSynth()
     result = global_query("themes?", community_store=_store(), synthesizer=synth, top_n=2)
