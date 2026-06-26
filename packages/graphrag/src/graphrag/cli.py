@@ -34,6 +34,7 @@ from .ingest import ingest, ingest_delta, rebuild
 from .labels import label_chunks, load_labels
 from .model import Direction, EdgeKind
 from .normalize import kep_id, person_id, sig_id
+from .parentchild import group_into_parents, parentchild_query
 from .query import Step, traverse
 from .resolve import load_aliases
 from .select import BedrockTemplateSelector, RuleTemplateSelector, TemplateSelector
@@ -47,6 +48,8 @@ from .sources import load_corpus
 from .store.base import GraphStore
 from .store.memory import MemoryGraphStore
 from .store.neptune import HttpClient, HttpResponse, _UrllibClient
+from .store.parentchild_base import ParentChildStore
+from .store.parentchild_memory import MemoryParentChildStore
 from .store.vector_base import EmbeddedChunk, VectorStore
 from .store.vector_memory import MemoryVectorStore
 from .synthesize import (
@@ -190,8 +193,9 @@ def _function_url_query(
     permission-filtered server-side by the same clearance the offline path applies.
 
     ``mode`` selects the server path (``hybrid`` default | ``governed`` | ``text2cypher`` |
-    ``selfquery``); it rides the body only when non-default, so a hybrid call's wire form is
-    byte-unchanged (the additive, back-compat Function-URL extension the catalog slices ship)."""
+    ``selfquery`` | ``parentchild``); it rides the body only when non-default, so a hybrid call's
+    wire form is byte-unchanged (the additive, back-compat Function-URL extension the catalog
+    slices ship)."""
     from botocore.auth import SigV4Auth
     from botocore.awsrequest import AWSRequest
     from botocore.session import Session
@@ -244,6 +248,30 @@ def _index_corpus(
     for ec in embedded:
         store.index_chunk(ec)
     return embedded
+
+
+def _parentchild_store(args: argparse.Namespace) -> ParentChildStore:
+    """OpenSearch nested store when an endpoint is given (deployed, in-VPC), else in-memory."""
+    if getattr(args, "opensearch_endpoint", None):
+        from .store.parentchild_opensearch import OpenSearchParentChildStore  # lazy: deploy-only
+
+        return OpenSearchParentChildStore(args.opensearch_endpoint, args.region)
+    return MemoryParentChildStore()
+
+
+def _index_parentchild_corpus(
+    store: ParentChildStore, embedder: Embedder, community: Path, enhancements: Path
+) -> None:
+    """Chunk + embed the prose subset, group chunks into parents, and index the nested store —
+    the offline twin of the Fargate parent-child dual-write (one embed pass)."""
+    docs = load_corpus(community, enhancements)
+    chunks = chunk_corpus(docs)
+    label_chunks(chunks, load_labels())  # so --persona can filter offline (inert without one)
+    vectors = embedder.embed([c.text for c in chunks])
+    embedded = [EmbeddedChunk(c, v) for c, v in zip(chunks, vectors, strict=True)]
+    bodies = {d.doc_id: d.markdown.body for d in docs if d.markdown is not None}
+    for parent in group_into_parents(embedded, bodies):
+        store.index_parent(parent)
 
 
 def _cmd_vector_ingest(args: argparse.Namespace) -> int:
@@ -496,6 +524,52 @@ def _offline_text2cypher_label(generator: Text2CypherGenerator, synthesizer: Syn
         "evaluator runs a bounded read SUBSET, and live Neptune is the execution-fidelity "
         "oracle — semantic generation/quality is the live path)"
     )
+
+
+def _cmd_parentchild_query(args: argparse.Namespace) -> int:
+    """The Parent-Child Retriever path: a small child chunk's vector is matched (precise), the
+    larger parent document body is returned for context-complete synthesis, with the trace."""
+    if getattr(args, "function_url", None):
+        # Live: thin SigV4 Function-URL client, mode=parentchild (persona rides the body too).
+        clearance = _clearance(args)
+        result = _function_url_query(
+            args.function_url,
+            args.q,
+            args.region,
+            getattr(args, "persona", None),
+            mode="parentchild",
+        )
+        print("== parentchild-query (live function-url) ==")
+        _print_persona(clearance)
+        print("trace:")
+        print(result.get("trace", "(none)"))
+        print("citations:")
+        for cite in result.get("citations", []) or []:
+            print(f"  - {cite}")
+        print("answer:")
+        print(f"  {result.get('answer', '')}")
+        return 0
+
+    # Offline: in-memory nested store from the fixture corpus + offline embedder/synthesizer.
+    store = _parentchild_store(args)
+    embedder = _embedder(args)
+    synthesizer = _synthesizer(args)
+    if isinstance(store, MemoryParentChildStore):
+        _index_parentchild_corpus(store, embedder, Path(args.community), Path(args.enhancements))
+    clearance = _clearance(args)
+    result_pc = parentchild_query(
+        args.q,
+        store=store,
+        embedder=embedder,
+        synthesizer=synthesizer,
+        k=args.k,
+        clearance=clearance,
+    )
+    print("== parentchild-query (offline) ==")
+    print(_offline_label(embedder, synthesizer))
+    _print_persona(clearance)
+    print(result_pc.render())
+    return 0
 
 
 def _cmd_text2cypher_query(args: argparse.Namespace) -> int:
@@ -845,6 +919,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="live: SigV4-signed POST (mode=selfquery) to the in-VPC query Lambda's Function URL",
     )
     p_selfquery.set_defaults(func=_cmd_selfquery_query)
+
+    p_parentchild = sub.add_parser(
+        "parentchild-query",
+        help="Parent-Child Retriever: a small child chunk's vector is matched (precise), the "
+        "larger parent document body is returned for context-complete synthesis",
+    )
+    # community/enhancements/opensearch-endpoint/region/bedrock
+    add_vector_corpus_args(p_parentchild)
+    p_parentchild.add_argument("--q", required=True, help="the natural-language question")
+    p_parentchild.add_argument("--k", type=int, default=5, help="number of parents to return")
+    p_parentchild.add_argument(
+        "--synthesis-model-id",
+        help="override the Bedrock Claude synthesis model id (with --bedrock)",
+    )
+    _add_persona_arg(p_parentchild)
+    p_parentchild.add_argument(
+        "--function-url",
+        help="live: SigV4-signed POST (mode=parentchild) to the in-VPC query Lambda's Function URL",
+    )
+    p_parentchild.set_defaults(func=_cmd_parentchild_query)
 
     p_text2cypher = sub.add_parser(
         "text2cypher-query",
