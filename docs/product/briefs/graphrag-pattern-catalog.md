@@ -81,7 +81,7 @@ Ordered by value; all depend on the demo's stores (sibling slices 1–2). -->
 | Spec | graphrag.com pattern | Status |
 | --- | --- | --- |
 | `opencypher-templates` | Cypher Templates | Shipped (all 10 ACs incl. AC9 verified live) |
-| `text2opencypher-guarded` | Text2Cypher | _not yet scaffolded_ |
+| `text2opencypher-guarded` | Text2Cypher | Shipped (all 12 ACs incl. AC10 verified live) |
 | `metadata-filtering` | Metadata Filtering / Self-Query | _not yet scaffolded_ |
 | `parent-child-retrieval` | Parent-Child Retriever | _not yet scaffolded_ |
 | `global-community-summary` | Global Community Summary | _not yet scaffolded_ |

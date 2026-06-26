@@ -1,6 +1,6 @@
 # ADR-0004: Read-only guard for LLM-authored openCypher: IAM data-action scoping over a read-replica endpoint
 
-- **Status:** Proposed <!-- Proposed | Accepted | Rejected | Deprecated | Superseded by ADR-NNNN -->
+- **Status:** Accepted <!-- Proposed | Accepted | Rejected | Deprecated | Superseded by ADR-NNNN -->
 - **Date:** 2026-06-25
 - **Decision-makers:** eugenelim
 - **Supersedes:** none
