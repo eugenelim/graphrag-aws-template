@@ -1,6 +1,6 @@
 # Spec: global-community-summary
 
-- **Status:** Draft <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Shipped <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** [ADR-0005](../../adr/0005-community-detection-in-fargate-louvain.md) (community detection runs in the Fargate ingest task with **Louvain via networkx**, written back to the existing Neptune Database as `Community` nodes — **no Neptune Analytics / no standing service**; the algorithm choice + dependency are decided there), [Charter — Pattern coverage table, *Global Community Summary* row + the Louvain-vs-Leiden honesty note](../../CHARTER.md#pattern-coverage-against-the-graphragcom-catalog) (the coverage contract this slice ships; the slice **states which clustering algorithm it used**), [RFC-0001 feasibility note §1](../../rfc/0001-notes/aws-feasibility.md) (Neptune Analytics ships Louvain not Leiden, and is **avoidable** — compute in Fargate, write back), [ADR-0001](../../adr/0001-hybrid-orchestration-seed-and-expand.md) (reuses the `Synthesizer` seam + retrieval-trace posture), [ADR-0002](../../adr/0002-ephemeral-vpc-store-topology.md) (rides the existing on-demand Fargate task, the existing Neptune cluster, and the in-VPC query Lambda behind the IAM-auth Function URL; teardown-first; adds **no** billable resource), [ADR-0003](../../adr/0003-iac-tool-aws-cdk-python.md) (IaC is AWS CDK Python), [ADR-0004](../../adr/0004-text2cypher-read-only-guard.md) (the query Lambda's read-only Neptune grant already permits reading `Community` nodes — no query-side grant change)
@@ -435,7 +435,7 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   Leiden** (Microsoft GraphRAG uses Leiden; Neptune Analytics ships Louvain — see the
   charter note), and detection runs **in the Fargate ingest task, not a standing Neptune
   Analytics service** (ADR-0005). *(goal-based)*
-- [ ] **AC10 — Live deploy + global smoke (in-VPC).** Against the deployed stack with the
+- [x] **AC10 — Live deploy + global smoke (in-VPC).** Against the deployed stack with the
   corpus ingested (the Fargate task ran Louvain in-process and wrote `Community` nodes
   with live Bedrock summaries — **no standing service stood up**), a SigV4-signed
   `mode: global` call map-reduces over the live community summaries and returns the trace
@@ -444,9 +444,20 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   (guaranteed by the AC9 showcase set), a second call with a **`public-reader` persona**
   asserts the live community set is a **strict subset** of the default call's set — the
   above-clearance community is omitted (the composed-tier gate composes with the clearance,
-  fail-closed) — not merely an equal set. Then the stack is destroyed (teardown-first). Run
-  when AWS access is available (live deploy is available in this environment), else deferred
-  with a backlog anchor created atomically. *(live smoke)*
+  fail-closed) — not merely an equal set. Then the stack is destroyed (teardown-first).
+  **Verified live (2026-06-26):** deployed `GraphragSlice1` to `us-east-1` (`CREATE_COMPLETE`,
+  ~18 min); the Fargate `MODE=full` task ran Louvain **in-task** and logged
+  `community write-back: 3 communities (Louvain, in-task)` (graph 22 nodes / 28 edges / 6
+  cross-source merges; vector 13 chunks; parent-child 6 parents) — **no Neptune Analytics /
+  standing service**. A live `mode: global` Function-URL call map-reduced over the community
+  summaries into a real corpus-wide answer (SIG-Node + SIG-Network areas, cited by community).
+  The clearance gate composed live: **unrestricted = 3 communities considered**
+  (`community-0` restricted / `community-1` internal / `community-2` public);
+  **`public-reader` = 1** (`community-2` public only) — a strict subset, the restricted/internal
+  communities (KEP-1287 / KEP-1880) omitted from the trace, verdicts, answer, and citations
+  (fail-closed, narrow-only). Then `scripts/destroy.sh` (teardown-first). Full trace in
+  [`deployment-and-verification.md`](../../architecture/deployment-and-verification.md). *(live
+  smoke)*
 
 ## Assumptions
 
@@ -547,3 +558,21 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   in-memory stores + `TemplateSynthesizer`. The one IaC change adds `bedrock:Converse` to
   the ingest task role; no new billable resource; Budgets held at `150`. The slice states
   its algorithm is **Louvain, not Leiden** (charter honesty note).
+- 2026-06-26 — Implemented and shipped. AC1–AC9 met offline (full gates green:
+  ruff/mypy/pytest, 490 tests). New `community_detect.py` (Louvain via networkx, seeded,
+  lazy-imported + summarization) + `globalsearch.py` (map-reduce, `NOT RELEVANT`
+  stripped-equality sentinel, citations composed in `global_query`) + `store/community_{base,
+  neptune,memory}.py` (Community nodes, parameterized openCypher, backend-identical clearance
+  gate), the ingest write-back (`_community_writeback`, full/`--rebuild` only — delta scoped
+  out), the `global-query`/`detect-communities` CLI verbs, the additive `mode: global`
+  query-Lambda dispatch (read-only, networkx-free), the showcase set + explanation doc, and the
+  infra synth tests (scoped Converse grant on the ingest task role, no new resource, Budgets
+  150). One ingest-only dependency (`networkx`); networkx kept out of the Lambda (sys.modules
+  guard). Adversarial + security + quality review clean (fixes: Neptune `clear()` symmetry with
+  the memory store, trace surfaces the map partial, stale-community + all-three-tiers + render
+  tests; deferred: share the SigV4 `_run` helper across the two Neptune stores).
+- 2026-06-26 — **AC10 verified live** (the deferral never opened). Deployed `GraphragSlice1`,
+  the Fargate task detected **3 communities with Louvain in-task** (no standing service) +
+  wrote `Community` nodes with live Bedrock summaries, ran live `mode: global` map-reduce
+  (real corpus-wide answer) + the public-reader strict-subset compose (1 of 3 communities —
+  restricted/internal omitted, fail-closed), then destroyed the stack. All 10 ACs met.

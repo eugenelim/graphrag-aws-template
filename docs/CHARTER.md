@@ -194,7 +194,7 @@ not here, so the cells stay at service-and-shape altitude.
 | **Cypher Templates** | Expert-authored **parameterized openCypher** templates on Neptune; Bedrock selects the template and extracts parameters — the governed, auditable, low-risk enterprise path | ◔ Planned — `opencypher-templates` |
 | **Parent-Child Retriever** | OpenSearch nested child-chunk vectors for precise matching → return the parent document body for context-complete synthesis | ✅ Have — `parent-child-retrieval` |
 | **Text2Cypher** | Bedrock Claude → **Text2openCypher**, executed **read-only** against Neptune — the flexible-but-risky foil to Cypher Templates, with the guardrail made explicit (endpoint/validation mechanism decided at slice time) | ◔ Planned — `text2opencypher-guarded` |
-| **Global Community Summary** (MS GraphRAG global) | Community detection over the entity graph + Bedrock-generated community summaries stored in Neptune; serves "summarize across the whole corpus" questions our seed-and-expand can't, **without a standing analytics service** (compute-location and algorithm decided at slice time — see notes) | ◔ Planned — `global-community-summary` |
+| **Global Community Summary** (MS GraphRAG global) | Community detection over the entity graph + Bedrock-generated community summaries stored in Neptune; serves "summarize across the whole corpus" questions our seed-and-expand can't, **without a standing analytics service** — **Louvain** computed **in the Fargate ingest task** (not Neptune Analytics), ADR-0005 | ✅ Have — `global-community-summary` |
 | **Local Retriever** (MS GraphRAG local) | Entity-vector seeding in OpenSearch → Neptune graph traversal | ○ Backlog (overlaps seed-and-expand) |
 | **Dynamic Cypher Generation** | openCypher snippet library + Bedrock composition | ○ Backlog |
 | **Hypothetical Question Retriever** | Bedrock pre-generates per-chunk questions at ingest → embed in OpenSearch | ○ Backlog |
@@ -202,11 +202,13 @@ not here, so the cells stay at service-and-shape altitude.
 
 Two honesty notes that travel with this table: (1) these are Neo4j-Cypher
 patterns **translated** to Neptune openCypher — close, not identical, and named
-as such; (2) the Global Community Summary slice will diverge from Microsoft's
-reference pipeline on the clustering algorithm — the managed AWS options ship
-**Louvain**, not **Leiden** (true Leiden would need an external `leidenalg`
-step), so the slice states which it used. The divergence is flagged, not papered
-over; the [feasibility note](rfc/0001-notes/aws-feasibility.md) carries the detail.
+as such; (2) the Global Community Summary slice diverges from Microsoft's
+reference pipeline on the clustering algorithm — it uses **Louvain**, not **Leiden**
+(true Leiden would need an external `leidenalg` step; Louvain matches the managed AWS
+option so the self-compute-vs-managed trade is apples-to-apples), and detection runs
+**in the Fargate ingest task, not a standing Neptune Analytics service**. The divergence
+is flagged, not papered over; [ADR-0005](adr/0005-community-detection-in-fargate-louvain.md)
+records the decision and the [feasibility note](rfc/0001-notes/aws-feasibility.md) the detail.
 
 ## What's NOT in this charter
 

@@ -1,7 +1,7 @@
 # Plan: global-community-summary
 
 - **Spec:** [`spec.md`](spec.md)
-- **Status:** Drafting <!-- Drafting | Executing | Done -->
+- **Status:** Done <!-- Drafting | Executing | Done -->
 
 > **Plan contract:** this is the implementation strategy. Unlike the spec, this
 > document is allowed to change as you learn. When it changes substantially
@@ -539,3 +539,11 @@ backlog heading.
   one IaC grant (Converse on the ingest task role), no new resource, Budgets `150`;
   AC10 run-or-defer. Decisions recorded in ADR-0005 (Louvain-not-Leiden,
   in-Fargate-not-Neptune-Analytics).
+- 2026-06-26: shipped. T1–T9 implemented offline (gates green, 490 tests); T10 AC10 verified
+  live (deployed `GraphragSlice1`, the Fargate task detected **3 communities with Louvain
+  in-task** + wrote `Community` nodes with live Bedrock summaries, ran live `mode: global`
+  map-reduce + the public-reader strict-subset compose [1 of 3, fail-closed], then destroyed);
+  T11 drift closure (Status→Shipped, ACs ticked, AGENTS.md + architecture docs + the charter
+  coverage `◔ Planned`→`✅ Have` + brief Spec-map row). Review fixes: Neptune `clear()` symmetry,
+  trace partial surfaced, stale-community/all-three-tiers/render test gaps closed;
+  `share-signed-opencypher-run-helper` deferred to backlog.
