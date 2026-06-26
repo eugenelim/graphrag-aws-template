@@ -130,9 +130,11 @@ _NEPTUNE_READ_ONLY_ACTIONS = [
 # The Neptune engine-level read-cost backstop (ADR-0004): a per-query timeout (ms) that kills a
 # runaway model-authored traversal even if the validator's unbounded-path guard is bypassed.
 # Set explicitly (vs. the 120s default) so it is narratable and tunable; the parameter-group
-# family must match the pinned engine version below.
+# family must match the pinned engine version below. The version is pinned to a value the
+# account/region actually offers (verify with `aws neptune describe-db-engine-versions` — the
+# runtime oracle; release-notes version strings can lag/differ, e.g. 1.3.2.0 vs the real 1.3.2.1).
 _NEPTUNE_QUERY_TIMEOUT_MS = "20000"
-_NEPTUNE_ENGINE_VERSION = "1.3.2.0"
+_NEPTUNE_ENGINE_VERSION = "1.3.5.0"  # latest neptune1.3.x; matches _NEPTUNE_PARAM_GROUP_FAMILY
 _NEPTUNE_PARAM_GROUP_FAMILY = "neptune1.3"
 
 

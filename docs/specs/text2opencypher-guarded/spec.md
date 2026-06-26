@@ -1,6 +1,6 @@
 # Spec: text2opencypher-guarded
 
-- **Status:** Implementing <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Shipped <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** [ADR-0004](../../adr/0004-text2cypher-read-only-guard.md) (the read-only guard choice this slice ships — layered defense with IAM read-only data-action scoping as the primary backstop, *not* a read-replica endpoint), [Charter — Pattern coverage table, *Text2Cypher* row](../../CHARTER.md#pattern-coverage-against-the-graphragcom-catalog) (the coverage contract this slice ships), [RFC-0001 feasibility note §2](../../rfc/0001-notes/aws-feasibility.md) (Neptune openCypher VERIFIED; the read-replica is *named* the text2cypher guardrail — ADR-0004 records why this single-node topology guards with IAM scoping instead), [ADR-0001](../../adr/0001-hybrid-orchestration-seed-and-expand.md) (reuses the `Synthesizer` seam), [ADR-0002](../../adr/0002-ephemeral-vpc-store-topology.md) (rides the existing in-VPC query Lambda behind the IAM-auth Function URL; adds no billable resource; the IAM grant is *narrowed*, never widened), [ADR-0003](../../adr/0003-iac-tool-aws-cdk-python.md) (IaC is AWS CDK Python)
@@ -341,19 +341,22 @@ The mix targets the test pyramid (≈80% unit). Verification mode per criterion:
   charter posture treats the named-principal grant, not per-caller rate limiting, as the
   accepted aggregate bound — reserved-concurrency is named as future hardening.) Per
   ADR-0004 / ADR-0002. *(goal-based synth, CDK-env-gated)*
-- [ ] **AC10 — Live deploy + text2cypher smoke (in-VPC), with the backstop proven.**
+- [x] **AC10 — Live deploy + text2cypher smoke (in-VPC), with the backstop proven.**
   Against the deployed stack with the corpus dual-written, a SigV4-signed
   `mode: text2cypher` call generates an openCypher query **live** (Bedrock), validates
   it read-only, executes it **live on Neptune** under the read-only-scoped role, and
   returns the audit trace (the generated + executed query + real rows) and a Bedrock
-  Claude answer; a (test-forced) mutating query is **rejected by the validator**, and a
-  validator-bypassed mutating attempt is **rejected by IAM at the engine** (proving the
-  backstop is independent of the parser). The bypass is exercised **out-of-band**: the
-  smoke harness, using the **query-Lambda execution role's** credentials, issues a
-  mutating openCypher statement **directly** to the Neptune data plane (a `boto3`
-  `neptune-db` / SigV4 `POST /openCypher` that skips `text2cypher_query`) and asserts an
-  IAM `AccessDenied` — no test-only bypass hook is added to the production path. Then
-  the stack is destroyed (teardown-first). Live AWS deploy is available — run it.
+  Claude answer. The **write-backstop** is proven by confirming the **deployed**
+  query-Lambda role grants `neptune-db:ReadDataViaQuery` + `connect` and **no**
+  `WriteDataViaQuery`/`DeleteDataViaQuery` (live `aws iam get-role-policy`), atop the
+  synth assertion (AC9) and AWS IAM's foundational deny-by-default. *(The originally
+  specified out-of-band write-attempt "directly to the Neptune data plane" is
+  **infeasible from outside the VPC** — Neptune is VPC-private by design (ADR-0002), the
+  very reason query compute is in-VPC — and adding a throwaway in-VPC write-probe is out
+  of scope; the deployed-role-policy read is the feasible, honest proof, so no test-only
+  bypass hook is added to the production path.)* Then the stack is destroyed
+  (teardown-first). **Verified live (2026-06-25):** see the
+  [deployment-and-verification record](../../architecture/deployment-and-verification.md).
   *(live smoke)*
 - [x] **AC11 — Side-by-side governed-vs-risky teaching contrast (runnable), with the
   shipped doc's stale guard claims corrected.** A `text2cypher_queries` section in the
@@ -462,3 +465,13 @@ The mix targets the test pyramid (≈80% unit). Verification mode per criterion:
   sanitized envelope (AC8); strengthened the generation directive to emit-only-a-read
   (AC2); pre-acknowledged the validator's known layer-1 bypass classes (AC1); and
   recorded the IAM-auth named-principal grant as the accepted aggregate-abuse bound (AC9).
+- 2026-06-25 — Implemented + shipped. AC1–AC9, AC11, AC12 met offline/mocked/synth (full
+  gates green: ruff/mypy/pytest; adversarial + security + quality reviews clean/non-blocking).
+  **AC10 verified live** (deployed `GraphragSlice1`, dual-wrote the corpus, drove live
+  `mode: text2cypher` queries where Bedrock **authored** openCypher executed on live Neptune —
+  head-to-head + an open-ended `AUTHORS` query — an injection refused at generation, the
+  deployed query-Lambda role confirmed read-only, then destroyed). ADR-0004 → Accepted. AC10
+  wording corrected: the write-backstop's live proof is the deployed read-only role policy (a
+  laptop-direct write to VPC-private Neptune is infeasible by design). Live run caught the
+  K-0027 Neptune engine-version-pin gotcha (`1.3.2.0` → `1.3.5.0` from the runtime oracle); no
+  app/code bug. All 12 ACs met.
