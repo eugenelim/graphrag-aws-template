@@ -230,3 +230,70 @@ def test_selfquery_showcase_consistent_with_schema_and_fixture(
             assert vid in hit_ids, f"{q.id}: expected-visible {vid!r} not returned"
         for eid in q.excluded:
             assert eid not in hit_ids, f"{q.id}: expected-excluded {eid!r} leaked into hits"
+
+
+# --- parent-child-retrieval: parent-child showcase set (AC8) ---------------------------
+
+from graphrag.parentchild import group_into_parents, parentchild_query  # noqa: E402
+from graphrag.showcase import (  # noqa: E402
+    ParentChildShowcaseQuery,
+    load_parentchild_showcase,
+)
+from graphrag.store.parentchild_memory import MemoryParentChildStore  # noqa: E402
+
+
+def test_parentchild_showcase_parses() -> None:
+    queries = load_parentchild_showcase()
+    assert len(queries) >= 3
+    assert all(isinstance(q, ParentChildShowcaseQuery) for q in queries)
+
+
+def test_parentchild_showcase_consistent_with_fixture(
+    community_root: Path, enhancements_root: Path
+) -> None:
+    docs = load_corpus(community_root, enhancements_root)
+    chunks = chunk_corpus(docs)
+    chunk_ids = {c.id for c in chunks}
+
+    embedder = HashEmbedder()
+    embedded = [
+        EmbeddedChunk(c, v)
+        for c, v in zip(chunks, embedder.embed([c.text for c in chunks]), strict=True)
+    ]
+    bodies = {d.doc_id: d.markdown.body for d in docs if d.markdown is not None}
+    parents = group_into_parents(embedded, bodies)
+    parent_ids = {p.parent_id for p in parents}
+
+    store = MemoryParentChildStore()
+    for parent in parents:
+        store.index_parent(parent)
+
+    for q in load_parentchild_showcase():
+        assert q.query.strip()
+        assert q.highlight.strip(), f"{q.id} has an empty highlight"
+        assert q.contrast.strip(), (
+            f"{q.id} has an empty contrast (the flat-vs-parent-child framing)"
+        )
+        # the gold matched child resolves to a fixture chunk, and BELONGS to the gold parent
+        assert q.expected_matched_child in chunk_ids, f"{q.id} matched child missing from fixture"
+        assert q.expected_parent in parent_ids, f"{q.id} parent missing from fixture"
+        assert q.expected_matched_child.rsplit("#", 1)[0] == q.expected_parent, (
+            f"{q.id}: matched child {q.expected_matched_child!r} is not a child of "
+            f"the gold parent {q.expected_parent!r}"
+        )
+        # end-to-end: the parent-child query returns the gold parent, and synthesis reads its
+        # full BODY (the returned hit carries the parent body, not a child fragment).
+        result = parentchild_query(
+            q.query,
+            store=store,
+            embedder=embedder,
+            synthesizer=TemplateSynthesizer(),
+            k=len(parents),
+        )
+        returned = {h.parent.parent_id for h in result.hits}
+        assert q.expected_parent in returned, (
+            f"{q.id}: gold parent {q.expected_parent!r} not returned"
+        )
+        gold_hit = next(h for h in result.hits if h.parent.parent_id == q.expected_parent)
+        assert gold_hit.parent.body, f"{q.id}: returned parent has no body for synthesis"
+        assert gold_hit.matched_child is not None  # a precise child surfaced the parent
