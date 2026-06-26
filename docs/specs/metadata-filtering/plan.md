@@ -69,7 +69,7 @@ Most tests live under their task. Cross-cutting:
 - Offline end-to-end (`selfquery_query` over the fixture corpus with
   `RuleMetadataExtractor` + in-memory store + offline synthesizer) on a constrained
   exemplar (e.g. *"in the enhancements repo, which KEPs does SIG Node own?"*) — asserts
-  the extracted+validated filter (`source=kubernetes/enhancements`, `entity_ids=[sig:sig-node]`),
+  the extracted+validated filter (`source=enhancements`, `entity_ids=[sig:sig-node]`),
   the filtered hits exclude the community-repo chunks, and `.render()` emits
   question → extracted filter → validated filter → filtered hits → answer in order (T5).
 - Backend-identical filter: for a given `MetadataFilter`, the in-memory `knn` and the
@@ -117,7 +117,8 @@ adapter + an orchestrator + a CLI verb), mirroring `select.py`/`governed.py`/`ve
 ### Data & schema
 - `FieldSpec(name: str, kind: Literal["enum", "entity"], choices: tuple[str, ...] | None,
   entity_kind: EntityKind | None)`; `FIELDS: tuple[FieldSpec, ...]` declaring `source`
-  (enum, choices = the two corpus repos) and `entity_ids` (entity); `FIELD_BY_NAME`.
+  (enum, choices = `("community", "enhancements")` per `sources.COMMUNITY`/`ENHANCEMENTS`) and
+  `entity_ids` (entity); `FIELD_BY_NAME`.
 - `MetadataFilter(terms: Mapping[str, tuple[str, ...]])` — frozen; `.is_empty`,
   `.as_filter_clauses()` (the request-body `terms` list), `.matches(chunk)` (the in-memory
   predicate; semantics: **OR within a field** — `chunk.field ∩ filter.values ≠ ∅` — and
@@ -241,6 +242,12 @@ Lambda's existing grants. Traces to: AC8.
   self-query field `terms` (asserted via the mock HTTP client; values in the body, not a path).
 - `# STUB: AC3` backend-identical: in-memory `knn` with the same filter returns the same sorted
   hit set; `metadata_filter=None`/empty ⇒ unfiltered (slice-2–4 behavior unchanged).
+- `# STUB: AC3` fail-closed composition: with both a `metadata_filter` and `allowed_labels`,
+  the two are independent `terms` clauses — `allowed_labels=None` ⇒ no visibility clause
+  (unrestricted), an **empty** `allowed_labels` ⇒ a visibility clause matching nothing (zero
+  hits) regardless of `metadata_filter`; an empty `metadata_filter` never drops the visibility
+  clause. Asserted on both backends (the permission slice's `None`-vs-empty invariant survives
+  the merge).
 **Approach:**
 - Switch `_knn_mapping` method `engine` `nmslib`→`lucene`, keeping `space_type:
   "cosinesimil"` (Lucene-supported on 2.11 — verify against the OpenSearch 2.11 k-NN docs
@@ -288,6 +295,9 @@ tests still green; gates clean.
   vector leg; the hybrid result's vector-sourced chunks exclude non-matching ones.
 - `# STUB: AC5` no-filter: a question with nothing extractable leaves retrieval unfiltered and the
   trace says so.
+- `# STUB: AC5` filter+clearance compose: `selfquery_query`/`hybrid_query`/`run_modes` with both a
+  `metadata_filter` and a non-`None` `clearance` exclude chunks that fail *either* (AND); an empty
+  `Clearance.allowed` still yields zero hits regardless of the filter (fail-closed survives).
 **Approach:**
 - Thread `metadata_filter: MetadataFilter | None` through `vector_search` and the vector retrieval
   inside `hybrid_query`/`run_modes` (mirroring how `clearance` already threads).
@@ -368,7 +378,9 @@ tests still green; gates clean.
 **Tests:**
 - Manual/live: deploy, dual-write the corpus on a fresh Lucene-engine index, SigV4 `mode:
   selfquery` call extracts a filter, runs filtered k-NN live on OpenSearch (filter during ANN),
-  returns the trace + a Claude answer; a no-filter question runs unfiltered; then `cdk destroy`.
+  returns the trace + a Claude answer; a no-filter question runs unfiltered; **a third call pairs
+  an extracted filter with a non-default `persona` and asserts the live hits exclude both
+  above-clearance and non-matching chunks** (composition AND during ANN); then `cdk destroy`.
 **Approach:**
 - If live AWS access (creds, CDK bootstrap, Bedrock model access) is available, run the smoke
   end-to-end and record it in `deployment-and-verification.md`; then tear down.

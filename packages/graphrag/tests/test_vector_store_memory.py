@@ -106,3 +106,44 @@ def test_knn_filters_chunks_above_clearance() -> None:
     assert {h.chunk.id for h in hits} == {"pub"}
     # no clearance -> unfiltered (both).
     assert {h.chunk.id for h in store.knn([1.0, 0.0, 0.0], k=10)} == {"pub", "res"}
+
+
+# --- metadata-filtering: in-memory self-query filter, backend-identical to OpenSearch (AC3) -
+
+
+def _ec_meta(cid: str, source: str, entity_ids: list[str]) -> EmbeddedChunk:
+    return EmbeddedChunk(Chunk(cid, cid, source, f"{cid}.md", "H", entity_ids), [1.0, 0.0, 0.0])
+
+
+def test_knn_applies_metadata_filter_predicate() -> None:
+    from graphrag.selfquery import MetadataFilter
+
+    store = MemoryVectorStore()
+    store.index_chunk(_ec_meta("c1", "enhancements", ["kep-1880", "sig:sig-node"]))
+    store.index_chunk(_ec_meta("c2", "community", ["sig:sig-node"]))
+    store.index_chunk(_ec_meta("c3", "enhancements", ["kep-2086"]))
+    # source=enhancements AND entity_ids=sig:sig-node ⇒ only c1.
+    mfilter = MetadataFilter({"source": ("enhancements",), "entity_ids": ("sig:sig-node",)})
+    hits = store.knn([1.0, 0.0, 0.0], k=10, metadata_filter=mfilter)
+    assert {h.chunk.id for h in hits} == {"c1"}
+    # None/empty filter ⇒ unfiltered.
+    assert len(store.knn([1.0, 0.0, 0.0], k=10, metadata_filter=None)) == 3
+    assert len(store.knn([1.0, 0.0, 0.0], k=10, metadata_filter=MetadataFilter())) == 3
+
+
+def test_knn_metadata_filter_composes_with_clearance_fail_closed() -> None:
+    from graphrag.selfquery import MetadataFilter
+
+    store = MemoryVectorStore()
+    store.index_chunk(_ec_vis("pub", [1.0, 0.0, 0.0], "public"))
+    store.index_chunk(_ec_vis("res", [1.0, 0.0, 0.0], "restricted"))
+    everything = MetadataFilter()
+    # empty allowed_labels ⇒ zero hits regardless of an (empty) metadata filter (fail-closed).
+    assert (
+        store.knn([1.0, 0.0, 0.0], k=10, allowed_labels=frozenset(), metadata_filter=everything)
+        == []
+    )
+    # None clearance + empty filter ⇒ unrestricted, unfiltered.
+    assert (
+        len(store.knn([1.0, 0.0, 0.0], k=10, allowed_labels=None, metadata_filter=everything)) == 2
+    )
