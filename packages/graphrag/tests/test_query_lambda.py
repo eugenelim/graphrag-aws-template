@@ -224,10 +224,11 @@ def test_oversized_raw_body_rejected_before_decode() -> None:
 
 
 def test_query_lambda_import_graph_is_pyyaml_free() -> None:
-    """The Code.from_asset Lambda bundle excludes PyYAML, so query_lambda and every
-    transitive import must load without `import yaml`. Guards the invariant
-    packages/graphrag/AGENTS.md documents — a stray `import yaml` would ship a Lambda
-    that fails only at deploy/runtime (the 3am failure mode)."""
+    """The Code.from_asset Lambda bundle excludes PyYAML **and networkx**, so query_lambda and
+    every transitive import must load without `import yaml` or `import networkx`. Guards the
+    invariant packages/graphrag/AGENTS.md documents — a stray import would ship a Lambda that
+    fails only at deploy/runtime (the 3am failure mode). networkx is ingest-only (community
+    detection runs in Fargate, ADR-0005), so the query path must never pull it in."""
     import builtins
     import importlib
     import sys
@@ -237,10 +238,16 @@ def test_query_lambda_import_graph_is_pyyaml_free() -> None:
     def _blocking(name: str, *args: Any, **kwargs: Any) -> Any:
         if name == "yaml" or name.startswith("yaml."):
             raise ImportError("yaml is not bundled in the query Lambda")
+        if name == "networkx" or name.startswith("networkx."):
+            raise ImportError("networkx is not bundled in the query Lambda (ingest-only)")
         return real_import(name, *args, **kwargs)
 
     def _is_target(mod: str) -> bool:
-        return mod == "yaml" or mod.startswith("yaml.") or mod.startswith("graphrag")
+        return (
+            mod in ("yaml", "networkx")
+            or mod.startswith(("yaml.", "networkx."))
+            or mod.startswith("graphrag")
+        )
 
     saved = {m: sys.modules.pop(m) for m in list(sys.modules) if _is_target(m)}
     builtins.__import__ = _blocking
@@ -263,11 +270,17 @@ def test_query_lambda_import_graph_is_pyyaml_free() -> None:
             # parent-child-retrieval: the parent-child import graph also rides the bundle.
             "graphrag.parentchild",
             "graphrag.store.parentchild_opensearch",
+            # global-community-summary: the global read path also rides the bundle.
+            "graphrag.globalsearch",
+            "graphrag.store.community_neptune",
         ):
             importlib.import_module(mod)
         # Slice-4: threading `visibility` (pure) must NOT transitively drag in `labels`
         # (which imports yaml) — the read path stays PyYAML-free.
         assert "graphrag.labels" not in sys.modules
+        # global-community-summary: the read path must NOT drag in community_detect (which
+        # imports networkx) — detection is ingest-only.
+        assert "graphrag.community_detect" not in sys.modules
     finally:
         builtins.__import__ = real_import
         for m in [m for m in list(sys.modules) if _is_target(m)]:
@@ -464,6 +477,76 @@ def test_parentchild_unknown_persona_is_a_client_error(wired: None) -> None:
     )
     assert "error" in result
     assert "answer" not in result  # orchestration did not run
+
+
+# --- global-community-summary: global-mode dispatch through the Lambda (AC7) -------------
+
+
+class _FakeCommunityStore:
+    """A read-only community store stand-in. Records construction (to prove the Lambda builds
+    one) and applies the clearance gate (tier in allowed) like the real adapter — it only
+    READS; it detects nothing."""
+
+    constructed = 0
+
+    def __init__(self, *a: Any, **k: Any) -> None:
+        type(self).constructed += 1
+
+    def all_communities(self, *, allowed_labels: Any = None) -> Any:
+        from graphrag.store.community_base import Community
+
+        communities = [
+            Community("community-0", "Networking", "public summary", ("kep-2086",), "public", 3,
+                      ("enhancements/keps/2086/README.md",)),
+            Community("community-1", "Secret area", "restricted summary", ("kep-1287",),
+                      "restricted", 2, ("enhancements/keps/1287/README.md",)),
+        ]
+        if allowed_labels is None:
+            return communities
+        return [c for c in communities if c.tier in allowed_labels]
+
+
+def test_global_mode_returns_envelope(wired: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    _FakeCommunityStore.constructed = 0
+    monkeypatch.setattr(query_lambda, "NeptuneCommunityStore", _FakeCommunityStore)
+    result = query_lambda.lambda_handler(
+        {"question": "summarize the corpus", "mode": "global"}, None
+    )
+    assert _FakeCommunityStore.constructed == 1  # the Lambda built a (read-only) community store
+    assert [c["id"] for c in result["communities"]] == ["community-0", "community-1"]
+    assert result["answer"] == "grounded answer"
+    assert {v["community_id"] for v in result["map_verdicts"]} == {"community-0", "community-1"}
+    assert "community:community-0" in result["citations"]
+    assert "communities considered" in result["trace"]
+
+
+def test_global_mode_persona_filters_above_clearance_communities(
+    wired: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(query_lambda, "NeptuneCommunityStore", _FakeCommunityStore)
+    # public-reader clearance: only the public community is considered; the restricted one is
+    # absent from communities, map verdicts, and citations (gated before the map).
+    result = query_lambda.lambda_handler(
+        {"question": "summarize", "mode": "global", "persona": "public-reader"}, None
+    )
+    assert [c["id"] for c in result["communities"]] == ["community-0"]
+    assert "community-1" not in {v["community_id"] for v in result["map_verdicts"]}
+    assert "restricted summary" not in result["trace"]
+    assert "community:community-1" not in result["citations"]
+
+
+def test_global_mode_unknown_persona_is_a_client_error(wired: None) -> None:
+    result = query_lambda.lambda_handler(
+        {"question": "hi", "mode": "global", "persona": "root"}, None
+    )
+    assert "error" in result
+    assert "answer" not in result  # orchestration did not run, no community read
+
+
+def test_global_mode_over_long_question_rejected(wired: None) -> None:
+    result = query_lambda.lambda_handler({"question": "x" * 9000, "mode": "global"}, None)
+    assert "error" in result
+    assert "answer" not in result
 
 
 class _NoMatchSelector:
