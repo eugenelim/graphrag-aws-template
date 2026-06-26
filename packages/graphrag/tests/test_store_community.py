@@ -117,6 +117,18 @@ def test_all_communities_clearance_filters_server_side() -> None:
     assert http.last_params()["allowed"] == ["internal", "public"]  # sorted
 
 
+def test_clear_removes_community_nodes_and_member_stamps() -> None:
+    # clear() must drop Community nodes AND the communityId stamps on member entities, so a
+    # re-detection leaves neither stale — symmetric with MemoryCommunityStore.clear (the
+    # backend-identical invariant the docstrings claim).
+    ok = json.dumps({"results": []})
+    http = RecordingHttp([HttpResponse(200, ok), HttpResponse(200, ok)])
+    _store(http).clear()
+    queries = [json.loads(c["data"])["query"] for c in http.calls]
+    assert any("MATCH (c:Community) DETACH DELETE c" in q for q in queries)
+    assert any("MATCH (n:Entity) REMOVE n.communityId" in q for q in queries)
+
+
 def test_all_communities_empty_clearance_is_fail_closed() -> None:
     # an empty allow-set still issues the IN [] filter (matches nothing) — never "no filter"
     http = RecordingHttp([HttpResponse(200, json.dumps({"results": []}))])

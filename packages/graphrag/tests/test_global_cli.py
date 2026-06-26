@@ -77,6 +77,21 @@ def test_global_offline_persona_filters(capsys: pytest.CaptureFixture[str]) -> N
     assert rc == 0
     out = capsys.readouterr().out
     assert "persona: public-reader" in out  # the synthetic-clearance banner
+    # real filtering, not just the banner: kep-1287 lives only in the restricted community, so a
+    # public-reader's trace must NOT surface it (the above-clearance community is gated out).
+    assert "kep-1287" not in out
+
+
+def test_global_offline_unrestricted_surfaces_restricted_member(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # the contrast to the persona test: with no clearance, the restricted community is served,
+    # so its member kep-1287 DOES appear — proving the persona test's absence is real filtering.
+    rc = cli.main(
+        ["global-query", "--community", COMMUNITY, "--enhancements", ENHANCEMENTS, "--q", "all"]
+    )
+    assert rc == 0
+    assert "kep-1287" in capsys.readouterr().out
 
 
 def test_global_unknown_persona_is_fail_closed() -> None:

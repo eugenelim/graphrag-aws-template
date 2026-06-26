@@ -308,6 +308,24 @@ def test_global_showcase_parses() -> None:
     assert all(isinstance(q, GlobalShowcaseQuery) for q in queries)
 
 
+def test_fixture_yields_all_three_visibility_tiers(
+    community_root: Path, enhancements_root: Path
+) -> None:
+    # Pins the queries.yaml partition claim AND makes the AC10 persona check non-vacuous: the
+    # fixture must yield communities spanning public/internal/restricted, so a public-reader
+    # call is a STRICT subset of the unrestricted call (an above-public community is omitted).
+    from graphrag.community_detect import detect_communities
+    from graphrag.labels import label_graph, load_labels
+
+    graph = resolve(load_corpus(community_root, enhancements_root))
+    label_graph(graph, load_labels())  # stamp visibility (as ingest() does) so tiers are real
+    tiers = {spec.tier for spec in detect_communities(list(graph.nodes.values()), graph.edges)}
+    assert {"public", "internal", "restricted"} <= tiers, (
+        f"fixture must yield all three visibility tiers (got {tiers}) — AC10 persona check "
+        "relies on at least one above-public community existing"
+    )
+
+
 def test_global_showcase_entities_resolve_and_land_in_communities(
     community_root: Path, enhancements_root: Path
 ) -> None:

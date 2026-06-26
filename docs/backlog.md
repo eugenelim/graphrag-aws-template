@@ -188,6 +188,15 @@ singly-sourced (README sets it only for legacy KEPs without a `kep.yaml`).
 
 ## global-community-summary
 
+- **share-signed-opencypher-run-helper (hardening, not an AC):** `NeptuneCommunityStore._run`
+  (`store/community_neptune.py`) is a verbatim copy of `NeptuneGraphStore._run` (TLS-enforce +
+  SigV4 + parameter map), mirroring the parent-child adapter's accepted thin-`_request`
+  re-implementation. Correct today, but a future hardening to the canonical signer (a timeout
+  change, a header tweak, a credential fix) would not propagate — the established-helper-drift
+  class flagged by the global-community-summary security review. Unblocked by extracting a shared
+  module-level `_signed_opencypher(endpoint, region, session, http, verify, query, params)` in
+  `store/neptune.py` and having both Neptune stores call it (cross-cutting — touches the shipped
+  `neptune.py` and its tests).
 - **global-community-summary-delta-tier-refresh (security residual, not an AC):**
   communities are detected + summarized + tier-tagged on **full ingest / `--rebuild` only**;
   `MODE=delta` does not recompute them. A delta that *raises* a member entity's visibility

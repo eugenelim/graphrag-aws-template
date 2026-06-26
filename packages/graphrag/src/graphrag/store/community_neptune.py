@@ -141,5 +141,10 @@ class NeptuneCommunityStore(CommunityStore):
         return int(rows[0]["n"]) if rows else 0
 
     def clear(self) -> None:
-        """Remove every community node (the full-ingest / ``--rebuild`` reset)."""
+        """Remove every community node **and** the ``communityId`` stamp on every member entity
+        (the full-ingest / ``--rebuild`` reset). Both are cleared so a re-detection cannot leave
+        a stale ``Community`` node or a stale member stamp — keeping this symmetric with
+        ``MemoryCommunityStore.clear`` (the backend-identical invariant; the two cannot disagree
+        after a rebuild)."""
         self._run(f"MATCH (c:{_COMMUNITY_LABEL}) DETACH DELETE c", {})
+        self._run(f"MATCH (n:{_NODE_LABEL}) REMOVE n.communityId", {})

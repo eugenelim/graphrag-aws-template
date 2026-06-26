@@ -89,8 +89,11 @@ class GlobalSearchResult:
                 )
         lines.append("map verdicts:")
         for verdict in self.map_verdicts:
-            mark = "contributes" if verdict.relevant else "NOT RELEVANT"
-            lines.append(f"  - {verdict.community_id}: {mark}")
+            if verdict.relevant:
+                # surface the partial — the legible "what this community contributed" line
+                lines.append(f"  - {verdict.community_id}: contributes — {verdict.partial}")
+            else:
+                lines.append(f"  - {verdict.community_id}: NOT RELEVANT")
         lines.append(f"answer: {self.answer}")
         if self.citations:
             lines.append("citations: " + ", ".join(self.citations))
