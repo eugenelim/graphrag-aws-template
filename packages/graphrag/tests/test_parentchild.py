@@ -277,10 +277,10 @@ def test_parentchild_query_synthesizes_over_parent_body_with_ordered_trace() -> 
     # synthesis ran over the PARENT BODY, not the matched child text
     assert spy.context_texts == ["A FULL BODY"]
     assert spy.context_ids == ["enhancements/a/README.md"]
-    # trace order: question -> matched children -> returned parents -> answer
+    # trace order: question -> matched child -> returned parents -> answer
     rendered = result.render()
-    assert rendered.index("question:") < rendered.index("matched children")
-    assert rendered.index("matched children") < rendered.index("returned parents")
+    assert rendered.index("question:") < rendered.index("matched child")
+    assert rendered.index("matched child") < rendered.index("returned parents")
     assert rendered.index("returned parents") < rendered.index("answer:")
     # the parent body is shown by length/count in the trace, not inlined verbatim
     assert "body 11 chars" in rendered

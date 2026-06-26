@@ -39,10 +39,10 @@ def test_parentchild_offline_matches_child_returns_parent(
     )
     assert rc == 0
     out = capsys.readouterr().out
-    # the ordered trace: question -> matched children -> returned parents -> answer.
+    # the ordered trace: question -> matched child -> returned parents -> answer.
     assert (
         out.index("question:")
-        < out.index("matched children")
+        < out.index("matched child")
         < out.index("returned parents")
         < out.index("answer:")
     )

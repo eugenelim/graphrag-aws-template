@@ -117,7 +117,7 @@ class ParentChildResult:
                 f"clearance: persona={self.clearance.persona} allows=[{allowed}] "
                 "(synthetic visibility labels — a teaching stand-in for ACLs, not real authz)"
             )
-        lines.append("matched children (the precise match):")
+        lines.append("matched child per parent (the precise match):")
         for rank, hit in enumerate(self.hits, start=1):
             child = hit.matched_child
             child_label = (

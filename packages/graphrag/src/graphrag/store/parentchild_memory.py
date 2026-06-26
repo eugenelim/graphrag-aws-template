@@ -34,10 +34,10 @@ class MemoryParentChildStore(ParentChildStore):
             if allowed_labels is not None and parent.visibility not in allowed_labels:
                 continue
             best_child = None
-            best_score = 0.0
+            best_score = float("-inf")  # -inf so the first child always wins on its real score
             for child in parent.children:
                 score = cosine(vector, child.vector)
-                if best_child is None or score > best_score:
+                if score > best_score:
                     best_child = child
                     best_score = score
             if best_child is not None:  # a parent with no children is never a candidate
