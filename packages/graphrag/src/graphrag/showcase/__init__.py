@@ -110,6 +110,20 @@ class ParentChildShowcaseQuery:
     highlight: str = ""
 
 
+@dataclass
+class GlobalShowcaseQuery:
+    """A global-community-summary demo query: a **corpus-wide** question (no seed entity for
+    the hybrid to expand from), the ``expected_entities`` that should appear in the contributing
+    communities (all resolve in the fixture corpus after detection), and the corpus-wide
+    ``theme`` the map-reduce surfaces."""
+
+    id: str
+    query: str
+    expected_entities: list[str]
+    theme: str = ""
+    highlight: str = ""
+
+
 def load_showcase() -> list[ShowcaseQuery]:
     """Load the packaged showcase query set as ``ShowcaseQuery`` objects."""
     text = resources.files("graphrag.showcase").joinpath("queries.yaml").read_text(encoding="utf-8")
@@ -205,6 +219,25 @@ def load_parentchild_showcase() -> list[ParentChildShowcaseQuery]:
                 expected_matched_child=str(entry["expected_matched_child"]),
                 expected_parent=str(entry["expected_parent"]),
                 contrast=str(entry.get("contrast", "")),
+                highlight=str(entry.get("highlight", "")),
+            )
+        )
+    return out
+
+
+def load_global_showcase() -> list[GlobalShowcaseQuery]:
+    """Load the packaged global-community-summary (corpus-wide) demo queries."""
+    text = resources.files("graphrag.showcase").joinpath("queries.yaml").read_text(encoding="utf-8")
+    data = yaml.safe_load(text) or {}
+    raw = data.get("global_queries", []) if isinstance(data, dict) else []
+    out: list[GlobalShowcaseQuery] = []
+    for entry in raw:
+        out.append(
+            GlobalShowcaseQuery(
+                id=str(entry["id"]),
+                query=str(entry["query"]),
+                expected_entities=[str(e) for e in entry.get("expected_entities", [])],
+                theme=str(entry.get("theme", "")),
                 highlight=str(entry.get("highlight", "")),
             )
         )
