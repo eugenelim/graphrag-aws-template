@@ -284,6 +284,28 @@ def test_full_mode_writes_communities_one_summary_each() -> None:
             assert graph.get_node(entity_id) is not None
 
 
+def test_full_mode_clears_stale_communities_before_rewrite() -> None:
+    # AC5: _community_writeback clears the community store before re-writing, so a re-detection
+    # never leaves a stale Community node (a stale tier is the spec's named leak vector).
+    from graphrag.store.community_base import Community
+    from graphrag.store.community_memory import MemoryCommunityStore
+
+    communities = MemoryCommunityStore()
+    communities.upsert_community(
+        Community("community-stale", "Gone", "old", ("ghost-entity",), "restricted", 1)
+    )
+    run(
+        _env("full"),
+        s3_client=FakeS3(CORPUS, "snap/"),
+        store=MemoryGraphStore(),
+        community_store=communities,
+        synthesizer=CountingSynth(),
+    )
+    ids = {c.id for c in communities.all_communities()}
+    assert "community-stale" not in ids  # the prior-run community was cleared
+    assert ids  # and the fresh partition was written
+
+
 def test_full_mode_no_community_store_and_no_neptune_is_a_noop() -> None:
     # AC5: absent both an injected community store and NEPTUNE_ENDPOINT, the write-back is a
     # no-op (a vector-only deploy is unchanged) — no error, graph still written.

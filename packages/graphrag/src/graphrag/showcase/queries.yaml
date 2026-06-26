@@ -369,8 +369,9 @@ parentchild_queries:
 # Each query is CORPUS-WIDE — there is no single seed entity for the seed-and-expand hybrid to
 # expand from; the answer is the shape of the whole corpus. expected_entities name entities that
 # appear in the contributing communities (all resolve in the fixture corpus AFTER detection).
-# On the fixture corpus Louvain finds three communities: a SIG-Node cluster (restricted), a
-# SIG-Network cluster (internal), and a service-traffic cluster (public).
+# On the fixture corpus Louvain finds communities spanning all three visibility tiers — a
+# SIG-Node cluster (restricted), a SIG-Network cluster (internal), and a service-traffic cluster
+# (public) — pinned by test_showcase.test_fixture_yields_all_three_visibility_tiers.
 global_queries:
   - id: gl-areas-of-work
     query: "What are the major areas of work across all the Kubernetes SIGs, and how do they relate?"
