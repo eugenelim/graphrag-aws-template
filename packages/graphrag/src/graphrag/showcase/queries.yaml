@@ -338,3 +338,29 @@ selfquery_queries:
       - "community/sig-node/README.md#0"
       - "community/sig-network/README.md#0"
     highlight: "a source-only self-query filter (no entity): hybrid's vector leg scans only enhancements chunks, so no community charter can seed the expansion."
+
+# Parent-Child Retriever (parent-child-retrieval slice): a small CHILD chunk's vector is
+# matched (precise), but the larger PARENT document body is returned for context-complete
+# synthesis. Each entry names the gold matched child (the precise unit) and the returned
+# parent (the doc whose full body synthesis reads), plus the contrast against flat `vector`
+# mode (the same question returns a single matched chunk, not the whole parent). All ids
+# resolve in the fixture corpus.
+parentchild_queries:
+  - id: pc-pod-resize-rollout
+    query: "what does the in-place pod resize KEP say about its risks and rollout?"
+    expected_matched_child: "enhancements/keps/sig-node/1287-in-place-update-pod-resources/README.md#1"
+    expected_parent: "enhancements/keps/sig-node/1287-in-place-update-pod-resources/README.md"
+    contrast: "flat vector mode returns just the matched 'Risks and Mitigations' chunk; parent-child returns the whole KEP-1287 README body so synthesis also sees the Summary the risks depend on."
+    highlight: "precise child match (Risks and Mitigations) -> the full KEP-1287 parent body for context-complete synthesis."
+  - id: pc-service-traffic-policy
+    query: "what is the service internal traffic policy enhancement about?"
+    expected_matched_child: "enhancements/keps/sig-network/2086-service-internal-traffic-policy/README.md#0"
+    expected_parent: "enhancements/keps/sig-network/2086-service-internal-traffic-policy/README.md"
+    contrast: "flat vector mode returns only the matched Summary chunk; parent-child returns the whole KEP-2086 README (Summary + Motivation) as one parent."
+    highlight: "the child Summary matches; the parent body carries the surrounding Motivation the flat chunk would truncate."
+  - id: pc-sig-node-charter
+    query: "what does the SIG Node charter describe as its scope?"
+    expected_matched_child: "community/sig-node/README.md#1"
+    expected_parent: "community/sig-node/README.md"
+    contrast: "flat vector mode returns just the matched 'Scope' chunk; parent-child returns the whole SIG Node charter so synthesis sees the charter intro and scope together."
+    highlight: "a community-charter parent: the precise Scope child match returns the full charter body for synthesis."
