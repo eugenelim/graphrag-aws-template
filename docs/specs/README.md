@@ -19,6 +19,7 @@ docs/specs/<feature>/
 
 | Spec | Status | Constrained by | Notes |
 | --- | --- | --- | --- |
+| [`parent-child-retrieval`](parent-child-retrieval/spec.md) | Draft | charter (coverage table: *Parent-Child Retriever*), RFC-0001 §3, ADR-0001/0002/0003 | Catalog slice — the **Parent-Child Retriever** pattern. Small child chunks carry the vectors (nested `knn_vector`, matched during ANN on the Lucene engine); the larger parent document body is app-stored on the same nested document and returned for context-complete synthesis (not an Elasticsearch `has_child` cross-doc join). Additive new `parentchild` mode on a new nested index alongside the untouched flat baseline; reuses the chunk pipeline + the single Titan embed pass (children embedded once, written to both indexes); composes with the permission filter; additive `mode: parentchild` query-Lambda dispatch + `parentchild-query` CLI verb; no new dependency, no new infra/IAM. |
 
 ## Shipped specs (archived)
 
