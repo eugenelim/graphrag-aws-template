@@ -127,13 +127,10 @@ class OpenSearchParentChildStore(ParentChildStore):
             if "resource_already_exists" not in str(exc):
                 raise
 
-    def index_parent(self, parent: ParentDoc, *, refresh: bool = False) -> None:
-        path = f"/{self.index}/_doc"
-        if refresh:  # make the doc immediately searchable
-            path += "?refresh=true"
+    def index_parent(self, parent: ParentDoc) -> None:
         self._request(
             "POST",
-            path,
+            f"/{self.index}/_doc",
             {
                 "parent_id": parent.parent_id,
                 "source": parent.source,
@@ -186,6 +183,10 @@ class OpenSearchParentChildStore(ParentChildStore):
             }
         else:
             query = nested
+        # `k`/`size` ride the body as-given. The Function-URL path pins `k=DEFAULT_K`; the
+        # in-memory twin clamps with `max(0, k)` while this adapter does not — at negative/zero `k`
+        # the two backends diverge (a bound-`k`-at-both-adapters hardening is deferred, see
+        # docs/backlog.md). For all shipped callers (`k>=1`) they agree.
         body = {"size": k, "_source": {"excludes": ["children.vector"]}, "query": query}
         res = self._request("POST", f"/{self.index}/_search", body)
         return [self._hit(h) for h in res.get("hits", {}).get("hits", [])]
