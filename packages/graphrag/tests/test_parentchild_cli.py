@@ -119,6 +119,8 @@ def test_parentchild_function_url_sends_mode_parentchild(
     assert rc == 0
     assert len(fake.calls) == 1
     assert b'"mode": "parentchild"' in fake.calls[0]["data"]
+    # the SigV4 signature covers the body (a payload-hash header, not UNSIGNED-PAYLOAD)
+    assert "X-Amz-Content-SHA256" in fake.calls[0]["headers"]
     out = capsys.readouterr().out
     assert "live parent-child answer" in out
 

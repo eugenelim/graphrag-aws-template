@@ -313,6 +313,7 @@ def test_parentchild_query_empty_clearance_is_fail_closed() -> None:
         clearance=Clearance(persona="nobody", allowed=frozenset()),
     )
     assert result.hits == []  # empty allowed set ⇒ zero hits (fail-closed)
+    assert "(no hits)" in result.render()  # the graceful no-context narration still renders
 
 
 def test_parentchild_default_k_matches_vector_default() -> None:
