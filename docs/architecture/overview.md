@@ -40,14 +40,19 @@ deterministically and a full audit trace; the governed half of the governed-vs-r
 teaching pair) and its contrast `text2opencypher-guarded` (the **Text2Cypher** path: the
 LLM *writes* the openCypher, executed read-only behind a layered guard — a static
 validator + bounded self-heal + **IAM read-only data-action scoping** + a Neptune engine
-query timeout, ADR-0004; the risky half of the pair). For building/exercising any of these
-without a deployed stack — and the decision record for *why* text2cypher executes offline
-against a labeled bounded subset rather than a local Neptune — see
+query timeout, ADR-0004; the risky half of the pair), and `metadata-filtering` (the
+**Metadata Filtering / Self-Query** path: Bedrock extracts a structured filter
+(`source`/`entity_ids`) from the question, validated deterministically, and the vector
+search applies it **during** the ANN scan — the k-NN engine moved `nmslib` → **Lucene HNSW**
+for efficient during-ANN filtering, RFC-0001 §4; the question-derived generalization of the
+fixed permission filter). For building/exercising any of these without a deployed stack —
+and the decision record for *why* text2cypher executes offline against a labeled bounded
+subset rather than a local Neptune — see
 [`develop-and-test-offline.md`](develop-and-test-offline.md). Current layout:
 
 | Path | What | Stack |
 | --- | --- | --- |
-| `packages/graphrag/` | Core library + the `graphrag` CLI. Graph half: parse → extract → resolve → query (in-memory + Neptune). Vector half (slice 2): chunk → embed (Titan v2) → k-NN (in-memory + OpenSearch), `vector-query` + the credible-baseline `vector-eval`. Hybrid half (slice 3): question entity-linking, a `Synthesizer` seam (Bedrock Claude via Converse + offline template), bounded neighborhood expansion, the **seed-and-expand `hybrid_query`**, the three-mode `compare` runner, `hybrid-query`/`compare` CLI verbs, the in-VPC `query_lambda`, and a consolidated `showcase` set. Permission filter (slice 4): synthetic visibility labels (`visibility.py` pure read-side + `labels.py` ingest-side) carried as Neptune node/edge props + OpenSearch chunk metadata, a `--persona`/`persona` clearance, and the **during-traversal edge filter** across all three modes. | Python 3.11+ (`pyyaml`, `boto3`) |
+| `packages/graphrag/` | Core library + the `graphrag` CLI. Graph half: parse → extract → resolve → query (in-memory + Neptune). Vector half (slice 2): chunk → embed (Titan v2) → k-NN (in-memory + OpenSearch), `vector-query` + the credible-baseline `vector-eval`. Hybrid half (slice 3): question entity-linking, a `Synthesizer` seam (Bedrock Claude via Converse + offline template), bounded neighborhood expansion, the **seed-and-expand `hybrid_query`**, the three-mode `compare` runner, `hybrid-query`/`compare` CLI verbs, the in-VPC `query_lambda`, and a consolidated `showcase` set. Permission filter (slice 4): synthetic visibility labels (`visibility.py` pure read-side + `labels.py` ingest-side) carried as Neptune node/edge props + OpenSearch chunk metadata, a `--persona`/`persona` clearance, and the **during-traversal edge filter** across all three modes. Self-query (metadata-filtering): `selfquery.py` — a fixed `source`/`entity_ids` filter schema, the deterministic `validate_filter` chokepoint, Bedrock/rule extractors, the `selfquery_query` orchestrator + `selfquery-query` CLI verb; the k-NN method is **Lucene HNSW** so the filter (composed with the visibility filter) applies during the ANN scan. | Python 3.11+ (`pyyaml`, `boto3`) |
 | `apps/ingestion/` | On-demand Fargate task entrypoint — resolves the S3 corpus snapshot and runs `graphrag.ingest`; slice 2 added the **single-parse dual-write** (graph + vector) over the same corpus read; slice 4 labels both stores' visibility in that same pass. | Python + Dockerfile |
 | `apps/infra/` | AWS CDK app — no-NAT VPC + endpoints (incl. `bedrock-runtime`) + Neptune Serverless + **single-node OpenSearch (k-NN)** + S3 + Fargate task def + two in-VPC smoke probes (graph + vector) + **the in-VPC query Lambda behind an IAM-auth Function URL** (slice 3) + Budgets alarm. | AWS CDK (Python) |
 

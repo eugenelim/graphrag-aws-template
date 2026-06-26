@@ -88,6 +88,23 @@ modes. The OpenSearch `visibility` keyword field lands only on a **fresh** index
 | Neptune error / refusal → caller | A store execution error — including the IAM `AccessDenied` when the write backstop fires on a validator-missed write — surfaces as a **sanitized envelope** (`_serialize_text2cypher`): the generated queries + validation verdicts are returned (the audit value), but the raw error / ARN is **never** crossed to the caller (logged in-VPC, fed only to the internal self-heal). Generated-query *text* the model wrote IS returned — by design, the trace is the pedagogy; same trusted-ingress argument as the governed envelope. |
 | Live ingress + IAM | Rides the **existing** IAM-auth, scoped-principal Function URL via the additive `mode: "text2cypher"` value. Generation reuses the already-granted synthesis-model `bedrock:Converse` (no widened Bedrock grant — the generator's default model id equals `DEFAULT_SYNTHESIS_MODEL_ID`). The only IaC change is the query-Lambda Neptune grant **narrowing** to read-only + the query-timeout parameter group; no new billable/compute resource (Budgets held at 150). The IAM-auth named-principal grant is the accepted aggregate-abuse bound for the demo. |
 
+## Trust boundaries (metadata-filtering — the self-query path)
+
+> The graphrag.com **Metadata Filtering / Self-Query** pattern: the LLM reads a structured
+> filter out of the question and the vector search applies it during the ANN scan. The
+> load-bearing security property is that the model's authority is **bounded by construction**
+> — it can only produce a filter over a fixed, declared schema, and every value is
+> deterministically re-validated before it touches OpenSearch. See the
+> [self-query explanation](../guides/explanation/metadata-self-query-filtering.md).
+
+| Boundary | Control |
+| --- | --- |
+| Untrusted question → LLM filter extractor (LLM01/LLM08) | The Bedrock Claude (Converse) extractor receives the question as **data** in `messages` (never `system`); the `system` block instructs extraction of a JSON filter over **only** the declared fields and carries the defensive untrusted-data directive; `maxTokens` is bounded; the client is the default-TLS botocore chain. The model produces *only* a filter — it never authors a query. |
+| Extracted filter → OpenSearch (the governance boundary) | The model's raw output is run through the single deterministic `validate_filter` chokepoint (`selfquery.py`): a `source` value is kept only if in the closed enum (`community`/`enhancements`); an `entity_ids` value is resolved through the **pure** `link_question` resolver to a normalized graph-node id; an **undeclared field or unresolvable value is dropped and recorded**, never bound as free-form text. The validated values ride the OpenSearch request-body `terms` clause — **never string-interpolated** (`ruff S` stays on; injection-safe by construction). |
+| Self-query filter ∧ permission clearance | The self-query `terms` and the slice-4 visibility `terms` are **independent** clauses on the same `knn` call, so a self-query filter can only **narrow**, never re-admit a chunk above a persona's clearance. The fail-closed `None`-vs-empty-`Clearance` semantics survive the merge (an empty clearance still matches nothing, regardless of the self-query filter). The self-query filter is **not authorization** — it is relevance scoping; the permission filter remains the (synthetic) authz stand-in. |
+| Live ingress + IAM | Rides the **existing** IAM-auth, scoped-principal Function URL via the additive `mode: "selfquery"` value. Extraction reuses the already-granted synthesis-model `bedrock:Converse` (no widened grant — the extractor's default model id equals `DEFAULT_SYNTHESIS_MODEL_ID`); the filter uses the existing OpenSearch data-access. The path **builds no Neptune store** (entity validation is pure), so it adds **no Neptune grant**. The only store change is the k-NN index **method engine** (`nmslib` → `lucene` HNSW), an app-side mapping change on a fresh index — no new billable/compute resource (Budgets held at 150). |
+| Audit envelope (extracted + validated filter, dropped) → caller | The success envelope returns the validated filter and what the validator dropped (the audit value — exactly which structured filter the model produced and how it was bounded), contained by the **same trusted-ingress argument** as the governed/text2cypher envelopes: it crosses the IAM-auth, scoped-principal Function URL only to the trusted operator role. The *error* envelope stays fully sanitized (correlation id, no internal detail). |
+
 ## Least privilege
 
 The Fargate **task role** and the **vector probe role** grant only: scoped `s3`

@@ -224,7 +224,7 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
 
 ## Acceptance Criteria
 
-- [ ] **AC1 — Declared filterable-field schema + structured-filter model (pure,
+- [x] **AC1 — Declared filterable-field schema + structured-filter model (pure,
   PyYAML-free).** A `graphrag.selfquery` module declares the **fixed** set of
   filterable fields: `source` (kind `enum`, the closed set `{community,
   enhancements}` — the `sources.COMMUNITY`/`ENHANCEMENTS` values) and `entity_ids` (kind `entity`, resolved to a graph-node
@@ -233,7 +233,7 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   (a chunk matches if its field value intersects the filter's value set) and **AND
   across fields** (every present field must match). The module imports **no `yaml`**
   (importable by the query Lambda). *(TDD)*
-- [ ] **AC2 — Deterministic filter validation (the governance boundary).**
+- [x] **AC2 — Deterministic filter validation (the governance boundary).**
   `validate_filter(raw, *, aliases)` turns a raw extracted map into a `FilterExtraction`
   (the validated `MetadataFilter` + the dropped entries): a `source` value is kept only
   if it is in the closed enum; an `entity_ids` value (a surface string) is resolved
@@ -245,7 +245,7 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   controlled-vocabulary *normalization*, not corpus-existence confirmation — a resolved
   id that matches no chunk simply filters to zero hits, a correct self-query outcome — so
   this path needs **no graph store and no Neptune grant**.) *(TDD)*
-- [ ] **AC3 — k-NN engine is Lucene HNSW; filter applied DURING ANN.** `_knn_mapping`
+- [x] **AC3 — k-NN engine is Lucene HNSW; filter applied DURING ANN.** `_knn_mapping`
   declares the `knn_vector` method with `engine: "lucene"` (HNSW), keeping a
   Lucene-supported `space_type` (`cosinesimil`, supported on the Lucene engine in
   OpenSearch 2.11), and
@@ -265,7 +265,7 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   clearance clause to be dropped, and a self-query filter can only narrow, never re-admit a
   chunk above clearance. Pinned at the composed `knn` seam for both backends. *(TDD +
   goal-based mapping check)*
-- [ ] **AC4 — Bedrock self-query extractor (Converse), validated, with an offline
+- [x] **AC4 — Bedrock self-query extractor (Converse), validated, with an offline
   deterministic counterpart.** `BedrockMetadataExtractor.extract(question, *, aliases)`
   issues a well-formed Converse request — a configurable `modelId` (default
   `DEFAULT_SYNTHESIS_MODEL_ID`); a `system` block instructing extraction of a JSON filter
@@ -280,7 +280,7 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   via keyword + `link_question` candidate rules and returns the same validated
   `FilterExtraction` for CI/offline. (`validate_filter` is the single pure validation
   chokepoint both extractors call.) *(TDD with mock)*
-- [ ] **AC5 — Self-query orchestration with a trace; threads vector AND hybrid's vector
+- [x] **AC5 — Self-query orchestration with a trace; threads vector AND hybrid's vector
   leg.** `vector_search(..., metadata_filter)` and `hybrid_query(..., metadata_filter)`/
   `run_modes(..., metadata_filter)` thread the validated filter into the vector k-NN
   call (composed with `clearance`), so a constrained question's vector hits **and** the
@@ -295,7 +295,7 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   line naming each field/value and how it was validated. A **no-filter** question
   (nothing extractable) leaves retrieval unfiltered and says so in the trace. *(TDD +
   narratability check)*
-- [ ] **AC6 — CLI verb `selfquery-query`, offline by default, live via SigV4.**
+- [x] **AC6 — CLI verb `selfquery-query`, offline by default, live via SigV4.**
   `graphrag selfquery-query --q "<text>"` runs **offline** (in-memory store from the
   fixture corpus + `RuleMetadataExtractor` + offline synthesizer) and prints the ordered
   trace, labeling the extractor **non-semantic**. `--bedrock` switches to
@@ -303,7 +303,7 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   to the **thin live client** — a SigV4-signed (`service=lambda`) HTTPS POST of
   `{"question": …, "mode": "selfquery"}` whose **signature covers the body** — and renders
   the returned trace; a non-2xx raises with the body. *(TDD)*
-- [ ] **AC7 — In-VPC query Lambda self-query dispatch, PyYAML-free, sanitized.**
+- [x] **AC7 — In-VPC query Lambda self-query dispatch, PyYAML-free, sanitized.**
   `lambda_handler` reads an optional `mode` and on `"selfquery"` builds the live
   OpenSearch store + `BedrockMetadataExtractor` (the same Converse model) +
   `BedrockClaudeSynthesizer` from the execution role, runs `selfquery_query`, and returns
@@ -314,7 +314,7 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   (the existing `sys.modules` guard is extended to the self-query modules). Exercised with
   the extractor, store, and synthesizer **mocked** (no network); reuses the **same**
   `selfquery_query` the CLI uses. *(TDD with mock; live in AC9)*
-- [ ] **AC8 — IaC unchanged: engine switch is app-side, no new resource, no widened
+- [x] **AC8 — IaC unchanged: engine switch is app-side, no new resource, no widened
   grant, cost held.** The k-NN engine change lives in `store/opensearch.py`
   (`_knn_mapping`), applied at `create_index` on a **fresh** index — not CDK. The
   self-query Lambda path uses the **same grants as the hybrid path** — the
@@ -338,7 +338,7 @@ Gates: `ruff` (lint+format, `S` security ruleset), `mypy` (typecheck), `pytest`
   is unavailable in the build environment,
   this criterion ships deferred against a backlog anchor, with the offline + mocked path
   proving the orchestration. *(live smoke)*
-- [ ] **AC10 — Self-query showcase set + the self-query teaching framing.** A
+- [x] **AC10 — Self-query showcase set + the self-query teaching framing.** A
   `selfquery_queries` section in the showcase `queries.yaml` holds **≥4** queries spanning
   **vector mode and hybrid mode**, each labeled with the expected extracted filter
   (field/value) and the gold visible/excluded chunk split; a loader/test asserts it parses
