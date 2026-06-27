@@ -241,17 +241,24 @@ def test_neptune_data_access_actions_present_and_scoped(template: Template) -> N
 
 def test_ingestion_task_can_write_manifest_scoped_to_manifest_key(template: Template) -> None:
     # Slice 5: the delta task records the ingest manifest to S3 and reads it back. The slice-1
-    # task role was read-only, so an s3:PutObject is required — but scoped to manifest.json only,
-    # never the whole bucket (least privilege). This pins the live-deploy IAM fix AC9 surfaced.
-    found = False
+    # task role was read-only, so an s3:PutObject is required — but scoped to specific keys, never
+    # the whole bucket (least privilege). This pins the live-deploy IAM fix AC9 surfaced.
+    # (schema-guided-extraction added a SECOND key-scoped PutObject for the trace artifact —
+    # every PutObject statement must still be scoped to one of the allowed keys, never wildcard.)
+    _allowed_keys = ("manifest.json", "schema_extraction_trace.txt")
+    found_manifest = False
     for stmt in _iam_statements(template):
         actions = set(_as_list(stmt.get("Action", [])))
-        if "s3:PutObject" in actions:
-            resources = json.dumps(stmt["Resource"])
-            assert "manifest.json" in resources, "s3:PutObject must be scoped to manifest.json"
-            assert resources.strip('"') != "*", "s3:PutObject must not be wildcard"
-            found = True
-    assert found, "expected an s3:PutObject grant for the ingest manifest"
+        if "s3:PutObject" not in actions:
+            continue
+        resources = json.dumps(stmt["Resource"])
+        assert resources.strip('"') != "*", "s3:PutObject must not be wildcard"
+        assert any(k in resources for k in _allowed_keys), (
+            f"s3:PutObject must be scoped to one of {_allowed_keys}, got {resources}"
+        )
+        if "manifest.json" in resources:
+            found_manifest = True
+    assert found_manifest, "expected an s3:PutObject grant for the ingest manifest"
 
 
 def test_run_task_handles_are_exported_as_outputs(template: Template) -> None:
@@ -739,3 +746,82 @@ def test_global_adds_no_new_resource_no_neptune_analytics_budget_held(template: 
         "AWS::Budgets::Budget",
         {"Budget": Match.object_like({"BudgetLimit": {"Amount": 150, "Unit": "USD"}})},
     )
+
+
+# --- schema-guided-extraction: default-off flag, no grant change, no new resource (AC7) ---
+
+
+def _ingestion_container_env(template: Template) -> dict[str, str]:
+    """The ingestion task definition's container environment as a {Name: Value} dict."""
+    for res in _resources(template).values():
+        if res["Type"] != "AWS::ECS::TaskDefinition":
+            continue
+        containers = res["Properties"].get("ContainerDefinitions", [])
+        ingest = next((c for c in containers if c.get("Name") == "ingestion"), None)
+        if ingest is None:
+            continue
+        env = {}
+        for item in ingest.get("Environment", []):
+            # Skip intrinsic (Fn::Join) values — we only assert the literal flag here.
+            if isinstance(item.get("Value"), str):
+                env[item["Name"]] = item["Value"]
+        return env
+    return {}
+
+
+def test_schema_extraction_flag_defaults_off_on_the_task_definition(template: Template) -> None:
+    # AC7: the SCHEMA_EXTRACTION env flag is present and DEFAULT-OFF on the ingest task definition;
+    # _flag_on(env) treats "false" as off, so a deployed task is byte-identical to today.
+    env = _ingestion_container_env(template)
+    assert env.get("SCHEMA_EXTRACTION") == "false"
+
+
+def test_schema_extraction_does_not_widen_the_ingest_bedrock_grant(template: Template) -> None:
+    # AC7: extraction reuses the ingest task role's EXISTING scoped Converse grant (it runs at the
+    # synthesis model — BedrockTripleExtractor's default model_id == DEFAULT_SYNTHESIS_MODEL_ID), so
+    # the grant is byte-identical to the pre-slice statement: Converse + InvokeModel, no wildcard.
+    actions, wildcard = _bedrock_actions_by_role(template, "IngestionTaskRole")
+    assert actions == {"bedrock:Converse", "bedrock:InvokeModel"}
+    assert not wildcard
+
+
+def test_schema_extraction_adds_no_new_resource_and_holds_budget(template: Template) -> None:
+    # AC7: the only deploy change is the default-off env flag — no new billable/compute resource.
+    template.resource_count_is("AWS::ECS::TaskDefinition", 1)  # rides the existing ingest task
+    template.resource_count_is("AWS::Neptune::DBCluster", 1)  # the LLM edges ride the cluster
+    template.resource_count_is("AWS::NeptuneGraph::Graph", 0)
+    template.resource_count_is("AWS::Lambda::Url", 1)  # no new query mode / endpoint
+    fns = [r for r in _resources(template).values() if r["Type"] == "AWS::Lambda::Function"]
+    product = [f for f in fns if str(f["Properties"].get("Handler", "")).startswith("graphrag.")]
+    assert len(product) == 3  # smoke + vector-smoke + query — no new function
+    template.has_resource_properties(
+        "AWS::Budgets::Budget",
+        {"Budget": Match.object_like({"BudgetLimit": {"Amount": 150, "Unit": "USD"}})},
+    )
+
+
+def test_schema_extraction_query_lambda_neptune_grant_stays_read_only(template: Template) -> None:
+    # AC7: the LLM edges are READ by the existing read-only query grant (ADR-0004) — no write grant.
+    actions = _neptune_actions_by_role(template, "QueryRole")
+    assert "neptune-db:ReadDataViaQuery" in actions
+    assert "neptune-db:WriteDataViaQuery" not in actions
+
+
+def test_schema_extraction_trace_putobject_grant_is_key_scoped(template: Template) -> None:
+    # AC7 (live finding 2026-06-27): the trace artifact needs its OWN s3:PutObject grant — the
+    # existing grant was scoped to manifest.json only. The new grant must be key-scoped to the
+    # trace filename, NEVER bucket-wide (no `arn:.../*` PutObject).
+    put_resources: list[str] = []
+    bucket_wide = False
+    for stmt in _iam_statements(template):
+        if "s3:PutObject" not in _as_list(stmt.get("Action", [])):
+            continue
+        for res in _as_list(stmt.get("Resource", [])):
+            blob = json.dumps(res)
+            put_resources.append(blob)
+            if blob.rstrip('"').endswith("/*"):  # a bare bucket ARN + "/*" is bucket-wide
+                bucket_wide = True
+    joined = " ".join(put_resources)
+    assert "schema_extraction_trace.txt" in joined, "trace-key PutObject grant is missing"
+    assert "manifest.json" in joined, "manifest PutObject grant must remain"
+    assert not bucket_wide, "PutObject must stay key-scoped, never bucket-wide"

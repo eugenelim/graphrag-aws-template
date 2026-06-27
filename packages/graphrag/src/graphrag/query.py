@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .model import Direction, EdgeKind, Node
+from .model import Direction, EdgeKind, Node, extraction_method_for_kind
 from .store.base import GraphStore
 from .visibility import Clearance
 
@@ -35,6 +35,13 @@ class TraceEntry:
     to_ids: list[str]
     truncated: bool = False
 
+    @property
+    def extraction_method(self) -> str:
+        """The provenance method of this hop's edge kind (``deterministic`` /
+        ``schema-guided-llm``) — so a path that traversed a model-asserted edge shows it in the
+        trace and is never blended silently into an answer (AC11)."""
+        return extraction_method_for_kind(self.edge_kind)
+
 
 @dataclass
 class TraversalResult:
@@ -51,7 +58,7 @@ class TraversalResult:
             note = "  [frontier truncated]" if entry.truncated else ""
             lines.append(
                 f"  hop {entry.hop}: {entry.edge_kind.value} {entry.direction.value} "
-                f"{arrow} {to}{note}"
+                f"[{entry.extraction_method}] {arrow} {to}{note}"
             )
         lines.append(f"result: {', '.join(self.result_ids) or '(none)'}")
         return "\n".join(lines)
@@ -139,6 +146,17 @@ class NeighborhoodTrace:
     edge_kinds: list[EdgeKind] = field(default_factory=list)
     truncated: bool = False
 
+    @property
+    def extraction_methods(self) -> list[str]:
+        """The distinct provenance methods of the edge kinds that contributed this hop, sorted.
+
+        Seed-and-expand traverses **all** edge kinds, so a schema-guided-llm edge rides into the
+        neighborhood by default (the teaching payoff — an answer reachable only via an LLM edge).
+        Surfacing the per-hop method here is what keeps that honest: any answer leaning on a
+        model-asserted edge shows ``schema-guided-llm`` in its trace, never blended silently
+        (AC11). Derived from the edge kind via the disjoint-set invariant (``model.py``)."""
+        return sorted({extraction_method_for_kind(k) for k in self.edge_kinds})
+
 
 @dataclass
 class NeighborhoodResult:
@@ -151,9 +169,10 @@ class NeighborhoodResult:
         lines = [f"seeds: {', '.join(self.seed_ids) or '(none)'}"]
         for entry in self.trace:
             kinds = ", ".join(ek.value for ek in entry.edge_kinds) or "(none)"
+            methods = ", ".join(entry.extraction_methods) or "(none)"
             reached = ", ".join(entry.reached) or "(none)"
             note = "  [frontier truncated]" if entry.truncated else ""
-            lines.append(f"  hop {entry.hop}: via {kinds} -> {reached}{note}")
+            lines.append(f"  hop {entry.hop}: via {kinds} [{methods}] -> {reached}{note}")
         lines.append(f"reached: {', '.join(self.result_ids) or '(none)'}")
         return "\n".join(lines)
 

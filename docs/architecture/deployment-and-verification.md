@@ -562,3 +562,58 @@ corpus.
 > source tree, and building the X86_64 task image with the **legacy builder** (`DOCKER_BUILDKIT=0
 > docker build --platform linux/amd64`) instead of buildx. The zsh `:l`-modifier image-tag gotcha
 > (K-0027) recurs — use `"${REPO_URI}:latest"` (braces), not `"$REPO_URI:latest"`.
+
+## schema-guided-extraction — live schema-guided ingest smoke + honest-win gate (AC9)
+
+The schema-guided-extraction slice runs an **additive, default-off** schema-guided LLM extraction
+phase (`SCHEMA_EXTRACTION` flag; `MODE=full`/`rebuild` only) in the **existing** Fargate ingest task:
+a Bedrock Converse pass reads the prose bodies and proposes triples constrained to the closed
+`EXTRACTION_SCHEMA`, which are validated (closed-schema) + grounded (entity-grounding, reusing
+`normalize`) + stamped `extraction_method: schema-guided-llm` and written to the **existing** Neptune
+cluster, with the per-triple trace persisted to the corpus bucket. The honest-win gate is the
+**live** run (the seeded offline `RuleTripleExtractor` makes no quality claim — AC8 ≠ ship gate).
+
+| Check | Status |
+| --- | --- |
+| Live deploy | **PASS (2026-06-27)** — `GraphragSlice1` `CREATE_COMPLETE` in **~18 min** (`us-east-1`; Neptune + OpenSearch the long poles). |
+| Flag-gated schema-guided ingest **in-task**, live Bedrock | **PASS (2026-06-27)** — the Fargate `MODE=full` task with `SCHEMA_EXTRACTION=true` (container env override over the default-off task def) logged `schema-guided extraction: +2 edges (0 off-schema-rejected; 0 dropped-ungrounded)` alongside the deterministic dual-write (graph **22 nodes / 28 deterministic edges**, vector **14 chunks**, parent-child **6 parents**, **3 communities**). Live Bedrock Converse extracted the triples from the ingest task role's **existing** `bedrock:Converse` grant (no widened grant). |
+| Honest-win: recall ≥ gold bar **AND** precision ≤ ceiling | **PASS (2026-06-27)** — live Bedrock recovered **2 of 3 gold edges** the deterministic graph structurally lacks — `kep-2086 -[DEPENDS_ON]-> kep-1880` and `kep-1287 -[SUPERSEDES]-> kep-9` (the model returned `kep-0009`; the **entity-grounding guard normalized it to `kep-9` live**) — with **0 off-gold / 0 false-positive** edges (precision 2/2). The SIG↔SIG collaboration edge was a **recall miss** (the live model read the charter "collaborates closely with" prose more conservatively than the seeded offline extractor). A genuine, measured contrast — 2 prose inter-entity edges no labeled-field rule can reach, recovered with zero hallucinations. |
+| Live query traverses an **LLM-only edge**, trace marks it model-asserted (AC11) | **PASS (2026-06-27)** — a SigV4 `mode: hybrid` Function-URL query expanded over the live graph and traversed the `DEPENDS_ON` (schema-guided-llm) edge; the answer's hop trace marked it `[deterministic, schema-guided-llm]` and the structured envelope carried `"extraction_methods": ["deterministic", "schema-guided-llm"]` — the model-asserted hop is never blended silently. |
+| Trace-artifact replay | **PASS (2026-06-27)** — the per-triple `ExtractionResult` trace was replayed from `s3://<corpus-bucket>/schema_extraction_trace.txt` (prompt + schema + per-candidate doc/span → triple → verdict → edge). |
+| Teardown | **PASS (2026-06-27)** — `scripts/destroy.sh`; no billable resource remains. |
+
+> **Status: PASS (2026-06-27) — the honest-win bar is cleared; the slice ships.** Deployed
+> `GraphragSlice1` (`us-east-1`), uploaded the fixture corpus, ran the Fargate `MODE=full` ingest
+> with `SCHEMA_EXTRACTION=true` — which extracted prose triples via **live Bedrock**, validated +
+> grounded them, and wrote **2 distinguishable `schema-guided-llm` edges** to the existing Neptune
+> cluster — then drove the read path **live** via `graphrag hybrid-query --function-url …`:
+>
+> ```text
+> "What supersedes KEP-9, the legacy node-allocatable proposal?"
+>   hop 1: via APPROVES, AUTHORS, CHAIRS, DEPENDS_ON, HAS_SUBPROJECT, OWNS, TECH_LEADS
+>          [deterministic, schema-guided-llm] -> kep-2086, ... (an LLM edge traversed + marked)
+>   envelope hops[0].extraction_methods = ["deterministic", "schema-guided-llm"]
+> ```
+>
+> **The live run surfaced two defects offline gates could not — the value of the AC9 ship gate:**
+>
+> 1. **IAM (CWE-scoped least-privilege gap).** The trace-artifact `s3:PutObject` was **denied** —
+>    the ingest task role's existing `grant_put` was key-scoped to `manifest.json` **only**, and the
+>    spec's assumption that "the task role already has the needed S3 write" was wrong. The
+>    deterministic graph + vector + community write-back all **succeeded** (the additive-resilience
+>    guard held — only the trace write failed). Fixed by a **second key-scoped** `grant_put` for
+>    `schema_extraction_trace.txt` (still not bucket-wide; a synth test pins it), spec assumption +
+>    AC7 + boundaries amended, then re-ran the ingest clean.
+> 2. **AC11 didn't surface on the hybrid/live path.** The read-side method was threaded into
+>    `query.NeighborhoodResult.render()`, but the **hybrid** path (`HybridResult.render()`) and the
+>    query-Lambda envelope (`_serialize`) build their **own** hop representation from the structured
+>    `edge_kinds` and never call that render — so the first live trace showed the LLM hop **without**
+>    `[schema-guided-llm]`. Fixed both (the render line + an `extraction_methods` field in the hops
+>    envelope), added an integration test, and the re-query confirmed the marker live (above). This is
+>    the "per-task gates verify N contracts, not the integrated journey" gap.
+>
+> Then `scripts/destroy.sh` (teardown-first); no billable resource remains. Satisfies AC9 — the
+> charter *Schema-guided LLM* row flips `Planned → Have`. **Environment gotchas (not code defects),
+> per the standing note:** no `.venv` / no `docker buildx` — `CDK_APP`/`PYTHONPATH` overrides + a
+> legacy `DOCKER_BUILDKIT=0 docker build --platform linux/amd64` cross-build; brace the image tag
+> (`"${REPO_URI}:latest"`).

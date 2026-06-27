@@ -123,9 +123,12 @@ class HybridResult:
         lines.append("hops:")
         for entry in self.hop_trace.trace:
             kinds = ", ".join(ek.value for ek in entry.edge_kinds) or "(none)"
+            # Read-side provenance (AC11): surface the per-hop extraction_method so an answer
+            # leaning on a model-asserted (schema-guided-llm) edge shows it, never blended silent.
+            methods = ", ".join(entry.extraction_methods) or "(none)"
             reached = ", ".join(entry.reached) or "(none)"
             trunc = "  [frontier truncated]" if entry.truncated else ""
-            lines.append(f"  hop {entry.hop}: via {kinds} -> {reached}{trunc}")
+            lines.append(f"  hop {entry.hop}: via {kinds} [{methods}] -> {reached}{trunc}")
         lines.append(f"  reached: {', '.join(self.hop_trace.result_ids) or '(none)'}")
         # citations.
         lines.append("citations:")
