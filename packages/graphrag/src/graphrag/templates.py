@@ -30,10 +30,16 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Literal
 
-from .model import Direction, EdgeKind, EntityKind, Node
+from .model import Direction, EdgeKind, EntityKind, Node, extraction_method_for_kind
 from .store.base import GraphStore
 
 ParamKind = Literal["entity", "enum", "int"]
+
+# Edge-kind literals in a template's cypher (`kind: 'OWNS'`) — parsed the same way
+# ``placeholders()`` parses ``$param`` literals, so a graph template can surface the
+# extraction_method of each edge it traverses (AC11).
+_KIND_RE = re.compile(r"kind:\s*'([^']+)'")
+_EDGE_KIND_VALUES = {k.value for k in EdgeKind}
 
 # Mutating openCypher clauses + procedure calls. A template is read-only by review and
 # by this list: the executable surface is a fixed library of bounded reads, so a write
@@ -96,6 +102,20 @@ class Template:
 
     def param_names(self) -> set[str]:
         return {p.name for p in self.params}
+
+    def traversed_edge_kinds(self) -> set[EdgeKind]:
+        """The ``EdgeKind``s this template traverses, parsed from its ``kind: 'X'`` literals.
+
+        Mirrors ``placeholders()`` (a parse over the cypher), so a governed-template result can
+        surface the provenance method of each edge it followed — the read-side twin of
+        ``expand_neighborhood``'s per-hop method (AC11). The current library traverses only
+        deterministic kinds; the derivation is correct for an LLM kind too, by the disjoint-set
+        invariant (``model.py``)."""
+        return {EdgeKind(k) for k in _KIND_RE.findall(self.cypher) if k in _EDGE_KIND_VALUES}
+
+    def extraction_methods(self) -> set[str]:
+        """The distinct provenance methods of the edge kinds this template traverses (AC11)."""
+        return {extraction_method_for_kind(k) for k in self.traversed_edge_kinds()}
 
     def is_read_only(self) -> bool:
         """True iff the cypher contains no mutating clause or procedure call (AC1).

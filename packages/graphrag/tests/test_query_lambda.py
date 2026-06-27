@@ -281,6 +281,13 @@ def test_query_lambda_import_graph_is_pyyaml_free() -> None:
         # global-community-summary: the read path must NOT drag in community_detect (which
         # imports networkx) — detection is ingest-only.
         assert "graphrag.community_detect" not in sys.modules
+        # schema-guided-extraction: T11 threaded `extraction_method` into query.py/templates.py/
+        # governed.py via the PURE model helper, so the four ingest-only extraction modules must
+        # NOT enter the query Lambda import graph (the read path only reads model.py's additions).
+        assert "graphrag.extract_llm" not in sys.modules
+        assert "graphrag.validate_triple" not in sys.modules
+        assert "graphrag.ground" not in sys.modules
+        assert "graphrag.schema_extract" not in sys.modules
     finally:
         builtins.__import__ = real_import
         for m in [m for m in list(sys.modules) if _is_target(m)]:

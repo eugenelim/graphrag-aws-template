@@ -23,6 +23,7 @@ from .compare import run_modes
 from .delta import manifest_from_json, manifest_to_json
 from .embed import BedrockTitanEmbedder, Embedder, HashEmbedder
 from .eval import evaluate, load_labeled_sample
+from .extract_llm import BedrockTripleExtractor, RuleTripleExtractor, TripleExtractor
 from .generate import (
     BedrockText2CypherGenerator,
     RuleText2CypherGenerator,
@@ -37,7 +38,8 @@ from .model import Direction, EdgeKind
 from .normalize import kep_id, person_id, sig_id
 from .parentchild import group_into_parents, parentchild_query
 from .query import Step, traverse
-from .resolve import load_aliases
+from .resolve import load_aliases, resolve
+from .schema_extract import extract_schema_guided
 from .select import BedrockTemplateSelector, RuleTemplateSelector, TemplateSelector
 from .selfquery import (
     BedrockMetadataExtractor,
@@ -687,6 +689,34 @@ def _cmd_text2cypher_query(args: argparse.Namespace) -> int:
     return 0
 
 
+def _triple_extractor(args: argparse.Namespace) -> TripleExtractor:
+    """Real Bedrock Claude when ``--bedrock`` (needs creds), else the offline non-semantic
+    rule extractor."""
+    if getattr(args, "bedrock", False):
+        return BedrockTripleExtractor(region=args.region)
+    return RuleTripleExtractor()
+
+
+def _cmd_extract_llm(args: argparse.Namespace) -> int:
+    """Schema-guided LLM extraction over the prose bodies — the LLM-assisted end of the
+    extraction spectrum (the deterministic end is ``ingest``). Prints the ordered per-triple
+    audit trace: schema shown → doc/span → candidate triple → verdict → resulting edge. Offline
+    by default (non-semantic ``RuleTripleExtractor`` — pins orchestration + provenance, NOT
+    extraction quality); ``--bedrock`` switches to the live ``BedrockTripleExtractor``."""
+    docs = load_corpus(Path(args.community), Path(args.enhancements))
+    graph = resolve(docs)
+    extractor = _triple_extractor(args)
+    result = extract_schema_guided(docs, graph, extractor=extractor, aliases=load_aliases())
+    print("== extract-llm (bedrock) ==" if args.bedrock else "== extract-llm (offline) ==")
+    if not args.bedrock:
+        print(
+            "extractor is OFFLINE + NON-SEMANTIC — it pins the orchestration + per-triple "
+            "provenance contract, never extraction quality (the honest semantic win is --bedrock)."
+        )
+    print(result.render())
+    return 0
+
+
 def _cmd_vector_eval(args: argparse.Namespace) -> int:
     cases = load_query_set(Path(args.query_set))
     corpus = {
@@ -1083,6 +1113,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="live: SigV4-signed POST (mode=text2cypher) to the in-VPC query Lambda's Function URL",
     )
     p_text2cypher.set_defaults(func=_cmd_text2cypher_query)
+
+    p_extract_llm = sub.add_parser(
+        "extract-llm",
+        help="schema-guided LLM extraction over the prose bodies (the LLM-assisted end of the "
+        "extraction spectrum); prints the per-triple audit trace (schema -> doc/span -> triple -> "
+        "verdict -> edge). Offline non-semantic by default; --bedrock for the live semantic path",
+    )
+    p_extract_llm.add_argument(
+        "--community", required=True, help="path to the community source root"
+    )
+    p_extract_llm.add_argument(
+        "--enhancements", required=True, help="path to the enhancements source root"
+    )
+    p_extract_llm.add_argument(
+        "--region",
+        default=_DEFAULT_REGION,
+        help="AWS region for the Bedrock client (with --bedrock)",
+    )
+    p_extract_llm.add_argument(
+        "--bedrock",
+        action="store_true",
+        help="use the real Bedrock Claude extractor (needs AWS creds); default is the offline "
+        "non-semantic rule extractor (pins orchestration + provenance, not extraction quality)",
+    )
+    p_extract_llm.set_defaults(func=_cmd_extract_llm)
 
     def add_delta_args(p: argparse.ArgumentParser) -> None:
         add_vector_corpus_args(p)  # community/enhancements/opensearch-endpoint/region/bedrock
