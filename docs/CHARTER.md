@@ -39,7 +39,8 @@ What this project does:
   *and* one-command destroy on a clean AWS account, with idle cost bounded and
   documented.
 - **Leans on managed AWS services** so the only custom code we own is the
-  Markdown/YAML parsing, entity resolution, and hybrid query orchestration — not
+  Markdown/YAML parsing, entity resolution, the extraction-strategy variants
+  (deterministic and LLM-assisted), and hybrid query orchestration — not
   infrastructure glue.
 - **Documents the architecture patterns and trade-offs as a first-class
   deliverable** — the ordered considerations below, each tied to where it's
@@ -82,7 +83,10 @@ signal to refine this section, not to drift.
 The values that resolve ties when reasonable people disagree.
 
 1. **Narratable over magical.** Every ingest → retrieve → search step must be
-   explainable live; no black-box hop the presenter cannot narrate. The hybrid
+   explainable live; no black-box hop the presenter cannot narrate. *Narratable
+   does not mean no-LLM* — an LLM hop is narratable when its inputs, outputs, and
+   decision are inspectable in the trace (as Bedrock synthesis and text2openCypher
+   already are); the bar is the trace, not the absence of a model. The hybrid
    query returns a trace naming each seed entity, graph hop, and citation — if a
    "make it work" shortcut makes the data flow unexplainable, the demo has failed
    even if it runs.
@@ -127,8 +131,10 @@ them.
 
 1. **Corpus & cross-source entity resolution.** Pick sources that genuinely
    overlap and resolve their shared entities into single graph nodes via
-   normalized match + a small alias table — no trained model, so it stays
-   narratable. *Consider for your corpus:* do your sources share entities with
+   normalized match + a small alias table — deterministic for this
+   controlled-vocabulary corpus; an LLM-assisted extraction contrast is a flagged,
+   trace-narratable alternative (see the ingestion coverage table below).
+   *Consider for your corpus:* do your sources share entities with
    stable IDs (a controlled vocabulary), or do you face harder prose↔handle
    resolution? → de-risk verdicts in the intent; slice `graph-ingestion-resolution`.
 2. **Single-parse dual-write ingestion.** Parse Markdown + YAML once and write the
@@ -167,6 +173,16 @@ them.
    and a `--rebuild` escape hatch, keeping both stores consistent. *Consider:*
    freshness under change is the concern most demos dodge — consistency across two
    stores is the hard part. → slice `incremental-delta-reingest`.
+9. **Extraction strategy — deterministic vs. LLM-assisted** *(an ingestion-stage
+   consideration, grouped logically with #1–#2; placed last to preserve the spine's
+   existing numbering, which specs and code reference by number).* Decide how
+   entities and edges leave the text: deterministic rules where the corpus has
+   controlled-vocabulary IDs (narratable, free, what we default to), or
+   schema-guided / free-form LLM extraction where relationships live in prose.
+   *Consider:* deterministic wins on clean structured corpora; the more your edges
+   hide in narrative, the more an LLM pass earns its keep — at the cost of a hop you
+   must keep narratable (trace the prompt, the schema, and per-triple provenance). →
+   ingestion coverage table below; slice `schema-guided-extraction` (Planned).
 
 ### Pattern coverage against the graphrag.com catalog
 
@@ -209,6 +225,37 @@ option so the self-compute-vs-managed trade is apples-to-apples), and detection 
 **in the Fargate ingest task, not a standing Neptune Analytics service**. The divergence
 is flagged, not papered over; [ADR-0005](adr/0005-community-detection-in-fargate-louvain.md)
 records the decision and the [feasibility note](rfc/0001-notes/aws-feasibility.md) the detail.
+
+### Ingestion pattern coverage (our taxonomy)
+
+graphrag.com documents *retrieval* patterns; it does not enumerate ingestion as a
+pattern space. This table is therefore **our taxonomy** — adapted from the
+[LlamaIndex `PropertyGraphIndex`](https://developers.llamaindex.ai/python/examples/property_graph/property_graph_basic/)
+extractor families and the
+[Microsoft GraphRAG indexing stages](https://microsoft.github.io/graphrag/index/default_dataflow/),
+**not** the graphrag.com catalog above. It names the ingestion patterns the repo
+already implements so they read as deliberate points on a spectrum, organized by
+ingestion stage, with the same glyph contract as the retrieval table (`Have` /
+`Planned` / `Backlog`). Established by [RFC-0002](rfc/0002-ingestion-pattern-axis.md).
+
+| Ingestion stage | Pattern | Our implementation | Status |
+| --- | --- | --- | --- |
+| **Extraction** | Structural / deterministic (no-LLM) | Front-matter + YAML + bounded labeled-field regex over prose; the `ImplicitPathExtractor` analog | ✅ Have — `graph-ingestion-resolution` |
+| **Extraction** | **Schema-guided LLM** | Bedrock extracts triples constrained to a fixed entity/edge schema over the free-narrative relationships the deterministic pass leaves unextracted; trace emits prompt + schema + per-triple provenance | ◔ Planned — `schema-guided-extraction` |
+| **Extraction** | Free-form LLM | Bedrock extracts unconstrained triples (the diverse, less-consistent end) | ○ Backlog |
+| **Resolution** | Normalized-match + alias table (no model) | `normalize` + `aliases.yaml`; merge falls out of upsert | ✅ Have — `graph-ingestion-resolution` |
+| **Resolution** | Fuzzy / embedding-based | Similarity-clustered resolution for the no-stable-ID case | ○ Backlog |
+| **Chunking** | Sliding-window | 1000/150 over the prose-rich subset | ✅ Have — `vector-rag-baseline` |
+| **Chunking** | Lexical / document-structure graph | Chunk nodes + structural edges (heading hierarchy, NEXT/PARENT) | ○ Backlog |
+| **Graph build** | Community detection + summarization | Louvain in Fargate + Bedrock summaries (Louvain-not-Leiden divergence flagged above) | ✅ Have — `global-community-summary` |
+
+Two honesty notes travel with this table, mirroring the retrieval table's: (1) the
+taxonomy is **ours**, adapted from LlamaIndex / Microsoft prior art, not the
+graphrag.com catalog; (2) the extraction-strategy spectrum (structural →
+schema-guided → free-form) is the LlamaIndex `Implicit` / `Schema` / `Simple`
+path-extractor axis named in our vocabulary. Patterns are classified by their
+*dominant* stage — the stages are pipeline phases, not disjoint buckets (a pattern
+can span two), so the table places each where its decision lives.
 
 ## What's NOT in this charter
 
