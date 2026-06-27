@@ -11,6 +11,7 @@ Lifecycle: `Draft → Open → Final Comment Period → Accepted | Rejected | Wi
 | #    | Title                                          | Status |
 | ---- | ---------------------------------------------- | ------ |
 | [0001](0001-adopt-project-charter.md) | Adopt the project charter (mission, scope, principles, architecture patterns) | Accepted |
+| [0002](0002-ingestion-pattern-axis.md) | Establish ingestion as a first-class pattern axis | Accepted |
 
 ## Adding a new RFC
 
