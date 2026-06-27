@@ -19,6 +19,7 @@ docs/specs/<feature>/
 
 | Spec | Status | Constrained by | Notes |
 | --- | --- | --- | --- |
+| [`schema-guided-extraction`](schema-guided-extraction/spec.md) | Approved | ADR-0006, RFC-0002, charter (ingestion coverage: *Schema-guided LLM* row + spine #9), ADR-0001/0002/0003/0004/0005 | Catalog slice — RFC-0002's one `Planned` ingestion pattern: the **LLM-assisted end** of the extraction-strategy spectrum. Bedrock extracts prose triples constrained to a **fixed schema**; guarded by a closed-schema validator + entity-grounding (no invented entities) + distinguishable `extraction_method` provenance + a per-triple replayable trace (ADR-0006). Additive, default-off Fargate ingest phase reusing the existing scoped `bedrock:Converse` grant (no new infra/grant; ADR-0005 precedent). Ships only if a measured honest-win bar is cleared (else drops to `Backlog`). Spec/plan authored; EXECUTE pending. |
 
 ## Shipped specs (archived)
 
