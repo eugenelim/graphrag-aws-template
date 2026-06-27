@@ -1,7 +1,7 @@
 # Plan: schema-guided-extraction
 
 - **Spec:** [`spec.md`](spec.md)
-- **Status:** Drafting <!-- Drafting | Executing | Done -->
+- **Status:** Executing <!-- Drafting | Executing | Done -->
 
 > **Plan contract:** this is the implementation strategy. Unlike the spec, this
 > document is allowed to change as you learn. When it changes substantially
@@ -549,6 +549,51 @@ charter row + ADR-0006 status. Finalization, not scope creep.)*
   honest-win gate (gold edges proven absent from the deterministic graph), the runnable
   deterministic↔schema-guided contrast in the ingestion pattern-axis guide, and the live
   smoke. AC9 to run live (AWS available).
+- 2026-06-27: EXECUTE. Implementation decisions worth recording (plan allowed to change):
+  - **`EXTRACTION_SCHEMA` + `CandidateTriple` live in `extract_llm.py`** (the extractor-seam
+    module the Approach overview names), and the **edge-kind frozensets + `extraction_method_for_kind`
+    helper live in `model.py`** (pure, shared) — so the read path (`query.py`, Lambda-imported,
+    PyYAML-free) can derive the method without importing any ingest-only extraction module. T1's
+    `validate_triple.py` imports the schema from `extract_llm.py`; no boto3 loads at import (lazy).
+  - **AC11 read-side method is derived from the edge *kind*** via `extraction_method_for_kind`,
+    sound because the LLM-extractable / deterministic kind sets are disjoint (AC1). This needs no
+    store-layer plumbing of edge props through `neighbors()`/`neighbors_batch` — a minimal additive
+    trace field, no traversal-scope change. Deterministic edges therefore carry **no** write-side
+    stamp (their method is read off the kind); LLM edges carry the authoritative prop at write (AC4).
+  - **`governed.py` added to T11's surface** (one `GovernedResult.traversed_methods` field + a render
+    line): the templates-side of "the graph templates surface extraction_method" is fulfilled
+    end-to-end via `Template.traversed_edge_kinds()`/`extraction_methods()` (a cypher parse mirroring
+    `placeholders()`), surfaced in the governed trace. The shipped library is all-deterministic; the
+    derivation is correct for an LLM kind too.
+  - **Grounding accepts an already-canonical id** (tries the raw mention as-is before normalizing),
+    so a Bedrock-returned `sig:sig-network` is not double-normalized into `sig:sig-sig-network`; a
+    prose mention (`SIG Network`) still resolves via the normalizer. Endpoint must be present **and**
+    of the expected kind.
+  - **Fixture corpus gained inert prose** (collaboration / dependency / supersession sentences in
+    the SIG-Network README + KEP-2086 / KEP-1287 READMEs) so the offline contrast is honest, not a
+    strawman — the deterministic pass ignores these bodies (labeled-field regex only), so all 545
+    pre-existing tests pass unchanged.
+- 2026-06-27: **live AC9 run — two findings the offline gates could not catch** (the value of the
+  live ship gate):
+  1. **IAM: the trace-artifact write was denied.** The ingest task role's `s3:PutObject` was
+     key-scoped to `manifest.json` only (the spec's assumption that "the task role already has the
+     needed S3 write" was wrong). Fixed by a **second key-scoped** `grant_put` for
+     `schema_extraction_trace.txt` (still not bucket-wide); spec assumption + AC7 + boundaries
+     amended; a synth test pins the key-scoped grant. The deterministic graph + vector + community
+     writeback all succeeded — only the additive trace write failed (additive-resilience held).
+  2. **AC11 didn't surface on the hybrid/live path.** The read-side method was threaded into
+     `query.NeighborhoodResult.render()`, but the hybrid path (`HybridResult.render()`) and the
+     query-Lambda envelope (`_serialize`) build their **own** hop representation from the structured
+     `edge_kinds` and never call that render — so the live hybrid trace showed `SUPERSEDES` without
+     `[schema-guided-llm]`. Fixed both (render line + `extraction_methods` in the hops envelope);
+     an integration test pins both. This is the "per-task gates verify N contracts, not the
+     integrated journey" gap the quality-engineer flagged.
+  - **Measured honest win:** live Bedrock recovered **2/3 gold edges** (`kep-2086 DEPENDS_ON
+    kep-1880`, `kep-1287 SUPERSEDES kep-9` — the model returned `kep-0009`, grounding normalized it
+    to `kep-9`, the guard working live) with **0 off-gold / 0 false positives**. The SIG↔SIG
+    collaboration edge was a recall miss (the live model was conservative on the charter prose). The
+    contrast is genuine and measured (2 prose edges the deterministic graph structurally lacks,
+    zero hallucinations) — the slice ships.
 - 2026-06-27: pre-EXECUTE review pass (adversarial + security + design). Split the
   honest-win gate into an offline absence/contract check (T8, no quality claim) and the
   **live** recall+precision ship gate (T9); made absence a **relationship-level** assertion

@@ -11,3 +11,6 @@ cross-node hops for node-local workloads.
 Some workloads only want to talk to node-local backends (for example a per-node
 logging agent). Today a Service routes to all ready endpoints cluster-wide; this
 KEP adds a topology-aware internal routing knob.
+
+This work depends on the extensible Service CIDR ranges introduced in KEP-1880, which
+it assumes are already available when scoping internal traffic.

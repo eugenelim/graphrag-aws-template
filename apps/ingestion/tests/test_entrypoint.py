@@ -364,3 +364,118 @@ def test_entrypoint_dual_write_labels_chunks() -> None:
     assert "restricted" in visibilities
     # chunks owned only by public entities stay public.
     assert "public" in visibilities
+
+
+# --- Schema-guided extraction phase (AC5) -------------------------------------------------
+
+from graphrag.extract_llm import RuleTripleExtractor  # noqa: E402
+from graphrag.model import LLM_EXTRACTABLE_EDGE_KINDS, EdgeKind  # noqa: E402
+from graphrag.sources import ParsedDoc  # noqa: E402
+from ingestion.entrypoint import SCHEMA_EXTRACTION_TRACE_FILENAME  # noqa: E402
+
+
+def _schema_env(mode: str = "full", *, flag: bool = True) -> dict[str, str]:
+    env = _env(mode)
+    if flag:
+        env["SCHEMA_EXTRACTION"] = "1"
+    return env
+
+
+def _llm_edges(store: MemoryGraphStore) -> list[Any]:
+    return [e for e in store.all_edges() if e.kind in LLM_EXTRACTABLE_EDGE_KINDS]
+
+
+class SpyExtractor:
+    """Counts extract() calls (to prove the pass is/ isn't invoked) — emits nothing."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    @property
+    def model_id(self) -> str:
+        return "spy (test)"
+
+    def extract(self, doc: ParsedDoc, schema: Any) -> list[Any]:
+        self.calls += 1
+        return []
+
+
+class RaisingExtractor:
+    @property
+    def model_id(self) -> str:
+        return "raising (test)"
+
+    def extract(self, doc: ParsedDoc, schema: Any) -> list[Any]:
+        raise RuntimeError("bedrock blew up")
+
+
+def test_flag_off_is_byte_identical_no_llm_edges_no_trace() -> None:
+    # AC5: with SCHEMA_EXTRACTION unset, the persisted store gains no LLM edges and no trace
+    # artifact — byte-identical to the deterministic-only graph; the new EdgeKind members never
+    # leak into the edge-kind enumeration of a flag-off run.
+    graph = MemoryGraphStore()
+    s3 = FakeS3(CORPUS, "snap/")
+    run(_schema_env("full", flag=False), s3_client=s3, store=graph, extractor=RuleTripleExtractor())
+    assert _llm_edges(graph) == []
+    assert {e.kind for e in graph.all_edges()}.isdisjoint(LLM_EXTRACTABLE_EDGE_KINDS)
+    assert "snap/" + SCHEMA_EXTRACTION_TRACE_FILENAME not in s3._objects
+
+
+def test_flag_on_writes_validated_llm_edges_and_a_trace_under_a_server_side_key() -> None:
+    # AC5: with the flag on (offline RuleTripleExtractor), the graph gains the validated, grounded,
+    # stamped LLM-only edges and the trace artifact lands under a server-side key.
+    graph = MemoryGraphStore()
+    s3 = FakeS3(CORPUS, "snap/")
+    run(_schema_env("full"), s3_client=s3, store=graph, extractor=RuleTripleExtractor())
+
+    llm = _llm_edges(graph)
+    keys = {(e.src_id, e.kind, e.dst_id) for e in llm}
+    assert ("sig:sig-network", EdgeKind.COLLABORATES_WITH, "sig:sig-node") in keys
+    assert ("kep-2086", EdgeKind.DEPENDS_ON, "kep-1880") in keys
+    assert ("kep-1287", EdgeKind.SUPERSEDES, "kep-9") in keys
+    # every LLM edge is stamped distinguishable + carries source-span provenance.
+    for e in llm:
+        assert e.props["extraction_method"] == "schema-guided-llm"
+        assert e.props["source_doc"] and e.props["span"]
+
+    # trace artifact under the SERVER-SIDE key (CORPUS_PREFIX + constant filename; no doc/span).
+    trace_key = "snap/" + SCHEMA_EXTRACTION_TRACE_FILENAME
+    assert trace_key in s3._objects
+    body = s3._objects[trace_key].decode("utf-8")
+    assert "EXTRACTION SCHEMA" in body and "COLLABORATES_WITH" in body
+
+
+def test_delta_never_runs_the_pass() -> None:
+    # AC5: MODE=delta never invokes schema extraction (scoped to full/rebuild).
+    graph, vectors = MemoryGraphStore(), MemoryVectorStore()
+    s3 = FakeS3(CORPUS, "snap/")
+    # Seed a baseline manifest with a full run (flag off so the spy isn't tripped here).
+    run(
+        _schema_env("full", flag=False),
+        s3_client=s3,
+        store=graph,
+        vector_store=vectors,
+        embedder=HashEmbedder(),
+    )
+    spy = SpyExtractor()
+    run(
+        _schema_env("delta"),
+        s3_client=s3,
+        store=graph,
+        vector_store=vectors,
+        embedder=HashEmbedder(),
+        extractor=spy,
+    )
+    assert spy.calls == 0  # delta did not invoke the extractor at all
+
+
+def test_raising_extractor_leaves_the_deterministic_graph_intact() -> None:
+    # AC5 additive resilience: a Bedrock/extractor failure logs and leaves the deterministic
+    # graph untouched (no LLM edges, no corruption) — the run still completes.
+    graph = MemoryGraphStore()
+    s3 = FakeS3(CORPUS, "snap/")
+    report = run(_schema_env("full"), s3_client=s3, store=graph, extractor=RaisingExtractor())
+    assert report is not None
+    assert graph.all_nodes()  # deterministic graph still written
+    assert _llm_edges(graph) == []  # no LLM edges from the failed pass
+    assert "snap/" + SCHEMA_EXTRACTION_TRACE_FILENAME not in s3._objects  # no trace on failure

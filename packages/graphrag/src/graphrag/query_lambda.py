@@ -449,6 +449,9 @@ def _serialize(result: HybridResult) -> dict[str, Any]:
                 "frontier_in": list(entry.frontier_in),
                 "reached": list(entry.reached),
                 "edge_kinds": [ek.value for ek in entry.edge_kinds],
+                # Read-side provenance (AC11): the distinct methods of this hop's edge kinds, so a
+                # consumer of the structured envelope sees a model-asserted (schema-guided-llm) hop.
+                "extraction_methods": list(entry.extraction_methods),
                 "truncated": entry.truncated,
             }
             for entry in result.hop_trace.trace

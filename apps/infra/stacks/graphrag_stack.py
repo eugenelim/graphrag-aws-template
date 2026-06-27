@@ -74,6 +74,12 @@ _TITAN_MODEL_ID = "amazon.titan-embed-text-v2:0"
 # Must match the entrypoint's MANIFEST_FILENAME (CORPUS_PREFIX is "" on the deployed task).
 MANIFEST_KEY = "manifest.json"
 
+# schema-guided-extraction: the per-triple trace artifact key at the corpus bucket root. Must
+# match the entrypoint's SCHEMA_EXTRACTION_TRACE_FILENAME. The scoped PutObject grant below is
+# widened to this one additional key (still NOT bucket-wide) — the existing grant was scoped to
+# manifest.json only, so the trace write needs its own scoped grant (live AC9 finding 2026-06-27).
+SCHEMA_EXTRACTION_TRACE_KEY = "schema_extraction_trace.txt"
+
 # Synthesis Claude model (slice 3). Must equal the library
 # `graphrag.synthesize.DEFAULT_SYNTHESIS_MODEL_ID` — a synth test asserts the equality
 # so the Bedrock IAM grant scope and the runtime default can't drift. This is a
@@ -347,7 +353,10 @@ class GraphragStack(Stack):
         # (Bedrock-invoke + OpenSearch-data access are granted to this same role in
         # __init__ — scoped, no wildcard.)
         bucket.grant_read(task_role)
-        bucket.grant_put(task_role, MANIFEST_KEY)  # PutObject scoped to manifest.json only
+        bucket.grant_put(task_role, MANIFEST_KEY)  # PutObject scoped to manifest.json
+        # PutObject for the schema-guided extraction trace artifact (still key-scoped, not
+        # bucket-wide); default-off, so written only when SCHEMA_EXTRACTION is set.
+        bucket.grant_put(task_role, SCHEMA_EXTRACTION_TRACE_KEY)
         task_role.add_to_policy(self._neptune_data_access(cluster))
 
         task_def = ecs.FargateTaskDefinition(
@@ -366,6 +375,11 @@ class GraphragStack(Stack):
                 "NEPTUNE_ENDPOINT": f"https://{cluster.attr_endpoint}:8182",
                 "OPENSEARCH_ENDPOINT": f"https://{domain.domain_endpoint}",
                 "CORPUS_BUCKET": bucket.bucket_name,
+                # Schema-guided LLM extraction (ADR-0006) is additive + DEFAULT-OFF: the deployed
+                # task is byte-identical to today unless an operator flips this to "true" (e.g. an
+                # `aws ecs run-task` env override). It reuses the task role's existing
+                # bedrock:Converse grant at the synthesis model — NO new grant, NO new resource.
+                "SCHEMA_EXTRACTION": "false",
             },
         )
 

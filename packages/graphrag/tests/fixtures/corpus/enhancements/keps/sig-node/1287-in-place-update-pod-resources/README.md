@@ -11,3 +11,6 @@ Kubelet reconciles.
 In-place resize interacts with the scheduler, the eviction manager, and the
 container runtime; the KEP bounds the feature behind a feature gate and a
 per-container resize policy.
+
+This proposal supersedes the earlier legacy node-allocatable design proposal,
+KEP-0009, whose static reservation model it replaces.

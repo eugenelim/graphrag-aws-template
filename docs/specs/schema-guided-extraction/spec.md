@@ -1,6 +1,6 @@
 # Spec: schema-guided-extraction
 
-- **Status:** Approved <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Shipped <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** [ADR-0006](../../adr/0006-schema-guided-llm-extraction-guard.md) (the extraction guard this slice ships — closed schema + entity-grounding validator, ingest-time, distinguishable provenance, honest-win-gated), [RFC-0002](../../rfc/0002-ingestion-pattern-axis.md) (establishes ingestion as a first-class pattern axis and commits **schema-guided LLM extraction** as the one `Planned` pattern), [Charter — *Ingestion pattern coverage* table, *Schema-guided LLM* row + spine item #9 + the clarified Principle 1](../../CHARTER.md#ingestion-pattern-coverage-our-taxonomy) (the coverage contract this slice ships; narratable ⇒ traceable, LLM allowed when traced), [ADR-0004](../../adr/0004-text2cypher-read-only-guard.md) (the retrieval-side precedent: an LLM hop made safe + narratable by a validator the presenter can show), [ADR-0005](../../adr/0005-community-detection-in-fargate-louvain.md) (the ingest-time Bedrock hop in the Fargate task whose persisted output is narrated later — the affordance this slice extends to per-triple replay), [ADR-0001](../../adr/0001-hybrid-orchestration-seed-and-expand.md) (reuses the `Synthesizer`/Bedrock-Converse seam + untrusted-data posture), [ADR-0002](../../adr/0002-ephemeral-vpc-store-topology.md) (rides the existing on-demand Fargate task + Neptune cluster + corpus bucket; adds **no** billable resource; the grant is reused, never widened), [ADR-0003](../../adr/0003-iac-tool-aws-cdk-python.md) (IaC is AWS CDK Python)
@@ -141,9 +141,11 @@ proceeding; *Never do* is a hard rule.
   cleared gate). If the live bar is not cleared, the slice does not ship and the
   charter row stays `Backlog` — the RFC commits the intent, not an unearned win.
 - **Keep teardown a feature** (charter principle 4): the slice adds **no** billable
-  resource and **no** new IAM grant — it reuses the ingest task's existing
-  `bedrock:Converse` grant and the existing corpus S3 bucket; the only deploy change
-  is a default-off env flag.
+  resource and **no widened Bedrock grant** — it reuses the ingest task's existing
+  `bedrock:Converse` grant and the existing corpus S3 bucket. The **one** IAM change is a
+  **key-scoped `s3:PutObject`** for the trace artifact (`schema_extraction_trace.txt`, not
+  bucket-wide), alongside the default-off env flag (corrected by the live AC9 run — the
+  existing PutObject grant was scoped to `manifest.json` only).
 
 ### Ask first
 
@@ -287,7 +289,7 @@ The mix targets the test pyramid (≈80% unit). Verification mode per criterion:
 
 ## Acceptance Criteria
 
-- [ ] **AC1 — Closed-schema triple validator (the governance boundary).**
+- [x] **AC1 — Closed-schema triple validator (the governance boundary).**
   `validate_triple(triple, *, schema) -> TripleValidation` accepts a candidate
   triple iff its predicate is in the closed LLM-extractable edge-kind set **and**
   both endpoint kinds are in the `EntityKind` set, and the triple is well-formed
@@ -298,7 +300,7 @@ The mix targets the test pyramid (≈80% unit). Verification mode per criterion:
   disjointness from the deterministic edge-kind set is asserted directly** (the
   load-bearing invariant for read-side distinguishability and no-collision
   stamping); the validator is **conservative** — ambiguous ⇒ reject. *(TDD)*
-- [ ] **AC2 — Entity-grounding check (the honesty bound).** `ground_triple(triple,
+- [x] **AC2 — Entity-grounding check (the honesty bound).** `ground_triple(triple,
   graph) -> GroundedTriple | None` resolves each endpoint via the existing
   `normalize` functions (no new resolution path) and accepts the triple **iff both
   endpoints resolve to an entity id already present in the deterministic graph**; a
@@ -308,7 +310,7 @@ The mix targets the test pyramid (≈80% unit). Verification mode per criterion:
   **ambiguous-endpoint candidate is dropped, never guessed**. The model relates known
   entities; it never invents them. Grounding reuses `normalize` + the alias table — a
   unit assertion pins that no new resolver is introduced. *(TDD)*
-- [ ] **AC3 — Bedrock schema-guided extractor (Converse), with an offline
+- [x] **AC3 — Bedrock schema-guided extractor (Converse), with an offline
   deterministic counterpart.** `BedrockTripleExtractor` issues a well-formed Converse
   request — a configurable `modelId` (default `DEFAULT_SYNTHESIS_MODEL_ID`); a
   `system` block instructing it to extract only triples conforming to the fixed
@@ -325,7 +327,7 @@ The mix targets the test pyramid (≈80% unit). Verification mode per criterion:
   within-schema triples for the pinned exemplar for CI/offline. A unit assertion pins
   `BedrockTripleExtractor().model_id == DEFAULT_SYNTHESIS_MODEL_ID` (the
   no-widened-grant equality AC7 leans on). *(TDD with mock)*
-- [ ] **AC4 — Extraction orchestration with a full per-triple trace.**
+- [x] **AC4 — Extraction orchestration with a full per-triple trace.**
   `extract_schema_guided(docs, graph, *, extractor, schema, ...) -> ExtractionResult`
   reads the prose bodies, calls the extractor, validates each candidate (AC1),
   grounds it (AC2), and returns an `ExtractionResult` carrying: the prompt + schema
@@ -340,7 +342,7 @@ The mix targets the test pyramid (≈80% unit). Verification mode per criterion:
   `extraction_method` is **set authoritatively** (not `setdefault`-merged), so no
   merge-on-upsert collision can mislabel a deterministic edge or strip an LLM stamp.
   *(TDD + narratability check)*
-- [ ] **AC5 — Flagged, additive ingest phase (default-off), MODE-scoped.** The
+- [x] **AC5 — Flagged, additive ingest phase (default-off), MODE-scoped.** The
   Fargate full-ingest path (`MODE=full` / `--rebuild`) gains a
   `_schema_extraction_writeback` phase **after** the deterministic graph write, run
   **only** when `SCHEMA_EXTRACTION` is set. With the flag **off** the **persisted
@@ -354,23 +356,26 @@ The mix targets the test pyramid (≈80% unit). Verification mode per criterion:
   `write_manifest` confinement pattern). `MODE=delta` **never** runs the pass
   (asserted — same scope boundary as community detection); a **raising extractor
   leaves the deterministic graph intact** (additive resilience). *(TDD integration)*
-- [ ] **AC6 — CLI verb `extract-llm`, offline by default, live via `--bedrock`.**
+- [x] **AC6 — CLI verb `extract-llm`, offline by default, live via `--bedrock`.**
   `graphrag extract-llm` runs the pass **offline** (in-memory store from the fixture
   corpus + `RuleTripleExtractor`) and prints the ordered per-triple trace
   (prompt/schema → doc/span → triple → verdict → edge), labeling the extractor
   **non-semantic**; `--bedrock` switches to `BedrockTripleExtractor`. The real built
   verb is exercised end-to-end through its documented happy path and the observed
   output recorded. *(manual QA + goal-based)*
-- [ ] **AC7 — IaC: ingest-task Bedrock grant unchanged; no new resource; cost held.**
+- [x] **AC7 — IaC: ingest-task Bedrock grant unchanged; no new resource; cost held.**
   The **ingest task role's** `bedrock:Converse` grant is **unchanged** (still scopes
   the synthesis model with **no wildcard `Resource`**) — this holds *because*
   `BedrockTripleExtractor`'s default `modelId` equals `DEFAULT_SYNTHESIS_MODEL_ID`
-  (AC3); the slice adds **no new billable/compute resource and no new IAM grant**; the
+  (AC3); the slice adds **no new billable/compute resource and no widened Bedrock grant**.
+  The **one** IAM change is a **key-scoped `s3:PutObject`** for the trace artifact
+  (`schema_extraction_trace.txt`, not bucket-wide) — corrected by the live AC9 run, which
+  found the existing PutObject grant scoped to `manifest.json` only. The
   `SCHEMA_EXTRACTION` env flag **defaults off** on the task definition; the query
   Lambda's Neptune grant is unchanged (read-only, ADR-0004); the Budgets value is
   asserted **unchanged at the literal `150`**. Per ADR-0006 / ADR-0002. *(goal-based
   synth, CDK-env-gated)*
-- [ ] **AC8 — Offline absence invariant + contract shape (NOT the honesty gate).** A
+- [x] **AC8 — Offline absence invariant + contract shape (NOT the honesty gate).** A
   hand-authored gold set of prose inter-entity edges is pinned. The test builds the
   **actual deterministic graph** (`resolve()` over the real fixture corpus) and
   asserts, for each gold edge, that **no deterministic edge of *any* kind connects its
@@ -380,7 +385,7 @@ The mix targets the test pyramid (≈80% unit). Verification mode per criterion:
   validation/grounding/stamping. The seeded offline `RuleTripleExtractor` makes **no
   semantic-quality claim**: a green AC8 is *not* a cleared ship gate (that is AC9,
   live). *(goal-based)*
-- [ ] **AC9 — Live deploy + schema-guided ingest smoke (the contrast proven).**
+- [x] **AC9 — Live deploy + schema-guided ingest smoke (the contrast proven).**
   Against a deploy with `SCHEMA_EXTRACTION` on and the corpus in S3, the Fargate task
   extracts triples via **live Bedrock** over the prose bodies, validates + grounds
   them, and writes distinguishable `schema-guided-llm` edges to **live Neptune**; a
@@ -394,7 +399,7 @@ The mix targets the test pyramid (≈80% unit). Verification mode per criterion:
   is not cleared, the slice **does not ship** and the charter row stays `Backlog`
   (recorded in `docs/backlog.md`, run-or-defer). Live AWS deploy is available in this
   environment (run it; do not auto-defer). *(live smoke)*
-- [ ] **AC10 — Teaching contrast doc + drift-closure metadata.** The ingestion
+- [x] **AC10 — Teaching contrast doc + drift-closure metadata.** The ingestion
   pattern-axis explanation guide
   ([`ingestion-patterns-and-retrieval-patterns.md`](../../guides/explanation/ingestion-patterns-and-retrieval-patterns.md))
   shows the deterministic↔schema-guided contrast **running** (exact `extract-llm` CLI
@@ -405,7 +410,7 @@ The mix targets the test pyramid (≈80% unit). Verification mode per criterion:
   the spec is added to `docs/specs/README.md`; **on ship the charter row flips `Planned →
   Have`** (ADR-0006 — the guard decision — is already Accepted; the ship gate decides only
   whether the *slice* lands). *(goal-based)*
-- [ ] **AC11 — Read-side provenance (distinguishability at read).** The retrieval
+- [x] **AC11 — Read-side provenance (distinguishability at read).** The retrieval
   trace surfaces `extraction_method` per traversed edge: when `expand`/seed-and-expand
   (and the graph templates) follow an edge, the trace records whether the hop used a
   `deterministic` or `schema-guided-llm` edge, so an answer leaning on a model-asserted
@@ -463,8 +468,12 @@ The mix targets the test pyramid (≈80% unit). Verification mode per criterion:
   dependency (source: `synthesize.py`).
 - Technical: the per-triple trace artifact is written to the **existing** corpus S3
   bucket the ingest task already writes the manifest to (`entrypoint.py:77-79`,
-  `write_manifest`); the task role already has the needed S3 write, so no new grant
-  (source: `apps/ingestion/entrypoint.py`; `incremental-delta-reingest` IAM note).
+  `write_manifest`). **Corrected by the live AC9 run (2026-06-27):** the existing
+  `grant_put` is **key-scoped to `manifest.json`**, not bucket-wide, so the trace write needs
+  its **own key-scoped `s3:PutObject` grant** on `schema_extraction_trace.txt` (still not
+  bucket-wide). This is the slice's *only* new IAM grant — the Bedrock grant is unchanged
+  (AC7). The original assumption ("the task role already has the needed S3 write") was wrong
+  (source: `apps/ingestion/entrypoint.py`; `graphrag_stack.py` `grant_put`; live AC9 finding).
 - Process: full work-loop mode — security boundary (untrusted prose routed to an LLM;
   model-authored triples crossing into the graph every retrieval pattern reads) **and**
   structural (new modules + new `EdgeKind` members + an ingest-phase change) **and**

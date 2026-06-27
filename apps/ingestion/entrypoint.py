@@ -31,6 +31,7 @@ from typing import Any, Protocol
 
 from graphrag.delta import Manifest, build_manifest, manifest_from_json, manifest_to_json
 from graphrag.embed import Embedder
+from graphrag.extract_llm import TripleExtractor
 from graphrag.ingest import DeltaReport, IngestReport, ingest, ingest_delta, rebuild
 from graphrag.store.base import GraphStore
 from graphrag.store.community_base import CommunityStore
@@ -41,6 +42,12 @@ from graphrag.synthesize import Synthesizer
 # The ingest manifest (doc id -> content hash) lives at the corpus prefix root in S3; a --delta
 # diffs the new snapshot against it, and every run writes it back **last** (slice 5; AC8).
 MANIFEST_FILENAME = "manifest.json"
+
+# The schema-guided extraction trace artifact (the replayable per-triple provenance) is written
+# at the corpus prefix root under a CONSTANT filename — a server-side-derived key (CORPUS_PREFIX +
+# this constant), never from a doc path / span / model-supplied text, so a poisoned doc cannot
+# write outside the corpus prefix (CWE-23 — the write_manifest confinement pattern). AC5/AC7.
+SCHEMA_EXTRACTION_TRACE_FILENAME = "schema_extraction_trace.txt"
 
 logger = logging.getLogger("ingestion.entrypoint")
 
@@ -257,6 +264,87 @@ def _community_writeback(
     return len(communities)
 
 
+def _flag_on(env: Mapping[str, str], name: str) -> bool:
+    """Whether a default-off boolean env flag is set (``1``/``true``/``yes``/``on``)."""
+    return env.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _schema_extraction_writeback(
+    env: Mapping[str, str],
+    store: GraphStore,
+    community: Path,
+    enhancements: Path,
+    *,
+    s3_client: S3Client,
+    bucket: str,
+    prefix: str,
+    extractor: TripleExtractor | None = None,
+) -> int:
+    """Schema-guided LLM extraction over the prose bodies, written back additively (AC5).
+
+    The additive, **default-off** counterpart to ``_community_writeback`` (ADR-0006). Runs only
+    when the ``SCHEMA_EXTRACTION`` flag is set — unlike community detection, which keys off
+    ``NEPTUNE_ENDPOINT`` and runs unconditionally, this pass must be **no-op-by-default even on a
+    deployed task** (the default-off contract). Called on ``MODE=full``/``rebuild`` only, **after**
+    the deterministic graph write; ``MODE=delta`` never reaches here.
+
+    Reads the just-written graph back from the store, extracts triples from the prose bodies via
+    the injected ``extractor`` (offline ``RuleTripleExtractor`` in tests; live Bedrock deployed),
+    validates + grounds them, upserts the accepted ``schema-guided-llm`` edges, and persists the
+    per-triple ``ExtractionResult`` trace to the corpus bucket under a server-side key. Returns the
+    number of edges written.
+
+    **Additive resilience:** a raising extractor logs and leaves the deterministic graph intact — a
+    failed LLM pass must never corrupt the deterministic graph (the pass is additive)."""
+    if not _flag_on(env, "SCHEMA_EXTRACTION"):
+        return 0
+
+    region = env.get("AWS_REGION", "us-east-1")
+    if extractor is None:  # pragma: no cover - exercised only in the deployed task
+        from graphrag.extract_llm import BedrockTripleExtractor
+
+        extractor = BedrockTripleExtractor(region=region)
+
+    from graphrag.extract_llm import EXTRACTION_SCHEMA
+    from graphrag.model import Graph
+    from graphrag.resolve import load_aliases
+    from graphrag.schema_extract import extract_schema_guided
+    from graphrag.sources import load_corpus
+
+    try:
+        # Reconstruct an in-memory view of the just-written graph for grounding (membership +
+        # kind checks). Read-only — the deterministic store is the source of truth.
+        graph = Graph()
+        for node in store.all_nodes():
+            graph.upsert_node(node)
+        for edge in store.all_edges():
+            graph.upsert_edge(edge)
+
+        docs = load_corpus(community, enhancements)
+        result = extract_schema_guided(
+            docs, graph, extractor=extractor, schema=EXTRACTION_SCHEMA, aliases=load_aliases()
+        )
+    except Exception:  # additive resilience: a failed LLM pass must not corrupt the graph
+        logger.exception("schema-guided extraction failed; deterministic graph left intact")
+        # Positively visible in the smoke output too (not inferred from the absence of the
+        # success line below) so a failed live pass is debuggable from task stdout.
+        print("schema-guided extraction: SKIPPED (extractor error; deterministic graph intact)")
+        return 0
+
+    for edge in result.edges:
+        store.upsert_edge(edge)
+
+    # Persist the replayable trace under a server-side-derived key (never doc/span/model text).
+    trace_key = f"{prefix}{SCHEMA_EXTRACTION_TRACE_FILENAME}"
+    s3_client.put_object(Bucket=bucket, Key=trace_key, Body=result.render().encode("utf-8"))
+    print(
+        f"schema-guided extraction: +{len(result.edges)} edges "
+        f"({result.off_schema_count} off-schema-rejected; {result.dropped_count} "
+        f"dropped-ungrounded); trace at s3://{bucket}/{trace_key}"
+    )
+    return len(result.edges)
+
+
 def run(
     env: Mapping[str, str],
     *,
@@ -267,6 +355,7 @@ def run(
     parentchild_store: ParentChildStore | None = None,
     community_store: CommunityStore | None = None,
     synthesizer: Synthesizer | None = None,
+    extractor: TripleExtractor | None = None,
 ) -> IngestReport | DeltaReport:
     """Run the ingestion task. ``MODE`` selects ``full`` (default — the slice-1–4 dual-write,
     unchanged), ``delta`` (slice-5 incremental re-ingest against the stored manifest), or
@@ -295,12 +384,22 @@ def run(
             )
             # Detect + summarize communities from the just-written graph (ADR-0005), in-task.
             _community_writeback(env, store, community_store, synthesizer)
+            # Schema-guided LLM extraction (ADR-0006) — additive, default-off; after the graph
+            # write so it grounds against the resolved entities. No-op unless SCHEMA_EXTRACTION.
+            _schema_extraction_writeback(
+                env, store, community, enhancements,
+                s3_client=s3_client, bucket=bucket, prefix=prefix, extractor=extractor,
+            )
             new_manifest = build_manifest(community, enhancements)
         elif mode == "rebuild":
             vstore, emb = _resolve_vector(env, vector_store, embedder)
             report = rebuild(community, enhancements, store, vstore, emb)
             # Rebuild recomputes communities too (a fresh partition over the rebuilt graph).
             _community_writeback(env, store, community_store, synthesizer)
+            _schema_extraction_writeback(
+                env, store, community, enhancements,
+                s3_client=s3_client, bucket=bucket, prefix=prefix, extractor=extractor,
+            )
             new_manifest = report.new_manifest
         elif mode == "delta":
             vstore, emb = _resolve_vector(env, vector_store, embedder)
