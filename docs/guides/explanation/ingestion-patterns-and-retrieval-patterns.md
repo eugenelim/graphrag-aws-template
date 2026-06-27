@@ -134,25 +134,55 @@ commits the *intent*, not an unearned result.
 
 ## The running contrast
 
-> *This section becomes runnable when the `schema-guided-extraction` slice
-> ships; it is `Planned` today. The deterministic baseline below is `Have` and
-> runnable now.*
+The payoff is a side-by-side you can run on one corpus today. Ingest with
+deterministic extraction only, and ask a graph question whose answer lives in
+structure — *"which KEPs does sig-network own?"* — and the graph answers it
+cleanly, because `OWNS` edges come straight from the KEP front-matter. Ask a
+question whose answer lives in narrative — *"which SIGs collaborate with
+sig-network?"* — and the deterministic graph is silent, because no labeled field
+ever carried a collaboration edge.
 
-The payoff is a side-by-side you can run on one corpus. Ingest with deterministic
-extraction only, and ask a graph question whose answer lives in structure —
-*"which KEPs does sig-network own?"* — and the graph answers it cleanly, because
-`OWNS` edges come straight from the KEP front-matter. Ask a question whose answer
-lives in narrative — *"which SIGs collaborate with sig-network?"* — and the
-deterministic graph is silent, because no labeled field ever carried a
-collaboration edge.
+Run the schema-guided pass over the same corpus and watch the per-triple trace —
+the prompt + schema shown to the model, each candidate's source span, and the
+accept/reject verdict:
 
-Now re-ingest with schema-guided extraction turned on. The collaboration edges,
-extracted from the README prose and validated against the schema, are now in the
-graph — stamped as model-asserted, each traceable to the sentence it came from —
-and the same graph query answers the narrative question. Two extraction
-strategies, one corpus, a question that only the second can serve: that is the
-ingestion spectrum made concrete, the mirror image of the
-[three-mode demo](../tutorials/three-mode-demo.md)'s retrieval contrast.
+```bash
+graphrag extract-llm \
+  --community packages/graphrag/tests/fixtures/corpus/community \
+  --enhancements packages/graphrag/tests/fixtures/corpus/enhancements
+```
+
+Offline this uses a deterministic, **non-semantic** rule extractor (it pins the
+orchestration + provenance contract, never extraction quality — the honest
+semantic win is the live `--bedrock` path). The trace ends:
+
+```
+  - doc: community/sig-network/README.md
+    span: ... SIG Network collaborates closely with SIG Node on node-local Service routing ...
+    triple: (sig-network) -[COLLABORATES_WITH]-> (SIG Node)
+    verdict: accepted
+    edge: sig:sig-network -[COLLABORATES_WITH]-> sig:sig-node
+summary: +3 schema-guided edges; 0 off-schema-rejected; 0 dropped-ungrounded
+```
+
+Those collaboration / dependency / supersession edges — extracted from the README
+and KEP-Motivation prose, validated against the closed schema, grounded to
+entities the deterministic graph already resolved, and stamped
+`schema-guided-llm` — are exactly the ones the labeled-field regex structurally
+cannot reach. With them in the graph, a graph/hybrid query that was silent now
+answers — and the retrieval trace marks the model-asserted hop, e.g.:
+
+```
+  hop 1: via COLLABORATES_WITH [schema-guided-llm] -> sig:sig-node
+```
+
+So *"which SIGs collaborate with sig-network?"* is answerable **only** via the LLM
+edge, and the answer that leans on it shows it. (The exact demo queries live in
+`packages/graphrag/src/graphrag/showcase/queries.yaml` under `extraction_queries`,
+each pinned to its `llm_edge`.) Two extraction strategies, one corpus, a question
+that only the second can serve — the ingestion spectrum made concrete, the mirror
+image of the [three-mode demo](../tutorials/three-mode-demo.md)'s retrieval
+contrast.
 
 ## How to use this when evaluating GraphRAG for your corpus
 

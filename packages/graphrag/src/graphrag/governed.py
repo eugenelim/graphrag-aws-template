@@ -80,6 +80,9 @@ class GovernedResult:
     answer: str = ""
     citations: list[str] = field(default_factory=list)
     no_match_reason: str | None = None
+    # The distinct extraction_method(s) of the edges the selected template traverses (AC11) —
+    # sorted; empty for a no-match or a template that traverses no edge.
+    traversed_methods: list[str] = field(default_factory=list)
 
     def render(self) -> str:
         """Narrate the audit trace in order: question → template (+why) → bound params →
@@ -90,6 +93,11 @@ class GovernedResult:
             lines.append("(no query executed)")
             return "\n".join(lines)
         lines.append(f"template: {self.template_id} — {self.template_description}")
+        if self.traversed_methods:
+            # Read-side provenance (AC11): the methods of the edges this template traversed, so a
+            # governed answer that leaned on a model-asserted edge shows it. Deterministic for
+            # the current library; the field surfaces a schema-guided-llm edge if one is ever used.
+            lines.append(f"edge provenance: {', '.join(self.traversed_methods)}")
         if self.bound_params:
             lines.append("bound params:")
             for bp in self.bound_params:
@@ -168,4 +176,5 @@ def governed_query(
         rows=rows,
         answer=synthesis.answer,
         citations=synthesis.citations,
+        traversed_methods=sorted(template.extraction_methods()),
     )

@@ -111,6 +111,23 @@ class ParentChildShowcaseQuery:
 
 
 @dataclass
+class ExtractionShowcaseQuery:
+    """A schema-guided-extraction demo query answerable **only via an LLM edge** — a
+    free-narrative inter-entity relationship the deterministic graph structurally cannot reach.
+
+    ``mode`` is the retrieval mode (``graph`` / ``hybrid``) that traverses the LLM edge;
+    ``llm_edge`` is the ``(src_id, kind, dst_id)`` the answer leans on (its kind is one of the
+    LLM-extractable kinds); ``expected_entities`` all resolve in the fixture corpus."""
+
+    id: str
+    query: str
+    mode: str
+    llm_edge: tuple[str, str, str]
+    expected_entities: list[str]
+    highlight: str = ""
+
+
+@dataclass
 class GlobalShowcaseQuery:
     """A global-community-summary demo query: a **corpus-wide** question (no seed entity for
     the hybrid to expand from), the ``expected_entities`` that should appear in the contributing
@@ -238,6 +255,27 @@ def load_global_showcase() -> list[GlobalShowcaseQuery]:
                 query=str(entry["query"]),
                 expected_entities=[str(e) for e in entry.get("expected_entities", [])],
                 theme=str(entry.get("theme", "")),
+                highlight=str(entry.get("highlight", "")),
+            )
+        )
+    return out
+
+
+def load_extraction_showcase() -> list[ExtractionShowcaseQuery]:
+    """Load the packaged schema-guided-extraction demo queries (LLM-only-edge questions)."""
+    text = resources.files("graphrag.showcase").joinpath("queries.yaml").read_text(encoding="utf-8")
+    data = yaml.safe_load(text) or {}
+    raw = data.get("extraction_queries", []) if isinstance(data, dict) else []
+    out: list[ExtractionShowcaseQuery] = []
+    for entry in raw:
+        edge = entry["llm_edge"]
+        out.append(
+            ExtractionShowcaseQuery(
+                id=str(entry["id"]),
+                query=str(entry["query"]),
+                mode=str(entry["mode"]),
+                llm_edge=(str(edge[0]), str(edge[1]), str(edge[2])),
+                expected_entities=[str(e) for e in entry.get("expected_entities", [])],
                 highlight=str(entry.get("highlight", "")),
             )
         )

@@ -399,3 +399,33 @@ global_queries:
       - "sig:sig-network"
     theme: "each SIG owns a cluster of KEPs — node-lifecycle KEPs under SIG-Node, networking KEPs under SIG-Network — surfaced as distinct community summaries."
     highlight: "breadth across the whole KEP corpus, reduced from the community summaries rather than a single retrieval."
+
+# schema-guided-extraction: questions answerable ONLY via a schema-guided LLM edge — a free-narrative
+# inter-entity relationship the deterministic graph structurally cannot reach (the contrast the slice
+# teaches). `mode` is the retrieval mode (graph/hybrid) that traverses the LLM edge; `llm_edge` is the
+# (src, kind, dst) the answer leans on; `expected_entities` resolve in the fixture corpus.
+extraction_queries:
+  - id: ex-sig-collaboration
+    query: "Which SIGs does SIG Network collaborate with?"
+    mode: "hybrid"
+    llm_edge: ["sig:sig-network", "COLLABORATES_WITH", "sig:sig-node"]
+    expected_entities:
+      - "sig:sig-network"
+      - "sig:sig-node"
+    highlight: "the deterministic graph has no SIG->SIG edge — only the schema-guided COLLABORATES_WITH edge, read from the SIG-Network charter prose, answers this."
+  - id: ex-kep-dependency
+    query: "Which KEP does the Service Internal Traffic Policy KEP depend on?"
+    mode: "graph"
+    llm_edge: ["kep-2086", "DEPENDS_ON", "kep-1880"]
+    expected_entities:
+      - "kep-2086"
+      - "kep-1880"
+    highlight: "KEP->KEP dependency stated only in the KEP-2086 Motivation prose — invisible to the labeled-field deterministic extractor."
+  - id: ex-kep-supersession
+    query: "Which earlier KEP does the in-place pod resources KEP supersede?"
+    mode: "graph"
+    llm_edge: ["kep-1287", "SUPERSEDES", "kep-9"]
+    expected_entities:
+      - "kep-1287"
+      - "kep-9"
+    highlight: "a supersession relationship the deterministic graph cannot reach — recovered from prose, written as a distinguishable schema-guided-llm edge."

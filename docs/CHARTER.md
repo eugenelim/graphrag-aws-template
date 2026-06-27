@@ -241,7 +241,7 @@ ingestion stage, with the same glyph contract as the retrieval table (`Have` /
 | Ingestion stage | Pattern | Our implementation | Status |
 | --- | --- | --- | --- |
 | **Extraction** | Structural / deterministic (no-LLM) | Front-matter + YAML + bounded labeled-field regex over prose; the `ImplicitPathExtractor` analog | ✅ Have — `graph-ingestion-resolution` |
-| **Extraction** | **Schema-guided LLM** | Bedrock extracts triples constrained to a fixed entity/edge schema over the free-narrative relationships the deterministic pass leaves unextracted; trace emits prompt + schema + per-triple provenance | ◔ Planned — `schema-guided-extraction` |
+| **Extraction** | **Schema-guided LLM** | Bedrock extracts triples constrained to a fixed entity/edge schema over the free-narrative relationships the deterministic pass leaves unextracted; trace emits prompt + schema + per-triple provenance | ✅ Have — `schema-guided-extraction` (live AC9 cleared the honest-win bar: 2 prose edges recovered, 0 false positives, the model-asserted hop marked at read) |
 | **Extraction** | Free-form LLM | Bedrock extracts unconstrained triples (the diverse, less-consistent end) | ○ Backlog |
 | **Resolution** | Normalized-match + alias table (no model) | `normalize` + `aliases.yaml`; merge falls out of upsert | ✅ Have — `graph-ingestion-resolution` |
 | **Resolution** | Fuzzy / embedding-based | Similarity-clustered resolution for the no-stable-ID case | ○ Backlog |

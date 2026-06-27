@@ -17,3 +17,8 @@ and Services across a cluster and to the outside world.
 ## Subprojects
 
 The SIG sponsors subprojects such as external-dns and kube-proxy.
+
+## Collaboration
+
+SIG Network collaborates closely with SIG Node on node-local Service routing, where
+endpoint topology and the Kubelet's view of the node meet.
