@@ -98,6 +98,58 @@ class ExtractionResult:
         return "\n".join(lines)
 
 
+def ground_candidates(
+    candidates: list[CandidateTriple],
+    graph: Graph,
+    *,
+    schema: ExtractionSchema = EXTRACTION_SCHEMA,
+    aliases: Mapping[str, str] | None = None,
+) -> tuple[list[TraceEntry], list[Edge]]:
+    """Validate → ground → stamp **pre-supplied** candidates, in input order (zero Bedrock).
+
+    The grounding half of :func:`extract_schema_guided`, carved out so Gold can ground Silver's
+    *cached* candidates with no extractor call (medallion-staging T2b). Returns the per-candidate
+    trace entries and the accepted edges. Off-schema / ungrounded candidates are recorded but never
+    written; accepted edges carry the ``schema-guided-llm`` stamp + source-span provenance and
+    ``doc_paths`` from the source doc. Deterministic edges in ``graph`` are never touched (their
+    kinds are disjoint from the LLM-extractable kinds).
+
+    **Order is preserved** — the entries/edges follow the input order. The staged Gold path supplies
+    candidates in a deterministic (sorted doc-id) order, and the store reconciles edges by
+    ``(src, kind, dst)`` key, so the resulting edge *set* is order-independent (medallion AC1)."""
+    entries: list[TraceEntry] = []
+    edges: list[Edge] = []
+    for candidate in candidates:
+        validation = validate_triple(candidate, schema=schema)
+        if not validation.ok:
+            entries.append(
+                TraceEntry(candidate, VERDICT_OFF_SCHEMA, reason=validation.violated_rule)
+            )
+            continue
+        grounded = ground_triple(candidate, graph, schema=schema, aliases=aliases)
+        if grounded is None:
+            entries.append(
+                TraceEntry(
+                    candidate, VERDICT_DROPPED, reason="endpoint(s) not grounded to a known entity"
+                )
+            )
+            continue
+        edge = Edge(
+            grounded.src_id,
+            grounded.dst_id,
+            grounded.kind,
+            props={
+                "extraction_method": EXTRACTION_METHOD_LLM,
+                "source_doc": grounded.source_doc,
+                "span": grounded.span,
+            },
+            doc_paths={grounded.source_doc},
+        )
+        edges.append(edge)
+        entries.append(TraceEntry(candidate, VERDICT_ACCEPTED, edge=edge))
+    return entries, edges
+
+
 def extract_schema_guided(
     docs: list[ParsedDoc],
     graph: Graph,
@@ -113,39 +165,18 @@ def extract_schema_guided(
     provenance, and ``doc_paths`` from the source doc (so a delta that removes the source doc
     removes the edge like any other). Deterministic edges in ``graph`` are never touched —
     their kinds are disjoint from the LLM-extractable kinds, so no ``(src, kind, dst)`` key can
-    collide (the stamp is set authoritatively, not ``setdefault``-merged)."""
+    collide (the stamp is set authoritatively, not ``setdefault``-merged).
+
+    The composition of the two carved halves (medallion-staging T2b): the per-doc Bedrock
+    ``extractor.extract`` (one call per doc, in input order) followed by :func:`ground_candidates`.
+    Output and per-doc call count are unchanged from the pre-carve implementation."""
     result = ExtractionResult(
         schema=schema, prompt=schema.render(), extractor_model_id=extractor.model_id
     )
+    candidates: list[CandidateTriple] = []
     for doc in docs:
-        for candidate in extractor.extract(doc, schema):
-            validation = validate_triple(candidate, schema=schema)
-            if not validation.ok:
-                result.entries.append(
-                    TraceEntry(candidate, VERDICT_OFF_SCHEMA, reason=validation.violated_rule)
-                )
-                continue
-            grounded = ground_triple(candidate, graph, schema=schema, aliases=aliases)
-            if grounded is None:
-                result.entries.append(
-                    TraceEntry(
-                        candidate,
-                        VERDICT_DROPPED,
-                        reason="endpoint(s) not grounded to a known entity",
-                    )
-                )
-                continue
-            edge = Edge(
-                grounded.src_id,
-                grounded.dst_id,
-                grounded.kind,
-                props={
-                    "extraction_method": EXTRACTION_METHOD_LLM,
-                    "source_doc": grounded.source_doc,
-                    "span": grounded.span,
-                },
-                doc_paths={grounded.source_doc},
-            )
-            result.edges.append(edge)
-            result.entries.append(TraceEntry(candidate, VERDICT_ACCEPTED, edge=edge))
+        candidates.extend(extractor.extract(doc, schema))
+    result.entries, result.edges = ground_candidates(
+        candidates, graph, schema=schema, aliases=aliases
+    )
     return result

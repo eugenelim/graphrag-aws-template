@@ -19,8 +19,9 @@ from pathlib import Path
 from .chunk import chunk_corpus
 from .delta import Delta, Manifest, diff_manifests, manifest_from_docs
 from .embed import Embedder
+from .graphdelta import apply_graph_delta, plan_graph_delta
 from .labels import label_chunks, label_graph, load_labels
-from .model import Edge, Graph, Node
+from .model import Graph
 from .resolve import cross_source_merges, load_aliases, resolve
 from .sources import load_corpus
 from .store.base import GraphStore
@@ -97,110 +98,16 @@ def ingest(
     return _report(graph, parsed_docs=len(docs))
 
 
-def _sources_of(doc_paths: set[str]) -> set[str]:
-    """The source tags a provenance set implies — the ``{source}`` prefix of each doc id, so
-    reconciled ``sources`` match a full rebuild's exactly (slice 5)."""
-    return {did.split("/", 1)[0] for did in doc_paths}
-
-
-def _reconcile_node(
-    store_node: Node | None, scratch_node: Node | None, surviving: set[str]
-) -> Node:
-    """The exact target node: ``doc_paths`` = surviving set, ``sources`` derived from it, props
-    last-writer-wins (a changed/added document overrides the store's), id/kind from whichever
-    side is present (a store-only survivor keeps its props; only ``doc_paths``/``sources`` shrink).
-    Caller guarantees at least one side is present and ``surviving`` is non-empty."""
-    ref = scratch_node or store_node
-    if ref is None:  # pragma: no cover - caller guarantees one side
-        raise ValueError("_reconcile_node needs at least one node")
-    props: dict[str, object] = dict(store_node.props) if store_node else {}
-    if scratch_node is not None:
-        props.update(scratch_node.props)  # the changed/added document overrides
-    return Node(ref.id, ref.kind, props=props, sources=_sources_of(surviving), doc_paths=surviving)
-
-
-def _reconcile_edge(
-    store_edge: Edge | None, scratch_edge: Edge | None, surviving: set[str]
-) -> Edge:
-    """The exact target edge — the edge twin of :func:`_reconcile_node`."""
-    ref = scratch_edge or store_edge
-    if ref is None:  # pragma: no cover - caller guarantees one side
-        raise ValueError("_reconcile_edge needs at least one edge")
-    props: dict[str, object] = dict(store_edge.props) if store_edge else {}
-    if scratch_edge is not None:
-        props.update(scratch_edge.props)
-    return Edge(
-        ref.src_id,
-        ref.dst_id,
-        ref.kind,
-        props=props,
-        sources=_sources_of(surviving),
-        doc_paths=surviving,
-    )
-
-
-def _node_unchanged(store_node: Node, target: Node) -> bool:
-    return (
-        store_node.kind == target.kind
-        and store_node.doc_paths == target.doc_paths
-        and store_node.sources == target.sources
-        and store_node.props == target.props
-    )
-
-
-def _edge_unchanged(store_edge: Edge, target: Edge) -> bool:
-    return (
-        store_edge.doc_paths == target.doc_paths
-        and store_edge.sources == target.sources
-        and store_edge.props == target.props
-    )
-
-
 def _reconcile_graph(store: GraphStore, scratch: Graph, removed_ids: set[str]) -> int:
     """Reconcile the store to the new corpus state by provenance set, returning the orphan count.
 
-    For every node/edge currently in the store or freshly extracted, the surviving provenance is
-    ``(store.doc_paths - removed_ids) | scratch.doc_paths`` — **the union is computed before the
-    empty-check**, so a changed/moved document (which both removes and re-adds) never transiently
-    orphans a node a surviving document still contributes. Empty surviving set → orphan → delete;
-    otherwise the exact target replaces the store entry (only when it actually changed, so
-    unchanged rows are never re-written). Nodes are processed before edges so an edge's endpoints
-    exist when it is written.
+    The thin composition of the plan/apply pair (medallion-staging T3): plan the reconciliation as
+    a `GraphDelta` (pure), then apply it (the single mutating step). Behavior is unchanged from the
+    pre-refactor inline implementation — byte-identical store state and the same set of mutating
+    calls (unchanged rows are never re-written; an edge incident to a deleted node is removed by the
+    node cascade, not a separate delete). See `graphdelta.plan_graph_delta` / `apply_graph_delta`.
     """
-    orphans = 0
-    store_nodes = {n.id: n for n in store.all_nodes()}
-    scratch_nodes = dict(scratch.nodes)
-    for node_id in set(store_nodes) | set(scratch_nodes):
-        store_node = store_nodes.get(node_id)
-        scratch_node = scratch_nodes.get(node_id)
-        surviving = (store_node.doc_paths - removed_ids if store_node else set()) | (
-            scratch_node.doc_paths if scratch_node else set()
-        )
-        if not surviving:
-            store.delete_node(node_id)
-            orphans += 1
-            continue
-        node_target = _reconcile_node(store_node, scratch_node, surviving)
-        if store_node is None or not _node_unchanged(store_node, node_target):
-            store.replace_node(node_target)
-
-    store_edges = {e.key(): e for e in store.all_edges()}
-    scratch_edges = {e.key(): e for e in scratch.edges}
-    for key in set(store_edges) | set(scratch_edges):
-        store_edge = store_edges.get(key)
-        scratch_edge = scratch_edges.get(key)
-        surviving = (store_edge.doc_paths - removed_ids if store_edge else set()) | (
-            scratch_edge.doc_paths if scratch_edge else set()
-        )
-        if not surviving:
-            if store_edge is not None:
-                store.delete_edge(store_edge.src_id, store_edge.kind, store_edge.dst_id)
-                orphans += 1
-            continue
-        edge_target = _reconcile_edge(store_edge, scratch_edge, surviving)
-        if store_edge is None or not _edge_unchanged(store_edge, edge_target):
-            store.replace_edge(edge_target)
-    return orphans
+    return apply_graph_delta(store, plan_graph_delta(store, scratch, removed_ids))
 
 
 @dataclass
