@@ -26,12 +26,24 @@ TITAN_V2_MODEL_ID = "amazon.titan-embed-text-v2:0"
 DEFAULT_DIMENSIONS = 256
 
 
+def embedder_fingerprint(model_id: str, dimensions: int) -> str:
+    """A stable hex fingerprint of the embedder config (medallion-staging AC2).
+
+    Derived from the load-bearing fields — ``model_id`` + ``dimensions`` — over a canonical
+    (sorted-key) JSON form, so it is identical across runs and changes iff a field that affects
+    the produced vectors changes. Used as the Silver *chunks* artifact's cache key component."""
+    canon = json.dumps({"model_id": model_id, "dimensions": dimensions}, sort_keys=True)
+    return hashlib.sha256(canon.encode("utf-8")).hexdigest()[:16]
+
+
 class Embedder(Protocol):
     @property
     def model_id(self) -> str: ...
 
     @property
     def dimensions(self) -> int: ...
+
+    def fingerprint(self) -> str: ...
 
     def embed(self, texts: list[str]) -> list[list[float]]: ...
 
@@ -59,6 +71,9 @@ class HashEmbedder:
     @property
     def dimensions(self) -> int:
         return self._dims
+
+    def fingerprint(self) -> str:
+        return embedder_fingerprint(self.model_id, self.dimensions)
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         out: list[list[float]] = []
@@ -100,6 +115,9 @@ class BedrockTitanEmbedder:
     @property
     def dimensions(self) -> int:
         return self._dims
+
+    def fingerprint(self) -> str:
+        return embedder_fingerprint(self.model_id, self.dimensions)
 
     def _bedrock(self) -> Any:
         if self._client is None:  # pragma: no cover - exercised only on the live path
