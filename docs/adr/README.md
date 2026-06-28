@@ -12,6 +12,7 @@
 | [0004](0004-text2cypher-read-only-guard.md) | Read-only guard for LLM-authored openCypher: IAM data-action scoping over a read-replica endpoint | Accepted |
 | [0005](0005-community-detection-in-fargate-louvain.md) | Community detection runs in the Fargate ingest task (Louvain via networkx), not a standing Neptune Analytics service | Accepted |
 | [0006](0006-schema-guided-llm-extraction-guard.md) | Schema-guided LLM extraction is guarded by a closed schema + entity-grounding, runs at ingest, and is distinguishable in the graph | Accepted |
+| [0007](0007-silver-cache-content-and-config-addressed.md) | Silver cache addressing — content-and-config over content-only | Accepted |
 
 ## Adding a new ADR
 

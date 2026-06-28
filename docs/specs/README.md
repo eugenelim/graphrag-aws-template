@@ -19,7 +19,7 @@ docs/specs/<feature>/
 
 | Spec | Status | Constrained by | Notes |
 | --- | --- | --- | --- |
-| _(none — see Shipped specs below)_ | | | |
+| [`medallion-staging`](medallion-staging/spec.md) | Draft | RFC-0003, RFC-0002, ADR-0007, ADR-0002, ADR-0006 | Bronze/Silver/Gold ingestion staging with a content-and-config-addressed Silver cache, backward-compatible `IngestState` (v1→v2), and an explicit `GraphDelta` (plan/apply). 9 ACs, task-sliced T1–T5 (T4 split a/b/c); live ACs (cache-skip, fingerprint-bump recompute, read-only retrieval reflection, zero-residual teardown) run at implementation. Cleared spec-mode adversarial review. |
 
 ## Shipped specs (archived)
 
