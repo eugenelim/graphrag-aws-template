@@ -95,9 +95,11 @@ offline seams) + `apps/ingestion/entrypoint.py` (Fargate driver) + `apps/infra`
 ### Staged-driver scope (`ingest_staged`, T4a/T4b)
 `ingest_staged(prev_state, community_root, enhancements_root, graph_store, vector_store,
 artifacts, embedder, *, extractor=None, schema=EXTRACTION_SCHEMA, aliases=None,
-labels=None) -> tuple[DeltaReport, IngestState]` is the staged engine for **all three
-modes** (full = `prev_state=None`; rebuild = clear-then-full; delta = incremental). It
-**subsumes**: Bronze (parse + build new state + `diff_manifests(prev.as_manifest(), new)`);
+labels=None) -> tuple[DeltaReport, IngestState]` is the staged engine. It is capable of all three
+modes (full = `prev_state=None`; rebuild = clear-then-full; delta = incremental), and **T4b wires
+it into `MODE=delta`** (full/rebuild keep their existing passes — see T4b for the
+deferral rationale). It **subsumes**: Bronze (parse + build new state +
+`diff_manifests(prev.as_manifest(), new)`);
 Silver (`materialize_silver` per added/changed/moved-to/stale doc — chunks+vectors always,
 LLM candidates **only when `extractor` is supplied**); Gold (`resolve()` re-derives
 deterministic nodes/edges + `label_graph` + — when `extractor` supplied — `ground_candidates`
@@ -106,14 +108,14 @@ reconcile; vector `delete_by_doc` + re-index of cached vectors + `label_chunks`)
 the new v2 `IngestState` and, when grounding ran, the `ExtractionResult` (carried on the
 `DeltaReport`) so the entrypoint persists the trace.
 
-It deliberately **leaves to the entrypoint** (unchanged from today): community detection
-(`_community_writeback`, full/rebuild only — ADR-0005, never on delta); the trace-artifact
-S3 write (server-side key); and MODE routing. **Schema-guided extraction stays full/rebuild-
-only and default-off** (ADR-0006): the entrypoint passes `extractor` to `ingest_staged`
-**only** on `MODE in {full, rebuild}` **and** `SCHEMA_EXTRACTION` set, so `MODE=delta` never
-grounds (today's behavior preserved) while the Silver candidate cache still makes a
-full/rebuild re-run zero-Bedrock. Additive resilience is preserved: a raising extractor
-leaves the deterministic graph intact. Traces to: AC1, AC2, AC9 · n/a.
+It deliberately **leaves to the entrypoint** community detection, the trace write, and MODE
+routing. The `extractor`/grounding parameters exist for the (deferred) full/rebuild wiring and
+for the offline T4a tests; **as wired in T4b, `MODE=delta` passes no extractor** (schema-guided
+extraction is full/rebuild-only, ADR-0006 — and full/rebuild keep their existing
+`_schema_extraction_writeback`), so the deployed delta path never grounds, exactly as today.
+The grounding/`ExtractionResult` path is therefore exercised by T4a's offline integration test,
+not the deployed delta path, until full/rebuild staging lands
+(deferred: medallion-fullrebuild-staging). Traces to: AC1, AC2, AC3 · n/a.
 
 ### Failure, edge cases & resilience
 - Partial Silver write: content-addressed keys + write-then-readable; a fingerprint
@@ -280,18 +282,28 @@ output and per-doc call count unchanged.
   the base lists none of `hybrid.py`, `query.py`, or the query-Lambda module (goal-based). [AC10]
 
 **Approach:**
-- Wire `ingest_staged` into the task as the engine for all three MODEs; read the prior
-  `IngestState` (v1-compatible), write the new one **last** (preserving slice-5 ordering); back
-  the `ArtifactStore` S3 impl with the existing `S3Client` seam (`entrypoint.py:59-109`). The
-  entrypoint threads `load_aliases()` (`entrypoint.py:325`) as `aliases` into `ingest_staged`'s
-  Gold step. The entrypoint passes `extractor` to `ingest_staged` **only** when `MODE in {full, rebuild}` and
-  `SCHEMA_EXTRACTION` is set (ADR-0006 default-off, full/rebuild-only — preserved); it keeps
-  `_community_writeback` (full/rebuild only) and writes the returned `ExtractionResult` trace to
-  the server-side key, replacing `_schema_extraction_writeback`'s extract+ground with the staged
-  cached path while preserving its default-off / trace-write / additive-resilience contract.
+- **Wire `ingest_staged` into `MODE=delta`** (the steady-state incremental path, where the
+  Silver-cache value lives), replacing `ingest_delta`. Read the prior `IngestState` from
+  `manifest.json` (v1-compatible — `IngestState.from_json` upgrades a v1 manifest in), run
+  `ingest_staged(prev_state, …, artifacts=<S3 impl>, embedder, extractor=None)`, and write the new
+  v2 `IngestState` back **last** (slice-5 ordering). Delta passes **no** extractor (schema-guided
+  extraction is full/rebuild-only — ADR-0006), so no community/trace work on delta — matching
+  today's delta scope exactly. Back the `ArtifactStore` with a small S3 impl over the existing
+  `S3Client` seam (`entrypoint.py:55-87`), keyed at `CORPUS_PREFIX + silver_key(...)`.
+- **Full / rebuild are left UNCHANGED** — they keep `ingest` + `_vector_dual_write` (incl. the
+  parent-child one-embed-pass) + `_community_writeback` + `_schema_extraction_writeback`, and keep
+  writing the v1 `manifest.json`. This deliberately preserves four heavily-pinned behaviors the
+  entrypoint suite locks in (full returns `IngestReport`; the parent-child nested index builds from
+  **one** embed pass; community summaries; the schema-extraction flag-off/on/raising/trace
+  contract). Routing those through `ingest_staged` would regress them for benefit the offline
+  T2/T4a tests already prove; **full/rebuild Silver staging is deferred**
+  (deferred: medallion-fullrebuild-staging). Consequence: the first `MODE=delta` after a v1
+  manifest re-embeds all docs once (no prior fingerprints → `embedder_stale`), warming Silver — the
+  documented "first run warms Silver" behavior (Rollout); steady-state delta is then incremental.
 
-**Done when:** entrypoint round-trip + import check green; the existing entrypoint test suite
-(`test_entrypoint.py`) stays green (default-off and full/delta/rebuild behavior preserved).
+**Done when:** delta round-trips `IngestState` (v1 upgrading in), runs through `ingest_staged`, and
+rewrites the state last; the import check is green; the **existing** `test_entrypoint.py` suite stays
+green (full/rebuild behavior unchanged; delta now staged).
 
 ### T4c: key-scoped Silver IAM grant
 
