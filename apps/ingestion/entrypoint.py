@@ -32,7 +32,11 @@ from typing import Any, Protocol
 from graphrag.delta import Manifest, build_manifest, manifest_from_json, manifest_to_json
 from graphrag.embed import Embedder
 from graphrag.extract_llm import TripleExtractor
-from graphrag.ingest import DeltaReport, IngestReport, ingest, ingest_delta, rebuild
+from graphrag.ingest import DeltaReport, IngestReport, ingest, ingest_staged, rebuild
+from graphrag.silver import ArtifactStore
+from graphrag.state import IngestState
+from graphrag.state import from_json as ingest_state_from_json
+from graphrag.state import to_json as ingest_state_to_json
 from graphrag.store.base import GraphStore
 from graphrag.store.community_base import CommunityStore
 from graphrag.store.parentchild_base import ParentChildStore
@@ -84,6 +88,63 @@ def read_manifest(s3_client: S3Client, bucket: str, key: str) -> Manifest | None
 def write_manifest(s3_client: S3Client, bucket: str, key: str, manifest: Manifest) -> None:
     """Persist the manifest to S3 — called **last**, after both stores are updated (AC8)."""
     s3_client.put_object(Bucket=bucket, Key=key, Body=manifest_to_json(manifest).encode("utf-8"))
+
+
+def read_ingest_state(s3_client: S3Client, bucket: str, key: str) -> IngestState | None:
+    """Read the stored `IngestState` from S3, or ``None`` when absent (the first staged --delta).
+
+    The object at ``key`` is the same ``manifest.json`` the slice-5 path writes; a **v1** manifest
+    envelope upgrades into a v2 `IngestState` transparently (`state.from_json`), so the staged delta
+    is backward-compatible with a store that has only ever seen the v1 manifest (medallion AC4)."""
+    try:
+        resp = s3_client.get_object(Bucket=bucket, Key=key)
+    except Exception as exc:  # a missing state is expected on the first staged delta
+        if _is_not_found(exc):
+            return None
+        raise
+    body = resp["Body"].read()
+    text = body.decode("utf-8") if isinstance(body, bytes) else str(body)
+    return ingest_state_from_json(text)
+
+
+def write_ingest_state(s3_client: S3Client, bucket: str, key: str, state: IngestState) -> None:
+    """Persist the v2 `IngestState` to S3 — called **last**, after both stores are updated (AC8)."""
+    body = ingest_state_to_json(state).encode("utf-8")
+    s3_client.put_object(Bucket=bucket, Key=key, Body=body)
+
+
+class S3ArtifactStore:
+    """An `ArtifactStore` backed by S3 over the task's existing `S3Client` seam (medallion T4b).
+
+    Silver artifact keys (`silver.silver_key`, e.g. ``silver/<fp>/<hash>/chunks.json``) are written
+    under ``CORPUS_PREFIX`` in the corpus bucket, so a `destroy` of the auto-emptied bucket leaves
+    zero residual (AC8). ``has`` probes with ``get_object`` (the `S3Client` seam has no
+    ``head_object``); the corpus is small, so the extra read on a hit is acceptable."""
+
+    def __init__(self, s3_client: S3Client, bucket: str, prefix: str = "") -> None:
+        self._s3 = s3_client
+        self._bucket = bucket
+        self._prefix = prefix
+
+    def _full_key(self, key: str) -> str:
+        return f"{self._prefix}{key}"
+
+    def has(self, key: str) -> bool:
+        try:
+            self._s3.get_object(Bucket=self._bucket, Key=self._full_key(key))
+        except Exception as exc:
+            if _is_not_found(exc):
+                return False
+            raise
+        return True
+
+    def load(self, key: str) -> str:
+        resp = self._s3.get_object(Bucket=self._bucket, Key=self._full_key(key))
+        body = resp["Body"].read()
+        return body.decode("utf-8") if isinstance(body, bytes) else str(body)
+
+    def write(self, key: str, body: str) -> None:
+        self._s3.put_object(Bucket=self._bucket, Key=self._full_key(key), Body=body.encode("utf-8"))
 
 
 def download_corpus(bucket: str, prefix: str, dest: Path, s3_client: S3Client) -> tuple[Path, Path]:
@@ -356,11 +417,13 @@ def run(
     community_store: CommunityStore | None = None,
     synthesizer: Synthesizer | None = None,
     extractor: TripleExtractor | None = None,
+    artifacts: ArtifactStore | None = None,
 ) -> IngestReport | DeltaReport:
     """Run the ingestion task. ``MODE`` selects ``full`` (default — the slice-1–4 dual-write,
-    unchanged), ``delta`` (slice-5 incremental re-ingest against the stored manifest), or
-    ``rebuild`` (clear both stores + full ingest). Every mode writes the manifest to S3 **last**,
-    after both stores are updated, so the next ``--delta`` has a baseline (AC8)."""
+    unchanged), ``delta`` (the medallion-staged incremental re-ingest through the Silver cache,
+    against the stored `IngestState`), or ``rebuild`` (clear both stores + full ingest). Full and
+    rebuild write the v1 ``manifest.json``; delta reads/writes the v2 `IngestState` at the same key
+    (a v1 manifest upgrades in) — written **last**, after both stores are updated (AC8)."""
     bucket = env["CORPUS_BUCKET"]
     prefix = env.get("CORPUS_PREFIX", "")
     region = env.get("AWS_REGION", "us-east-1")
@@ -403,17 +466,26 @@ def run(
             new_manifest = report.new_manifest
         elif mode == "delta":
             vstore, emb = _resolve_vector(env, vector_store, embedder)
-            prev = read_manifest(s3_client, bucket, manifest_key)
-            if prev is None:
+            art_store = artifacts or S3ArtifactStore(s3_client, bucket, prefix)
+            prev_state = read_ingest_state(s3_client, bucket, manifest_key)
+            if prev_state is None:
                 # Loud, not silent: an operator expecting an incremental delta should see that the
-                # baseline was missing and the run fell back to a full re-ingest (re-embeds all).
+                # baseline was missing and the run fell back to a full staged ingest (warms Silver).
                 logger.warning(
-                    "MODE=delta but no manifest at s3://%s/%s — falling back to a FULL ingest",
+                    "MODE=delta but no state at s3://%s/%s — falling back to a FULL staged ingest",
                     bucket,
                     manifest_key,
                 )
-            report = ingest_delta(prev, community, enhancements, store, vstore, emb)
-            new_manifest = report.new_manifest
+            # Delta passes no extractor: schema-guided extraction is full/rebuild-only (ADR-0006).
+            report, new_state = ingest_staged(
+                prev_state, community, enhancements, store, vstore,
+                artifacts=art_store, embedder=emb,
+            )
+            print(report.render())
+            # Written last, only after both stores are updated: a crash leaves the old state, so the
+            # next --delta re-attempts the same delta (at-least-once, idempotent).
+            write_ingest_state(s3_client, bucket, manifest_key, new_state)
+            return report
         else:
             raise ValueError(f"unknown MODE {mode!r}: expected full | delta | rebuild")
 

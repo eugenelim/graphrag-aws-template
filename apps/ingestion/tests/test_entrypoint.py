@@ -148,6 +148,56 @@ def test_delta_mode_reads_manifest_runs_delta_and_rewrites_it(tmp_path: Path) ->
     assert s3._objects["snap/manifest.json"] != baseline  # manifest rewritten last
 
 
+def test_delta_round_trips_ingest_state_and_upgrades_a_v1_manifest(tmp_path: Path) -> None:
+    # medallion T4b/AC4: MODE=delta reads the stored object as an IngestState (a v1 manifest
+    # written by a `full` run upgrades in), runs the staged driver, and rewrites a v2 IngestState.
+    import json
+
+    from graphrag.ingest import DeltaReport
+
+    corpus = tmp_path / "corpus"
+    shutil.copytree(CORPUS, corpus)
+    s3 = FakeS3(corpus, "snap/")
+    graph, vectors = MemoryGraphStore(), MemoryVectorStore()
+    # A full run writes the v1 manifest (version 1, {id: hash}).
+    run(_env("full"), s3_client=s3, store=graph, vector_store=vectors, embedder=HashEmbedder())
+    v1 = json.loads(s3._objects["snap/manifest.json"])
+    assert v1["version"] == 1
+
+    # MODE=delta reads that v1 manifest (upgrades in), runs staged, and rewrites a v2 state.
+    report = run(
+        _env("delta"), s3_client=s3, store=graph, vector_store=vectors, embedder=HashEmbedder()
+    )
+    assert isinstance(report, DeltaReport)
+    v2 = json.loads(s3._objects["snap/manifest.json"])
+    assert v2["version"] == 2
+    assert "fingerprints" in v2 and v2["fingerprints"].get("embedder")
+    # Every doc carries its content+embedder-addressed Silver chunks key.
+    assert all(d["silver_chunks"].startswith("silver/") for d in v2["docs"].values())
+
+
+def test_delta_warm_cache_reingest_makes_no_silver_writes(tmp_path: Path) -> None:
+    # medallion AC1: a staged delta run twice over unchanged content makes no NEW Silver writes
+    # on the second run (the artifacts are all cache hits) and reports an empty delta.
+    from graphrag.ingest import DeltaReport
+
+    corpus = tmp_path / "corpus"
+    shutil.copytree(CORPUS, corpus)
+    s3 = FakeS3(corpus, "snap/")
+    graph, vectors = MemoryGraphStore(), MemoryVectorStore()
+    run(_env("delta"), s3_client=s3, store=graph, vector_store=vectors, embedder=HashEmbedder())
+    silver_after_first = {k for k in s3._objects if k.startswith("snap/silver/")}
+    assert silver_after_first  # the first (fallback-full) staged delta warmed Silver
+
+    report = run(
+        _env("delta"), s3_client=s3, store=graph, vector_store=vectors, embedder=HashEmbedder()
+    )
+    assert isinstance(report, DeltaReport)
+    assert report.delta.is_empty  # nothing changed
+    silver_after_second = {k for k in s3._objects if k.startswith("snap/silver/")}
+    assert silver_after_second == silver_after_first  # no new Silver writes (all cache hits)
+
+
 def test_rebuild_mode_clears_then_reingests(tmp_path: Path) -> None:
     corpus = tmp_path / "corpus"
     shutil.copytree(CORPUS, corpus)
@@ -178,6 +228,9 @@ class CountingEmbedder:
     @property
     def dimensions(self) -> int:
         return self._inner.dimensions
+
+    def fingerprint(self) -> str:
+        return self._inner.fingerprint()
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         self.calls += 1
