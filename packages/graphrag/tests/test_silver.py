@@ -102,8 +102,8 @@ def test_miss_computes_once_and_writes_both_artifacts() -> None:
     )
     assert emb.embed_calls == 1 and ext.extract_calls == 1
     assert art.chunks and art.candidates
-    assert artifacts.has(silver_key(EMB_FP, "cafe00", "chunks"))
-    assert artifacts.has(silver_key(EXT_FP, "cafe00", "candidates"))
+    assert artifacts.get(silver_key(EMB_FP, "cafe00", "chunks")) is not None
+    assert artifacts.get(silver_key(EXT_FP, "cafe00", "candidates")) is not None
 
 
 def test_hit_makes_zero_embed_and_zero_extract_calls() -> None:
@@ -203,8 +203,8 @@ def test_delta_run_without_extractor_caches_chunks_only() -> None:
         embedder_fp=EMB_FP,  # no extractor / extraction_fp → schema-guided is full/rebuild-only
     )
     assert art.candidates == []
-    assert artifacts.has(silver_key(EMB_FP, "f1", "chunks"))
-    assert not artifacts.has(silver_key(EXT_FP, "f1", "candidates"))
+    assert artifacts.get(silver_key(EMB_FP, "f1", "chunks")) is not None
+    assert artifacts.get(silver_key(EXT_FP, "f1", "candidates")) is None
 
 
 # --- serialized round-trip -------------------------------------------------------------
@@ -255,7 +255,7 @@ def test_doc_id_with_traversal_cannot_alter_the_key() -> None:
     )
     materialize_silver(evil, artifacts, HashEmbedder(), content_hash="5afe", embedder_fp=EMB_FP)
     # The only key written is the confined, hash-addressed one.
-    assert artifacts.has(silver_key(EMB_FP, "5afe", "chunks"))
+    assert artifacts.get(silver_key(EMB_FP, "5afe", "chunks")) is not None
     assert all(k.startswith("silver/") and ".." not in k for k in artifacts._blobs)
 
 

@@ -118,8 +118,8 @@ class S3ArtifactStore:
 
     Silver artifact keys (`silver.silver_key`, e.g. ``silver/<fp>/<hash>/chunks.json``) are written
     under ``CORPUS_PREFIX`` in the corpus bucket, so a `destroy` of the auto-emptied bucket leaves
-    zero residual (AC8). ``has`` probes with ``get_object`` (the `S3Client` seam has no
-    ``head_object``); the corpus is small, so the extra read on a hit is acceptable."""
+    zero residual (AC8). ``get`` is a **single** ``get_object`` (returning ``None`` on a miss), so a
+    warm-cache hit — the path the feature optimizes — costs one round-trip, not a head-then-get."""
 
     def __init__(self, s3_client: S3Client, bucket: str, prefix: str = "") -> None:
         self._s3 = s3_client
@@ -129,17 +129,13 @@ class S3ArtifactStore:
     def _full_key(self, key: str) -> str:
         return f"{self._prefix}{key}"
 
-    def has(self, key: str) -> bool:
+    def get(self, key: str) -> str | None:
         try:
-            self._s3.get_object(Bucket=self._bucket, Key=self._full_key(key))
+            resp = self._s3.get_object(Bucket=self._bucket, Key=self._full_key(key))
         except Exception as exc:
             if _is_not_found(exc):
-                return False
+                return None
             raise
-        return True
-
-    def load(self, key: str) -> str:
-        resp = self._s3.get_object(Bucket=self._bucket, Key=self._full_key(key))
         body = resp["Body"].read()
         return body.decode("utf-8") if isinstance(body, bytes) else str(body)
 

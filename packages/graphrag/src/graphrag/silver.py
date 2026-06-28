@@ -17,6 +17,13 @@ server-derived fingerprint (hex) — never from a doc id, a path, a span, or mod
 poisoned document cannot write outside the `silver/` prefix (CWE-23, the trace-key confinement
 pattern). Like `delta.py`, this module is **ingest-path only** — it must never be imported by the
 PyYAML-free query Lambda.
+
+**Integrity trust.** The cache is *integrity-trusted*: only the ingest task role writes the
+`silver/*` prefix (a private, encrypted, SSL-enforced bucket), and a cached `Chunk.visibility` is
+the project's synthetic teaching label, **not** a real ACL (charter principle 5) — so the cache is
+not integrity-protected (no checksum/signature). A future change that promotes `visibility` to a
+real authorization control must add integrity protection here, since a tampered cached artifact
+would otherwise be served verbatim.
 """
 
 from __future__ import annotations
@@ -62,10 +69,12 @@ class ArtifactStore(Protocol):
     Keys are the server-derived `silver_key` strings; bodies are the serialized JSON text. The
     in-memory implementation (`MemoryArtifactStore`) is the offline/test backend; the deployed task
     backs this with S3 over the existing boto3 client (T4b). Holding the **serialized text** (not
-    live objects) means the in-memory backend exercises the same JSON codec the S3 backend does."""
+    live objects) means the in-memory backend exercises the same JSON codec the S3 backend does.
 
-    def has(self, key: str) -> bool: ...
-    def load(self, key: str) -> str: ...
+    `get` returns the body or ``None`` when absent — a **single** round-trip that collapses the
+    has-then-load probe, so a warm-cache hit (the path the whole feature optimizes) is one fetch."""
+
+    def get(self, key: str) -> str | None: ...
     def write(self, key: str, body: str) -> None: ...
 
 
@@ -75,11 +84,8 @@ class MemoryArtifactStore:
     def __init__(self) -> None:
         self._blobs: dict[str, str] = {}
 
-    def has(self, key: str) -> bool:
-        return key in self._blobs
-
-    def load(self, key: str) -> str:
-        return self._blobs[key]
+    def get(self, key: str) -> str | None:
+        return self._blobs.get(key)
 
     def write(self, key: str, body: str) -> None:
         self._blobs[key] = body
@@ -132,8 +138,8 @@ def chunks_from_json(text: str) -> list[tuple[Chunk, list[float]]]:
             source=cd["source"],
             doc_path=cd["doc_path"],
             heading=cd["heading"],
-            entity_ids=list(cd.get("entity_ids", [])),
-            visibility=cd.get("visibility", "public"),
+            entity_ids=list(cd["entity_ids"]),
+            visibility=cd["visibility"],
         )
         out.append((chunk, [float(x) for x in item["vector"]]))
     return out
@@ -189,8 +195,9 @@ def materialize_silver(
     extractor and so caches/serves chunks only. Grounding is **not** done here (it is global —
     Gold's `ground_candidates` consumes these cached candidates)."""
     chunks_key = silver_key(embedder_fp, content_hash, "chunks")
-    if artifacts.has(chunks_key):
-        chunks = chunks_from_json(artifacts.load(chunks_key))
+    cached_chunks = artifacts.get(chunks_key)
+    if cached_chunks is not None:
+        chunks = chunks_from_json(cached_chunks)
     else:
         raw_chunks = chunk_corpus([doc])
         vectors = embedder.embed([c.text for c in raw_chunks]) if raw_chunks else []
@@ -200,8 +207,9 @@ def materialize_silver(
     candidates: list[CandidateTriple] = []
     if extractor is not None and extraction_fp is not None:
         cand_key = silver_key(extraction_fp, content_hash, "candidates")
-        if artifacts.has(cand_key):
-            candidates = candidates_from_json(artifacts.load(cand_key))
+        cached_candidates = artifacts.get(cand_key)
+        if cached_candidates is not None:
+            candidates = candidates_from_json(cached_candidates)
         else:
             candidates = list(extractor.extract(doc, schema))
             artifacts.write(cand_key, candidates_to_json(candidates))
