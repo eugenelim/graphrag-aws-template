@@ -19,11 +19,15 @@ from pathlib import Path
 from .chunk import chunk_corpus
 from .delta import Delta, Manifest, diff_manifests, manifest_from_docs
 from .embed import Embedder
+from .extract_llm import EXTRACTION_SCHEMA, ExtractionSchema, TripleExtractor, schema_fingerprint
 from .graphdelta import apply_graph_delta, plan_graph_delta
 from .labels import label_chunks, label_graph, load_labels
 from .model import Graph
 from .resolve import cross_source_merges, load_aliases, resolve
+from .schema_extract import ExtractionResult, ground_candidates
+from .silver import ArtifactStore, SilverArtifact, materialize_silver, silver_key
 from .sources import load_corpus
+from .state import DocState, IngestState, Stage
 from .store.base import GraphStore
 from .store.vector_base import EmbeddedChunk, VectorStore
 
@@ -127,6 +131,9 @@ class DeltaReport:
     orphans_removed: int
     indexed_chunks: int
     full_ingest: bool = False  # the no-prior-manifest fallback ran a full ingest (AC8b)
+    # The schema-guided extraction trace, present only when `ingest_staged` ran grounding (an
+    # extractor was supplied — full/rebuild + SCHEMA_EXTRACTION). The entrypoint persists it.
+    extraction: ExtractionResult | None = None
 
     def render(self) -> str:
         d = self.delta
@@ -268,3 +275,179 @@ def rebuild(
         aliases=aliases,
         labels=labels,
     )
+
+
+def _staged_state(
+    new_manifest: Manifest,
+    prev_state: IngestState | None,
+    embedder_fp: str,
+    extraction_fp: str | None,
+) -> IngestState:
+    """Build the new v2 `IngestState` from the reconciled corpus — every doc Gold, Silver keys set.
+
+    A doc's chunks key is content+embedder addressed (valid for every current doc, since unchanged
+    docs were cached at this same ``embedder_fp``). Its candidates key is content+extraction
+    addressed when grounding ran (extractor supplied); otherwise the prior candidates key is carried
+    forward for an unchanged doc (delta runs do not re-materialize candidates — ADR-0006)."""
+    docs: dict[str, DocState] = {}
+    for doc_id, content_hash in new_manifest.items():
+        prev_doc = prev_state.docs.get(doc_id) if prev_state is not None else None
+        if extraction_fp is not None:
+            candidates_key: str | None = silver_key(extraction_fp, content_hash, "candidates")
+        elif prev_doc is not None and prev_doc.content_hash == content_hash:
+            candidates_key = prev_doc.silver_candidates
+        else:
+            candidates_key = None
+        docs[doc_id] = DocState(
+            content_hash=content_hash,
+            stage=Stage.GOLD,
+            silver_chunks=silver_key(embedder_fp, content_hash, "chunks"),
+            silver_candidates=candidates_key,
+        )
+    fingerprints = {"embedder": embedder_fp}
+    if extraction_fp is not None:
+        fingerprints["extraction"] = extraction_fp
+    elif prev_state is not None and "extraction" in prev_state.fingerprints:
+        fingerprints["extraction"] = prev_state.fingerprints["extraction"]
+    return IngestState(
+        docs=docs,
+        fingerprints=fingerprints,
+        ingested_commit=prev_state.ingested_commit if prev_state is not None else None,
+    )
+
+
+def ingest_staged(
+    prev_state: IngestState | None,
+    community_root: Path,
+    enhancements_root: Path,
+    graph_store: GraphStore,
+    vector_store: VectorStore,
+    artifacts: ArtifactStore,
+    embedder: Embedder,
+    *,
+    extractor: TripleExtractor | None = None,
+    schema: ExtractionSchema = EXTRACTION_SCHEMA,
+    aliases: dict[str, str] | None = None,
+    labels: dict[str, str] | None = None,
+) -> tuple[DeltaReport, IngestState]:
+    """The three-stage staged driver — Bronze → Silver → Gold; returns a report + `IngestState`.
+
+    **Bronze** parses the corpus and content-hashes it, diffing against ``prev_state`` (projected to
+    a v1 manifest). **Silver** materializes the Bedrock-expensive per-document outputs through the
+    content+config-addressed `ArtifactStore` cache — a doc whose content and fingerprints are
+    unchanged is a pure cache hit (zero Bedrock), so a moved document (same hash) and a re-ingest of
+    an unchanged corpus both make no Bedrock call (AC1, AC3). An **embedder fingerprint change** is
+    miss for *every* doc's chunks artifact (a new key), so it recomputes every vector even when no
+    content changed — closing the stale-vector bug (AC2). **Gold** re-derives the deterministic
+    (`resolve`, no Bedrock), grounds the cached schema-guided candidates when an extractor is
+    supplied (`ground_candidates` — full/rebuild-only, ADR-0006), reconciles the store via the
+    `GraphDelta` plan/apply pair, and delete-then-re-indexes the affected vectors from Silver.
+
+    Community detection and the trace-artifact S3 write stay with the entrypoint (T4b); this driver
+    returns the `ExtractionResult` on the report so the entrypoint can persist it."""
+    aliases = aliases if aliases is not None else load_aliases()
+    labels = labels if labels is not None else load_labels()
+    embedder_fp = embedder.fingerprint()
+    extraction_fp = schema_fingerprint(schema) if extractor is not None else None
+
+    docs = load_corpus(community_root, enhancements_root)
+    docs_by_id = {doc.doc_id: doc for doc in docs}
+    new_manifest = manifest_from_docs(docs, community_root, enhancements_root)
+    prev_manifest = prev_state.as_manifest() if prev_state is not None else None
+    delta = diff_manifests(prev_manifest, new_manifest)
+
+    before_nodes = len(graph_store.all_nodes())
+    before_edges = len(graph_store.all_edges())
+    before_chunks = _safe_count(vector_store)
+
+    content_added = delta.added_doc_ids()
+    removed_ids = delta.removed_doc_ids()
+    # An embedder-fp change forces a re-embed + re-index of EVERY surviving doc (new chunks key),
+    # not only the content delta — so a config change can never silently serve stale vectors (AC2).
+    prev_embedder_fp = prev_state.fingerprints.get("embedder") if prev_state is not None else None
+    embedder_stale = prev_embedder_fp != embedder_fp
+    vector_doc_ids = set(new_manifest) if embedder_stale else set(content_added)
+    silver_doc_ids = set(content_added) | vector_doc_ids
+
+    # Silver: materialize (cache-or-compute) each affected doc. Hits make zero Bedrock calls.
+    silver_by_id: dict[str, SilverArtifact] = {}
+    for doc_id in sorted(silver_doc_ids):
+        silver_by_id[doc_id] = materialize_silver(
+            docs_by_id[doc_id],
+            artifacts,
+            embedder,
+            content_hash=new_manifest[doc_id],
+            embedder_fp=embedder_fp,
+            extraction_fp=extraction_fp,
+            extractor=extractor,
+            schema=schema,
+        )
+    logger.info(
+        "staged%s: +%d ~%d -%d >%d (%d silver doc(s), embedder_stale=%s)",
+        " (full — no prior state)" if prev_state is None else "",
+        len(delta.added),
+        len(delta.changed),
+        len(delta.deleted),
+        len(delta.moved),
+        len(silver_doc_ids),
+        embedder_stale,
+    )
+
+    # Gold — deterministic graph over the content delta, then (optionally) schema-guided edges.
+    # Resolve in load_corpus order (NOT sorted) so the prop first-writer-wins merge matches
+    # ingest_delta/rebuild exactly (a multiply-contributed node's prop is order-sensitive).
+    scratch = resolve([doc for doc in docs if doc.doc_id in content_added], aliases)
+    label_graph(scratch, labels)
+
+    extraction_result: ExtractionResult | None = None
+    if extractor is not None:
+        # Ground the cached candidates of EVERY surviving doc in a stable (sorted doc-id) order
+        # against the resolved graph (== the full graph on the full/rebuild path grounding runs on).
+        candidates = [
+            cand
+            for doc_id in sorted(new_manifest)
+            if (art := silver_by_id.get(doc_id)) is not None
+            for cand in art.candidates
+        ]
+        entries, edges = ground_candidates(candidates, scratch, schema=schema, aliases=aliases)
+        for edge in edges:  # add schema-guided edges to the scratch graph so they reconcile in
+            scratch.upsert_edge(edge)
+        extraction_result = ExtractionResult(
+            schema=schema,
+            prompt=schema.render(),
+            extractor_model_id=extractor.model_id,
+            entries=entries,
+            edges=edges,
+        )
+
+    orphans = apply_graph_delta(graph_store, plan_graph_delta(graph_store, scratch, removed_ids))
+    logger.info("graph reconciled: %d orphan node(s)/edge(s) removed", orphans)
+
+    # Vector: delete chunks of every touched doc (removed + re-indexed), then re-index from Silver.
+    touched_ids = removed_ids | vector_doc_ids
+    if touched_ids:
+        vector_store.delete_by_doc(sorted(touched_ids))
+    indexed = 0
+    for doc_id in sorted(vector_doc_ids):
+        art = silver_by_id[doc_id]
+        label_chunks([chunk for chunk, _vector in art.chunks], labels)
+        for chunk, vector in art.chunks:
+            vector_store.index_chunk(EmbeddedChunk(chunk, vector))
+            indexed += 1
+    logger.info("vector: indexed %d staged chunk(s)", indexed)
+
+    report = DeltaReport(
+        delta=delta,
+        new_manifest=new_manifest,
+        before_nodes=before_nodes,
+        before_edges=before_edges,
+        before_chunks=before_chunks,
+        after_nodes=len(graph_store.all_nodes()),
+        after_edges=len(graph_store.all_edges()),
+        after_chunks=_safe_count(vector_store),
+        orphans_removed=orphans,
+        indexed_chunks=indexed,
+        full_ingest=prev_state is None,
+        extraction=extraction_result,
+    )
+    return report, _staged_state(new_manifest, prev_state, embedder_fp, extraction_fp)
