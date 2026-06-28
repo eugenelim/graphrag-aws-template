@@ -12,6 +12,7 @@ Lifecycle: `Draft → Open → Final Comment Period → Accepted | Rejected | Wi
 | ---- | ---------------------------------------------- | ------ |
 | [0001](0001-adopt-project-charter.md) | Adopt the project charter (mission, scope, principles, architecture patterns) | Accepted |
 | [0002](0002-ingestion-pattern-axis.md) | Establish ingestion as a first-class pattern axis | Accepted |
+| [0003](0003-medallion-staging.md) | Medallion staging for ingestion (Bronze/Silver/Gold + content-and-config-addressed Silver cache) | Accepted |
 
 ## Adding a new RFC
 
