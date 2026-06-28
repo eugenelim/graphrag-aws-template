@@ -1,10 +1,10 @@
 # RFC-0003: Medallion staging for ingestion
 
-- **Status:** Draft
+- **Status:** Accepted
 - **Author:** eugenelim
 - **Approver:** eugenelim
 - **Date opened:** 2026-06-28
-- **Date closed:** <!-- filled in when status reaches a terminal state -->
+- **Date closed:** 2026-06-28
 - **Decision weight:** standard <!-- standard, on three work-loop triggers: structural (new state.py/silver.py/graphdelta.py module boundaries + an ArtifactStore seam), multi-package (packages/graphrag + apps/ingestion + infra IAM), and a new persisted-artifact + IAM-grant surface. Not heavy: no frozen-ADR reversal and the change is reversible (--rebuild stays the reset). -->
 - **Related:** RFC-0002 (ingestion pattern axis); ADR-0002 (ephemeral teardown-first topology); ADR-0005 (community detection in Fargate); ADR-0006 (schema-guided LLM extraction guard); `packages/graphrag/src/graphrag/{delta,ingest}.py` (slice 5 incremental delta)
 
