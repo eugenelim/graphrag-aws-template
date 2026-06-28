@@ -1,6 +1,6 @@
 # Spec: medallion-staging
 
-- **Status:** Draft
+- **Status:** Implementing
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** RFC-0003, RFC-0002, ADR-0007, ADR-0002, ADR-0006
@@ -100,24 +100,24 @@ before proceeding; *Never do* is a hard rule, even under time pressure.
 
 - [ ] **AC1** — A re-ingest of an unchanged corpus performs **zero** Bedrock embed and zero
   LLM-extract calls (offline spy test + live AC).
-- [ ] **AC2** — An embedder fingerprint change (`model_id` or `dimensions`) recomputes the
+- [x] **AC2** — An embedder fingerprint change (`model_id` or `dimensions`) recomputes the
   chunks/vectors artifact for every doc; an `EXTRACTION_SCHEMA` change recomputes the
   candidate-triples artifact; a content-only change recomputes neither beyond the
   changed docs.
-- [ ] **AC3** — A moved document (same content hash, new path) reuses Silver with zero Bedrock
+- [x] **AC3** — A moved document (same content hash, new path) reuses Silver with zero Bedrock
   calls and is classified a move by `diff_manifests`.
-- [ ] **AC4** — `IngestState` v2 round-trips through JSON; a v1 envelope upgrades in with no
+- [x] **AC4** — `IngestState` v2 round-trips through JSON; a v1 envelope upgrades in with no
   migration script (Silver cold, stage=bronze); `as_manifest()` reproduces the v1
   dict so `diff_manifests` is reused unchanged.
-- [ ] **AC5** — `plan_graph_delta` performs no store mutation; `apply_graph_delta` produces a
+- [x] **AC5** — `plan_graph_delta` performs no store mutation; `apply_graph_delta` produces a
   store state identical to the pre-refactor `_reconcile_graph` for the same
   `(store, scratch, removed_ids)` **and makes the same set of mutating calls** — an
   unchanged row triggers no `replace_*` (call-count parity test green).
-- [ ] **AC6** — The Silver S3 key is built **only** from the server-computed `content_hash`
+- [x] **AC6** — The Silver S3 key is built **only** from the server-computed `content_hash`
   (sha256 hex) and the server-derived `config_fingerprint` (hex) — never from
   `doc_id`, a doc path, a span, or model output; a `doc_id` containing `../` cannot
   change the resolved key (confinement unit test, CWE-23).
-- [ ] **AC7** — The ingest task role has a `PutObject` grant whose synthesized Resource is
+- [x] **AC7** — The ingest task role has a `PutObject` grant whose synthesized Resource is
   **prefix-bounded to `silver/*`** (not the bucket root, not `*`), added **beside**
   the existing manifest/trace key grants and widening no other role (CDK assertion
   test).
@@ -130,7 +130,7 @@ before proceeding; *Never do* is a hard rule, even under time pressure.
   (Delta is the staged path; full/rebuild Silver staging is deferred —
   `medallion-fullrebuild-staging` — so the schema-fp recompute is verified through the existing
   full-path extraction, not the Silver candidate cache, which T2/T4a prove offline.)
-- [ ] **AC10** — No query-path/retrieval code changed (diff check); `delta.py`/`silver.py` are
+- [x] **AC10** — No query-path/retrieval code changed (diff check); `delta.py`/`silver.py` are
   not imported by the query Lambda (import check). The PR adds no new runtime
   dependency (`pyproject.toml` dependency-list diff check).
 

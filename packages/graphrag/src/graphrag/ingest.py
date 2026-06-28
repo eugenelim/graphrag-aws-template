@@ -402,7 +402,12 @@ def ingest_staged(
     extraction_result: ExtractionResult | None = None
     if extractor is not None:
         # Ground the cached candidates of EVERY surviving doc in a stable (sorted doc-id) order
-        # against the resolved graph (== the full graph on the full/rebuild path grounding runs on).
+        # against ``scratch``. This is correct **only on the full/rebuild path** (the only path that
+        # supplies an extractor today — ADR-0006), where ``content_added`` is every doc, so
+        # ``scratch`` IS the full resolved graph. A future delta-grounding path (deferred:
+        # medallion-fullrebuild-staging) must ground against the store-MERGED graph instead — a
+        # candidate whose endpoint lives in an unchanged doc is not in the delta-only ``scratch``
+        # and would be wrongly dropped.
         candidates = [
             cand
             for doc_id in sorted(new_manifest)
