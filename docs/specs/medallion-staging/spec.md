@@ -124,9 +124,12 @@ before proceeding; *Never do* is a hard rule, even under time pressure.
 - [ ] **AC8** — Silver artifacts live under the auto-emptied corpus-bucket prefix; a `destroy`
   leaves **zero residual** Silver objects (live AC).
 - [ ] **AC9** — End-to-end, read-only, through the **unmodified** query path: an **embedder**
-  fingerprint bump + re-index makes a vector query return results from the re-embedded
-  vectors; a **schema** fingerprint bump (schema-guided extraction enabled) makes graph
-  traversal reflect the reconciled schema-guided edges (live AC).
+  fingerprint bump + a staged `MODE=delta` re-index makes a vector query return results from the
+  re-embedded vectors; a **schema** fingerprint bump (schema-guided extraction enabled) run via
+  `MODE=full`/`rebuild` makes graph traversal reflect the recomputed schema-guided edges (live AC).
+  (Delta is the staged path; full/rebuild Silver staging is deferred —
+  `medallion-fullrebuild-staging` — so the schema-fp recompute is verified through the existing
+  full-path extraction, not the Silver candidate cache, which T2/T4a prove offline.)
 - [ ] **AC10** — No query-path/retrieval code changed (diff check); `delta.py`/`silver.py` are
   not imported by the query Lambda (import check). The PR adds no new runtime
   dependency (`pyproject.toml` dependency-list diff check).

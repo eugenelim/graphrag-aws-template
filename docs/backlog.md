@@ -213,3 +213,22 @@ singly-sourced (README sets it only for legacy KEPs without a `kep.yaml`).
   the stale-**low** case above (a leak), and the symmetric stale-**high** case (a member
   visibility *lowered* `restricted` → `public` leaves `Community.tier` over-restrictive — an
   availability/correctness bug, not a leak; same full-re-ingest mitigation today).
+
+## medallion-staging
+
+### medallion-fullrebuild-staging
+
+**Follow-on (deferred), not an AC.** T4b wires `ingest_staged` (the Silver-cached Bronze/Silver/
+Gold driver) into `MODE=delta` only. `MODE=full` / `MODE=rebuild` retain their existing passes —
+`ingest` + `_vector_dual_write` (incl. the parent-child one-embed-pass) + `_community_writeback` +
+`_schema_extraction_writeback` — and still write the v1 `manifest.json`. This deliberately
+preserves four behaviors the entrypoint suite pins: full returns `IngestReport`; the parent-child
+nested index builds from a single embed pass; community summaries; and the schema-extraction
+flag-off/on/raising/trace contract. Consequence: full/rebuild do not populate or read the Silver
+cache, so the schema-guided **candidate cache** (and the candidate-cache half of the fingerprint
+recompute) is exercised only by the offline T2/T4a tests, not the deployed full path; and the first
+`MODE=delta` after a v1 manifest re-embeds all docs once (no prior fingerprints), warming Silver.
+Unblocked by routing full/rebuild through `ingest_staged` while preserving those four behaviors —
+chiefly building the parent-child index from the Silver-materialized embedded chunks (one embed
+pass) and reproducing the schema-extraction flag/trace/resilience semantics through the staged
+grounding path — and rewriting the corresponding `test_entrypoint.py` expectations.
