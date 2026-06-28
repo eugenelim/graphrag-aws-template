@@ -2,17 +2,23 @@
 
 > **Loaded when:** the work is **infra-flavored** — the destructive/irreversible
 > risk trigger routed it to full mode *and* it provisions, mutates, deploys, or
-> tears down infrastructure (the routing table's IaC / deploy-config entry).
+> tears down infrastructure (the `security-checklists` Module index's IaC /
+> deploy-config entry).
 > **What this is:** the progressive-disclosure depth behind `work-loop`'s
 > infra/deploy verification mode. `SKILL.md` keeps the load-bearing one-liners
 > (the mode entry in the PLAN verification-mode list, the EXECUTE
-> contract-grounding gate, the two reviewer routing tables); the full doctrine —
+> contract-grounding gate, and the reviewer-dispatch bullets that route against
+> the two depth libraries' Module indexes — the boundary→module routing
+> authorities now live in `security-checklists` and `operational-safety`, not in
+> a `SKILL.md` table); the full doctrine —
 > the layered GATES sequence, the multi-artifact preflight, contract grounding,
 > the EXECUTE craft load, the reusable-script discipline, phased oracle fidelity
 > (V1), the readiness-aware data-plane probe (V2), and the reviewer wiring —
 > lives here. Tool-neutral throughout (Terraform / Pulumi / CDK / CloudFormation
 > / Kubernetes / hand-rolled scripts alike); any tool named is illustrative,
-> never normative.
+> never normative. (The other three verification modes' depth — the manual-QA
+> "exercise the real artifact" doctrine — lives in
+> [`verification-modes.md`](verification-modes.md).)
 
 ## PLAN — the layered GATES sequence
 
@@ -48,7 +54,7 @@ validate / policy-as-code) < plan / preview < runtime deploy + smoke — and the
 cheap-early oracle is **necessary but not sufficient**: a green `synth` /
 `validate` is the **local-typecheck analog**, never a done-signal, and "deployed
 ≠ working." Do not over-trust it. This carves cleanly against the
-[`infra-contract-acquisition`](../../infra-contract-acquisition/SKILL.md) gate
+[`contract-acquisition`](../../contract-acquisition/SKILL.md) gate
 (A1): **A1 owns *did the agent consult the oracle to ground authoring before
 generating the resource?*; V1 owns *is a green early oracle being mistaken for
 "works" at verify?*** — the same oracle output, two different jobs
@@ -68,6 +74,42 @@ destroy` / `dev-test-run-uuid` shape), the teardown rolled into the P1 teardown
 artifact. This **refines** P2 and cross-links the plan template's `## Rollout`
 (which owns sequencing); it does **not** re-author the GATES layer sequence
 above.
+
+## PLAN — read recorded coordinates first, then cold oracle discovery
+
+Before enumerating the multi-artifact preflight below and before the
+contract-grounding gate, do one cheap thing first: **check recorded
+coordinates → acquire via oracles**. The adopter may already have written down
+where they deploy and how they verify, in files they own:
+
+- the **`AGENTS.md` "Commands you'll need"** optional infra/verification block —
+  the `<deploy>` / `<smoke / verify-status>` / `<teardown>` / `<seed-test-data>`
+  one-liners; and
+- the **`reference.md`** platform/verification slots — the
+  **managed-runtime / platform target** under *Constraints*, the
+  **framework-/library-level contract** under *Solution strategy → Key
+  technology decisions*, and **where the verification tooling lives** under
+  *Crosscutting → Observability / Testing standards*.
+
+**Every one of these reads is presence-checked — read-if-present, degrade
+honestly if absent.** A repo that recorded nothing runs exactly as it does
+today: absence lowers only the *starting information* the preflight begins from,
+it **never fails the loop**, and it is **not enforced by any CI gate**. There is
+**no new config file** for this — no `grounding.toml`, no schema; the surface is
+the two adopter-owned files above. State which coordinates you found (or
+"none"), the same way `architect-design` states the surface it detected.
+
+**A recorded coordinate seeds acquisition; it never replaces it.** A found
+`<deploy command>` or platform target *seeds* the multi-artifact preflight and
+the contract-grounding gate — it tells you where to start — but the agent still
+derives the **live** contract from the toolchain's oracles
+([`contract-acquisition`](../../contract-acquisition/SKILL.md)) and
+still smokes the **real** deployed system. When a recorded value **contradicts**
+the oracle (the `reference.md` names a runtime the `plan` output disputes, a
+recorded smoke command targets an endpoint the deploy no longer exposes), that
+contradiction is a **surfaced drift signal**, not a fact to trust — exactly the
+AGENTS.md *"When this file is wrong"* posture: flag the drift, don't silently
+work around it.
 
 ## PLAN — the multi-artifact preflight (each its own task-zero)
 
@@ -110,18 +152,27 @@ on any agent. In Claude Code, background tasks (for long applies), `asyncRewake`
 dependency** — matching how `/verify` and `/simplify` are treated; adapters
 without them lose the shortcut, not the doctrine.
 
-## EXECUTE contract-grounding gate (infra — universal across light and full mode)
+## EXECUTE contract-grounding gate (infra flavor — universal across light and full mode)
+
+This section is the **infra-flavor detail** of the gate; the gate itself spans
+**two surfaces** (`SKILL.md` § EXECUTE contract-grounding gate). The **software**
+surface's full tiered protocol (T0 version → T1 type-checker / compiler +
+API-surface oracle → T2 curated skill → T3 versioned docs → runtime probe) lives
+in [`contract-acquisition`](../../contract-acquisition/SKILL.md)
+itself — not in this infra-depth reference, which is loaded only on
+infra-flavored work.
 
 Before generating a CLI invocation, an IaC resource, **or application code that
 runs on a managed runtime** (e.g. a function handler whose packaging / import
 model the platform dictates) **against an unfamiliar platform**, acquire that
 platform's contract via the
-[`infra-contract-acquisition`](../../infra-contract-acquisition/SKILL.md) skill —
+[`contract-acquisition`](../../contract-acquisition/SKILL.md) skill —
 never guess a flag, a schema shape, a field constraint, or a packaging /
-entrypoint assumption. This is the **infra generalization of AGENTS.md's "Grep
-to verify a function exists before importing it"**: the toolchain's own
-deterministic oracles (validate / plan / synth + a machine-readable schema
-slice) are the grep, and a guessed contract is the broken import. The gate's
+entrypoint assumption. This is the infra flavor of the **generalization of
+AGENTS.md's "Grep to verify a function exists before importing it"**: the
+toolchain's own deterministic oracles (validate / plan / synth + a
+machine-readable schema slice) are the grep, and a guessed contract is the broken
+import. The gate's
 output is a **cited contract slice the generated resource references** (the
 schema field, the plan line, the doc) — not a bare "contract acquired: yes"
 flag; that citation is what lets `quality-engineer` re-derive independently. The
@@ -130,8 +181,8 @@ so it
 fires in light mode too; the heavier infra-flavor layers (the
 `cloud-implementation-craft` craft load at EXECUTE, the V2 data-plane probe, the
 `quality-engineer` infra wiring) fire only on the **infra-flavored signal** (the
-destructive/irreversible trigger + the routing table's IaC / deploy-config
-entry). (RFC-0044 § Errata 2026-06-24.)
+destructive/irreversible trigger + the `security-checklists` Module index's IaC /
+deploy-config entry). (RFC-0044 § Errata 2026-06-24.)
 
 ## EXECUTE — `cloud-implementation-craft` loaded into the implementer's brief
 
@@ -143,8 +194,8 @@ timeouts-to-real-latency + bounded backoff + client cold-start tolerance,
 dependency ordering, terminal-failed-state handling, the managed-runtime
 packaging / entrypoint-import model, and externalized script configuration —
 into the **implementer's EXECUTE brief**, via the
-[`operational-safety` routing table](../SKILL.md#operational-safety-routing-table)
-in `SKILL.md`. This is the **deliberate EXECUTE-consumer extension** of
+[`operational-safety` Module index](../../operational-safety/SKILL.md#module-index)
+(the routing authority). This is the **deliberate EXECUTE-consumer extension** of
 `operational-safety`: ADR-0031 established it as a REVIEW-only depth library for
 `quality-engineer`; here the **same module, on the same routing mechanism**, is
 pointed at the implementer so the craft shapes the build, not only the review.
@@ -172,8 +223,9 @@ not a new failure family. (RFC-0044 § Errata 2026-06-24.)
 ## REVIEW — mandatory, multi-module security on infra-flavored work
 
 When the change is **infra-flavored** — the **destructive/irreversible risk
-trigger** routed it to full mode *and* its diff matches the routing table's IaC
-/ deploy-config entry — the `security-reviewer` pass is **non-skippable** and
+trigger** routed it to full mode *and* its diff matches the `security-checklists`
+Module index's IaC / deploy-config entry — the `security-reviewer` pass is
+**non-skippable** and
 runs at **both the spec stage** (the pre-EXECUTE secure-design step) **and on
 the diff**, not via the discretionary security-boundary trigger. Because
 "infra-flavored" keys on the existing classifier rather than a per-diff
@@ -185,8 +237,8 @@ authorization *model*: role bindings or resource policies that change *who can
 call what*), `secrets-and-crypto` (secrets in state or env, keys),
 `outbound-ssrf` (public exposure, CDN / origin egress), and `supply-chain`
 (provider / module pinning) — each pulled in when the diff trips *that module's
-own* routing-table row, so the routing table stays the single deterministic
-authority and the set loads **1–N**, never a flat always-five march (a one-line
+own* `security-checklists` Module-index entry, so the Module index stays the
+single deterministic authority and the set loads only what the diff trips, never a blanket load of the whole candidate set (a one-line
 config tweak pulls one; a new public-facing stack pulls several). This adds **no
 new reviewer and no new module**: it makes the *existing* security pass
 mandatory and multi-module. The **Profile-A opt-out still applies wholesale** —
@@ -208,15 +260,23 @@ for per-provider breadth, the reviewer for failure-class reasoning.
 
 ## REVIEW — `quality-engineer` independent contract re-derivation (Delivery — no new agent)
 
-On infra-flavored work the orchestrator additionally inlines
-[`infra-contract-acquisition`](../../infra-contract-acquisition/SKILL.md)
+The re-derivation trigger keys on **a contract slice having been cited at the
+EXECUTE gate — infra *or* software** — not on the infra-flavored signal (that
+signal only adds the infra-specific extras below). On infra-flavored work the
+orchestrator additionally inlines
+[`contract-acquisition`](../../contract-acquisition/SKILL.md)
 (alongside `cloud-implementation-craft`, routed via the `operational-safety`
 table in `SKILL.md`) into the `quality-engineer` brief, and the reviewer
 **re-derives the platform contract independently from the oracles** — running
 the validate / plan / synth + schema-slice acquisition itself — **never trusting
 the implementer's own contract evidence**, which would reproduce the
 field-report blind spot (a build that authored against model memory, then
-"verified" against the same memory). This adds **no new reviewer or agent** (the
+"verified" against the same memory). **A cited *software* slice gets the same
+independent re-derivation** — the reviewer re-runs the type-checker / API-surface
+oracle (or reads the curated skill / versioned docs) itself, never trusting the
+implementer's citation; this fires on any software-contract-citing diff, not
+only an infra-flavored one, so the broadened EXECUTE software surface ships with
+its matching REVIEW half. This adds **no new reviewer or agent** (the
 three-reviewer ceiling, ADR-0023): contract-conformance rides the **existing**
 `quality-engineer`, already the infra reviewer in spirit. The
 **auth-flow-contradiction class** (a spec whose auth design contradicts itself)
