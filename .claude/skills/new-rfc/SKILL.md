@@ -41,7 +41,11 @@ push back: a normal PR (or a spec, if it's a feature) is enough.
    same way on native Windows, macOS, and Linux.)
 
 2. Copy this skill's bundled `assets/rfc.md` into `docs/rfc/` and rename
-   to `NNNN-<kebab-title>.md`. (Paths are skill-relative — the
+   to `NNNN-<kebab-title>.md`. **Keep the title short** — it should
+   *identify* the proposal in a few words (`RFC-NNNN: Coordinator
+   contract`), and the kebab filename follows it; the fuller explanation
+   belongs in **The ask**, not the title. A title that carries the whole
+   abstract makes the RFC index hard to scan. (Paths are skill-relative — the
    `assets/` folder lives next to this `SKILL.md` wherever your IDE
    installed the skill.) **Optional `NNNN-notes/` companion.** If the
    proposal rests on a sustained investigation, you may create a sibling
@@ -51,11 +55,35 @@ push back: a normal PR (or a spec, if it's a feature) is enough.
    `Evidence & prior art` and link the folder, rather than pasting the corpus
    into the RFC body.
 
-3. **Research + de-risk checkpoint — gated.** With the file scaffolded, stop.
+3. **Guided shape/intake — offer, don't force.** Before researching, get the
+   proposal's frame straight. Read the request:
+
+   - **When the ask is already well-specified** (a clear change, a named
+     surface, an evident motivation), *infer* the frame and proceed straight to
+     research — don't make the author fill in a questionnaire they've already
+     answered.
+   - **When the intent is vague** (a direction, a complaint, "we should
+     probably…"), ask a *small* set of framing questions — what outcome do you
+     want · what's in and out of scope · what's the bet/risk — then synthesize a
+     short proposal frame and reflect it back for confirmation before you spend
+     research effort on the wrong target.
+
+   Either way, **pick the `Decision weight`** (light | standard | heavy) for the
+   RFC's header by reading `work-loop`'s risk triggers as a prose heuristic —
+   reverses a frozen ADR/RFC, or a governance/charter/security boundary, or a
+   one-way door → `heavy`; a reversible, narrow change → `light`; otherwise
+   `standard` (the default). The weight right-sizes how much research depth (next
+   step) and pre-handoff ceremony (the gate) the RFC carries — it never licenses
+   dropping a gate check. Offer the frame; don't block on a form — a half-formed
+   ask is normal input.
+
+4. **Research + de-risk checkpoint — gated.** With the file scaffolded, stop.
    Don't write a single body sentence yet. A complex RFC is a tree, not one
    blob: research the *subpoints*, model the options out, and de-risk your own
    riskiest assumption before handing anything to a reviewer. A single shallow
-   up-front sweep is the failure this replaces.
+   up-front sweep is the failure this replaces. **Scale the depth to the
+   `Decision weight`:** a `light` RFC may need one focused sweep; `standard` and
+   `heavy` get the full per-subpoint treatment below.
 
    Work the proposal as decisions/subpoints, emitting findings *in chat* (not
    into the gated body):
@@ -120,13 +148,38 @@ push back: a normal PR (or a spec, if it's a feature) is enough.
    without an alternative, or genuinely deferred, stay in `Open questions` —
    with a recommended default + owner + decide-by, never bare.
 
-4. **Draft the body, answer-first.** Lead with **The ask**; then route the
-   findings: repo precedent → `Problem & goals` / `Evidence & prior art`;
-   external precedent and the spike result → `Evidence & prior art`. Sections
-   to push hardest on:
+5. **Draft the body, answer-first.** Set the header fields, including the
+   `Decision weight` you picked in step 3. Open with the **Reviewer brief**, then
+   **The ask**; then route the findings: repo precedent → `Problem & goals` /
+   `Evidence & prior art`; external precedent and the spike result →
+   `Evidence & prior art`.
+
+   **Reviewer brief — first-screen orientation, de-duplicated against The ask.**
+   Fill the top-of-doc `## Reviewer brief` grid (Decision · Recommended outcome ·
+   Change if accepted · Affected surface · Stakes · Review focus · Not in scope).
+   It *orients* the reviewer's read; "The ask" *argues* the decision. Don't
+   restate the BLUF in it — the two are different jobs. (This in-body brief is a
+   distinct artifact from the chat-only `REVIEW READINESS` summary in step 6.)
+
+   **Decisions as a table.** In "The ask", render *Decisions requested* as a
+   table — one row per decision — `| ID | Question | Recommendation | Why |
+   Decide by | Reviewer action |` — not numbered prose; the `Reviewer action`
+   column names what the reviewer must do per decision (confirm X, rule on Y).
+
+   **Body-as-argument split rule.** The RFC body is the *argument* a reviewer
+   decides from — not an audit trail of your work. Keep a section in the body
+   when it changes the reviewer's decision; when a section mainly demonstrates
+   the work was done — full research transcripts, prior-art matrices,
+   adversarial-review logs — summarize its conclusion in the body and move the
+   detail to the optional `NNNN-notes/` companion (step 2). Default the body to
+   the argument and link the proof.
+
+   Sections to push hardest on:
+   - **Reviewer brief.** The fixed first-screen orientation grid, above The ask,
+     de-duplicated against it (orients, doesn't argue).
    - **The ask.** The decision a reviewer must make, in plain language, on
-     top — Recommendation (BLUF) + SCQA framing + numbered decisions, each
-     with a recommended option + decide-by.
+     top — Recommendation (BLUF) + SCQA framing + the decisions table (one row
+     per decision, each with a recommended option + decide-by + reviewer action).
    - **Problem & goals.** Diagnosis before solution; real **Non-goals**
      (could-have-been-goals deliberately dropped), not negated goals.
    - **Options considered.** MECE along a stated axis, each grounded in prior
@@ -147,8 +200,15 @@ push back: a normal PR (or a spec, if it's a feature) is enough.
      `Experimental` while results are pending (a post-circulation state — see
      `docs/CONVENTIONS.md` § RFC lifecycle). Delete the section otherwise.
 
-5. **Pre-handoff gate — mandatory, before status → Open.** Each item is
-   *executed and its result recorded, never self-certified*:
+6. **Pre-handoff gate — mandatory, before status → Open.** Each item is
+   *executed and its result recorded, never self-certified*. The `Decision
+   weight` right-sizes how much *research and draft* each tier carries, **never
+   whether a mandated check below runs**: a `light` RFC runs the full gate over a
+   smaller draft (every check still fires — citations still fetched-and-confirmed,
+   the `adversarial-reviewer` dispatch still mandatory and re-run until clean);
+   `standard` is the full gate as written; `heavy` adds a mandatory de-risk spike
+   and explicit Approver sign-off (no silent-default adoption). No tier drops or
+   softens a check.
    - **Citation-integrity protocol.** Every reference is fetched; it must both
      resolve and actually contain the claim or statistic it is cited for (a
      link that merely loads is not enough). Citations surfaced by a research
@@ -171,9 +231,27 @@ push back: a normal PR (or a spec, if it's a feature) is enough.
      boundary. If no such subagent is installed, note it in the summary
      rather than skipping silently.
 
-6. Set status to `Draft` until the user is ready to circulate, then `Open`.
+   **Hand back a reviewer-friendly readiness summary, not a compliance dump.**
+   The checks above are run to build the *reviewer's* confidence, so report
+   their result as a short summary the reviewer can act on — and **link** the
+   heavy proof (citation-fetch detail, the adversarial-review transcript)
+   rather than pasting it into the RFC body or the handoff. Emit this **to chat
+   at handoff** — it is a handoff artifact, **never an RFC body or template
+   section**:
 
-7. Update `docs/rfc/README.md` table (create the file with the standard
+   ```
+   REVIEW READINESS:
+   - Decision clear: yes/no
+   - Options include do-nothing: yes/no
+   - Riskiest assumption tested: yes/no (+ link)
+   - Citations checked: yes/no
+   - Open questions owned: yes/no
+   - Adversarial pass: clean | issues linked
+   ```
+
+7. Set status to `Draft` until the user is ready to circulate, then `Open`.
+
+8. Update `docs/rfc/README.md` table (create the file with the standard
    header row if absent).
 
 ## After acceptance
@@ -189,7 +267,7 @@ The RFC itself is then "done" and stays as historical record.
 
 ## Anti-patterns to refuse
 
-- Writing into the RFC body before the checkpoint clears → see step 3.
+- Writing into the RFC body before the checkpoint clears → see step 4.
 - A single shallow up-front sweep standing in for per-subpoint research on a
   multi-decision RFC → decompose and back each subpoint.
 - Enumerating an option/scenario space by inventing a small round number of
@@ -209,3 +287,10 @@ The RFC itself is then "done" and stays as historical record.
   processes plainly exist → "we didn't look" isn't an answer. When web search
   *wasn't* available, say so explicitly under the heading and never fabricate
   citations to fill it.
+- Padding the RFC body with proof-of-work — full research transcripts,
+  prior-art matrices, adversarial-review logs — that belongs in the optional
+  `NNNN-notes/` companion → the body is the argument; summarize the conclusion
+  and link the detail.
+- A title that carries the whole abstract → shorten it to *identify* the
+  proposal; the explanation lives in **The ask**, and a scannable RFC index
+  depends on it.
