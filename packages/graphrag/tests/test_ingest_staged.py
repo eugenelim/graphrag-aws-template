@@ -12,6 +12,8 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+import pytest
+
 from graphrag.embed import HashEmbedder
 from graphrag.extract_llm import RuleTripleExtractor
 from graphrag.ingest import ingest_staged
@@ -233,3 +235,61 @@ def test_staged_output_preserves_visibility_labels(tmp_path: Path) -> None:
     assert all("visibility" in n.props for n in g.all_nodes())
     # And every indexed chunk carries a visibility tier (label_chunks ran before indexing).
     assert all(ec.chunk.visibility for ec in v._items.values())
+
+
+# --- at-least-once retry + state bookkeeping -------------------------------------------
+
+
+class _FlakyVectorStore(MemoryVectorStore):
+    """A vector store that raises on the Nth index_chunk — simulates a crash mid-staged-ingest."""
+
+    def __init__(self, fail_on: int) -> None:
+        super().__init__()
+        self._fail_on = fail_on
+        self._calls = 0
+
+    def index_chunk(self, embedded: object) -> None:  # type: ignore[override]
+        self._calls += 1
+        if self._calls == self._fail_on:
+            raise RuntimeError("simulated mid-staged-ingest crash")
+        super().index_chunk(embedded)  # type: ignore[arg-type]
+
+
+def test_partial_failure_then_retry_converges(tmp_path: Path) -> None:
+    # At-least-once: a staged run that crashes mid-index leaves the state UN-persisted (entrypoint
+    # writes it last), so re-running from the SAME prev_state must converge to a clean ingest — no
+    # duplicate or missing chunks (the delete-then-re-index idempotency the spec claims).
+    c, e = _snapshot(tmp_path, "a")
+    graph = MemoryGraphStore()
+    flaky = _FlakyVectorStore(fail_on=1)  # crash on the first chunk indexed
+    artifacts = MemoryArtifactStore()
+    with pytest.raises(RuntimeError, match="simulated mid-staged-ingest crash"):
+        ingest_staged(None, c, e, graph, flaky, artifacts, HashEmbedder())
+
+    # Retry with the same (unadvanced) prev_state — None, since the first run never returned one.
+    flaky._fail_on = -1  # never fail now
+    ingest_staged(None, c, e, graph, flaky, artifacts, HashEmbedder())
+
+    # Oracle: a from-scratch staged ingest of the same snapshot.
+    gb, vb = MemoryGraphStore(), MemoryVectorStore()
+    ingest_staged(None, c, e, gb, vb, MemoryArtifactStore(), HashEmbedder())
+    assert {n.id for n in graph.all_nodes()} == {n.id for n in gb.all_nodes()}
+    assert _chunk_ids(flaky) == _chunk_ids(vb)  # no duplicate / missing chunks after retry
+
+
+def test_delta_carries_forward_candidate_keys_for_unchanged_docs(tmp_path: Path) -> None:
+    # Nit: _staged_state's candidate-key carry-forward branch — a no-extractor delta over an
+    # unchanged doc preserves the silver_candidates key a prior extractor run recorded.
+    c, e = _snapshot(tmp_path, "a")
+    artifacts = MemoryArtifactStore()
+    g, v = MemoryGraphStore(), MemoryVectorStore()
+    # A staged run WITH an extractor records a candidates key per doc.
+    _r, state = ingest_staged(
+        None, c, e, g, v, artifacts, HashEmbedder(), extractor=RuleTripleExtractor()
+    )
+    prose = "community/sig-network/README.md"
+    assert state.docs[prose].silver_candidates is not None  # candidates key set by extractor run
+
+    # A subsequent no-extractor delta over the unchanged corpus carries the key forward.
+    _r2, state2 = ingest_staged(state, c, e, g, v, artifacts, HashEmbedder())
+    assert state2.docs[prose].silver_candidates == state.docs[prose].silver_candidates

@@ -188,15 +188,17 @@ def test_ground_candidates_edge_set_is_order_independent() -> None:
     # stable across candidate orderings (the store reconciles by (src, kind, dst) key).
     graph = _graph_with_deterministic_edge()
     doc = _sig_doc("x")
+    # Two candidates that BOTH ground to distinct accepted edges (opposite-direction SIG↔SIG
+    # collaboration), so the set comparison has real content on both sides of the ordering.
     candidates = [
         CandidateTriple("sig:sig-network", "COLLABORATES_WITH", "sig:sig-node", doc.doc_id, "s1"),
-        CandidateTriple("kep-2086", "SUPERSEDES", "kep-2086", doc.doc_id, "s2"),
+        CandidateTriple("sig:sig-node", "COLLABORATES_WITH", "sig:sig-network", doc.doc_id, "s2"),
     ]
     _, edges_a = ground_candidates(candidates, graph, schema=EXTRACTION_SCHEMA)
     _, edges_b = ground_candidates(list(reversed(candidates)), graph, schema=EXTRACTION_SCHEMA)
-    assert {(e.src_id, e.kind, e.dst_id) for e in edges_a} == {
-        (e.src_id, e.kind, e.dst_id) for e in edges_b
-    }
+    keys_a = {(e.src_id, e.kind, e.dst_id) for e in edges_a}
+    assert len(keys_a) == 2  # both candidates grounded to distinct edges
+    assert keys_a == {(e.src_id, e.kind, e.dst_id) for e in edges_b}
 
 
 def test_extract_schema_guided_trace_unchanged_for_multi_candidate_doc() -> None:
