@@ -231,4 +231,10 @@ recompute) is exercised only by the offline T2/T4a tests, not the deployed full 
 Unblocked by routing full/rebuild through `ingest_staged` while preserving those four behaviors —
 chiefly building the parent-child index from the Silver-materialized embedded chunks (one embed
 pass) and reproducing the schema-extraction flag/trace/resilience semantics through the staged
-grounding path — and rewriting the corresponding `test_entrypoint.py` expectations.
+grounding path — and rewriting the corresponding `test_entrypoint.py` expectations. **Grounding
+caveat:** `ingest_staged` currently grounds cached candidates against the delta-only `scratch`
+graph, which equals the full resolved graph only because the extractor is supplied solely on the
+full path (`prev_state=None` → every doc in `scratch`). When this item wires an extractor through a
+real **delta**, grounding must run against the **store-merged** graph (store nodes ∪ scratch), or a
+candidate whose endpoint is in an unchanged doc will be wrongly dropped (`ingest.py` `ingest_staged`,
+the `if extractor is not None` block).
