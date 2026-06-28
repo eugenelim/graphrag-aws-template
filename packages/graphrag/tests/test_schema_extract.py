@@ -18,7 +18,7 @@ from graphrag.extract_llm import (
 )
 from graphrag.model import EXTRACTION_METHOD_LLM, Edge, EdgeKind, EntityKind, Graph, Node
 from graphrag.parse import ParsedMarkdown
-from graphrag.schema_extract import ExtractionResult, extract_schema_guided
+from graphrag.schema_extract import ExtractionResult, extract_schema_guided, ground_candidates
 from graphrag.sources import COMMUNITY, ParsedDoc
 
 
@@ -157,4 +157,61 @@ def test_orchestrator_calls_extractor_exactly_once_per_doc() -> None:
     extract_schema_guided(docs, graph, extractor=_CountingExtractor(), schema=EXTRACTION_SCHEMA)
     # all three docs share a doc_id (same _sig_doc path) but extract is still invoked per element.
     assert len(calls) == len(docs)
+
+
+# --- medallion-staging T2b: the carved ground_candidates seam --------------------------
+
+
+def test_ground_candidates_matches_extract_schema_guided_with_zero_extractor_calls() -> None:
+    # Characterization: grounding the candidates the extractor WOULD produce yields edges
+    # byte-identical to the full extract_schema_guided, and ground_candidates calls no extractor.
+    graph = _graph_with_deterministic_edge()
+    doc = _sig_doc("SIG Network collaborates closely with SIG Node on routing.")
+    extractor = RuleTripleExtractor()
+    full = extract_schema_guided([doc], graph, extractor=extractor, schema=EXTRACTION_SCHEMA)
+
+    # Reproduce exactly what extract_schema_guided gathers (one extract() call per doc).
+    candidates = list(extractor.extract(doc, EXTRACTION_SCHEMA))
+    entries, edges = ground_candidates(candidates, graph, schema=EXTRACTION_SCHEMA)
+
+    assert [(e.src_id, e.kind, e.dst_id) for e in edges] == [
+        (e.src_id, e.kind, e.dst_id) for e in full.edges
+    ]
+    assert [(e.props["source_doc"], e.props["span"]) for e in edges] == [
+        (e.props["source_doc"], e.props["span"]) for e in full.edges
+    ]
+    assert [e.verdict for e in entries] == [e.verdict for e in full.entries]
+
+
+def test_ground_candidates_edge_set_is_order_independent() -> None:
+    # The staged path reloads candidates per-doc, not in one extract pass; the edge SET must be
+    # stable across candidate orderings (the store reconciles by (src, kind, dst) key).
+    graph = _graph_with_deterministic_edge()
+    doc = _sig_doc("x")
+    candidates = [
+        CandidateTriple("sig:sig-network", "COLLABORATES_WITH", "sig:sig-node", doc.doc_id, "s1"),
+        CandidateTriple("kep-2086", "SUPERSEDES", "kep-2086", doc.doc_id, "s2"),
+    ]
+    _, edges_a = ground_candidates(candidates, graph, schema=EXTRACTION_SCHEMA)
+    _, edges_b = ground_candidates(list(reversed(candidates)), graph, schema=EXTRACTION_SCHEMA)
+    assert {(e.src_id, e.kind, e.dst_id) for e in edges_a} == {
+        (e.src_id, e.kind, e.dst_id) for e in edges_b
+    }
+
+
+def test_extract_schema_guided_trace_unchanged_for_multi_candidate_doc() -> None:
+    # The refactor must not reorder the trace: ground_candidates preserves input order, so the
+    # doc-then-extractor entry order (and render() bytes) is identical to the pre-carve behavior.
+    graph = _graph_with_deterministic_edge()
+    doc = _sig_doc("x")
+    candidates = [
+        CandidateTriple("sig:sig-network", "COLLABORATES_WITH", "sig:sig-node", doc.doc_id, "ok"),
+        CandidateTriple("x", "AUTHORS", "y", doc.doc_id, "off"),  # off-schema, recorded after
+    ]
+    result = extract_schema_guided(
+        [doc], graph, extractor=_ScriptedExtractor(candidates), schema=EXTRACTION_SCHEMA
+    )
+    # Entries follow input order: accepted (the COLLABORATES_WITH) then off-schema-rejected.
+    assert [e.verdict for e in result.entries] == ["accepted", "off-schema-rejected"]
+    assert result.render().index("ok") < result.render().index("off")
 
