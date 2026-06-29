@@ -668,3 +668,41 @@ read path, and teardown-clean.
 > **Environment gotchas (per the standing note):** no `.venv` / no `docker buildx` —
 > `CDK_APP`/`PYTHONPATH` overrides + a legacy `DOCKER_BUILDKIT=0 docker build --platform linux/amd64`
 > cross-build; brace the image tag (`"${REPO_URI}:latest"`).
+
+## engine-routing — live `mode="auto"` smoke (AC10)
+
+`engine-routing` adds **no new infrastructure** (the `auto` mode rides the existing query
+Lambda; the router reuses the same `bedrock:Converse` grant on the synthesis model). The
+live AC proves the additive `mode="auto"` path end-to-end: the router picks an engine from
+the question and the chosen engine block runs unchanged, with the decision surfaced.
+
+> **Live `mode="auto"` smoke: PASS (2026-06-29).** Deployed `GraphragSlice1` to account
+> `<redacted>` (`us-east-1`) → `CREATE_COMPLETE` (~18 min); corpus dual-written + community
+> write-back by the Fargate ingestion task (22 nodes / 28 edges / 14 vector chunks /
+> **3 Louvain communities**). Two **SigV4-signed `mode: auto`** POSTs to the IAM-auth
+> Function URL:
+> ```text
+> Q1 (entity-led):  "What does @thockin own?"
+>   route: {"engine": "hybrid", "reason": "selected by the semantic engine router",
+>           "decided_by": "us.anthropic.claude-sonnet-4-6"}
+>   → real Claude answer over the seed-and-expand Local path (OpenSearch + Neptune)
+> Q2 (corpus-wide): "What are the overall themes across the whole corpus?"
+>   route: {"engine": "global", "reason": "selected by the semantic engine router",
+>           "decided_by": "us.anthropic.claude-sonnet-4-6"}
+>   → real Claude answer over the community map-reduce Global path
+> ```
+> The `decided_by` on **both** calls is the Bedrock model id (not the rule fallback) — the
+> **live Bedrock twin** classified each question correctly, dispatched the right engine, and
+> the response carried `route: {engine, reason, decided_by}` (AC10). The stack was then torn
+> down with `scripts/destroy.sh`; `aws cloudformation list-stacks` → `DELETE_COMPLETE`,
+> `aws neptune describe-db-clusters` + `aws opensearch list-domain-names` empty, and the
+> leftover CDK custom-resource provider log groups swept — **no billable resource remains.**
+>
+> **One environment finding (not a code defect):** the background-launched `destroy.sh`
+> client was **killed mid-teardown**, but CloudFormation ran the delete to completion
+> server-side (Neptune + OpenSearch both gone); its post-destroy log-group sweep had to be
+> re-run by hand. Standing pattern (per the recurring note): verify teardown via
+> `list-stacks` + the Neptune/OpenSearch APIs rather than trusting the client's exit, and
+> sweep `/aws/lambda/GraphragSlice1-*` manually if the client died. Environment gotchas
+> unchanged — no `.venv` / no `docker buildx`: `CDK_APP`/`PYTHONPATH` overrides + a legacy
+> `DOCKER_BUILDKIT=0 docker build --platform linux/amd64` cross-build, braced image tag.

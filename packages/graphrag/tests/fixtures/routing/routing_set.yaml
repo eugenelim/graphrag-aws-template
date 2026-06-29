@@ -1,0 +1,77 @@
+# Curated engine-routing set for the RuleQueryRouter classification confirmation (AC1/AC2).
+#
+# Distinct from the vector-baseline tests/fixtures/vector/query_set.yaml (which scores hit@5
+# for semantic/entity classes). This set is the *engine-routing* fixture: each row is a
+# natural question tagged with the engine it must route to and the ADR-0008 Decision §2
+# reason class that route. Tuned against the bundled corpus vocabulary (SIGs sig-network /
+# sig-node; @handles @thockin etc.; KEPs 0009/1287/1880/2086).
+#
+# expect_reason is a SYMBOLIC key (anchor_no_cue | anchor_beats_cue | cue_no_anchor |
+# default_local) the test maps to the module-level reason-class constant — so the fixture
+# never retypes the prose and a wording tweak in route.py can't desync it.
+#
+# Invariant the test enforces (ADV-2): every `global`-expected row is anchor-free by
+# construction — link_question(query, {}) == [] — so a `global` row can only pass via a
+# genuine corpus-cue match, never by luck of an anchor that happens to be absent.
+queries:
+  # --- entity-led → hybrid (anchor present) -----------------------------------------
+  - id: r1
+    query: "What does @thockin own?"
+    expect_engine: hybrid
+    expect_reason: anchor_no_cue
+
+  - id: r2
+    query: "Which KEPs does SIG Network own?"
+    expect_engine: hybrid
+    expect_reason: anchor_no_cue
+
+  - id: r3
+    query: "What depends on KEP-2086?"
+    expect_engine: hybrid
+    expect_reason: anchor_no_cue
+
+  - id: r4
+    query: "Who tech-leads sig-node?"
+    expect_engine: hybrid
+    expect_reason: anchor_no_cue
+
+  # --- anchor-beats-cue regression → hybrid (anchor present, corpus cue also present) ---
+  # The dominant misroute class: an entity-anchored question phrased corpus-wide. Pins the
+  # ADR-0008 §2 precedence so a future _GLOBAL_CUES edit cannot regress it to global (AC2).
+  - id: r5
+    query: "what are the common themes across the KEPs @thockin owns"
+    expect_engine: hybrid
+    expect_reason: anchor_beats_cue
+
+  - id: r6
+    query: "summarize what sig-network has been working on overall"
+    expect_engine: hybrid
+    expect_reason: anchor_beats_cue
+
+  # --- corpus-wide → global (no anchor, cue present; each row is anchor-free) ----------
+  - id: r7
+    query: "what are the overall themes in the corpus"
+    expect_engine: global
+    expect_reason: cue_no_anchor
+
+  - id: r8
+    query: "give me the big picture across all the proposals"
+    expect_engine: global
+    expect_reason: cue_no_anchor
+
+  - id: r9
+    query: "how many enhancements are there in general"
+    expect_engine: global
+    expect_reason: cue_no_anchor
+
+  - id: r10
+    query: "summarize the landscape of the project"
+    expect_engine: global
+    expect_reason: cue_no_anchor
+
+  # --- neither anchor nor cue → hybrid (default Local, degrades gracefully) ------------
+  # The fourth ADR-0008 §2 row: no entity anchor and no corpus cue defaults to Local.
+  - id: r11
+    query: "explain how an enhancement proposal moves through its stages"
+    expect_engine: hybrid
+    expect_reason: default_local
