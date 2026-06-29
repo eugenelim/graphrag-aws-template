@@ -13,6 +13,7 @@
 | [0005](0005-community-detection-in-fargate-louvain.md) | Community detection runs in the Fargate ingest task (Louvain via networkx), not a standing Neptune Analytics service | Accepted |
 | [0006](0006-schema-guided-llm-extraction-guard.md) | Schema-guided LLM extraction is guarded by a closed schema + entity-grounding, runs at ingest, and is distinguishable in the graph | Accepted |
 | [0007](0007-silver-cache-content-and-config-addressed.md) | Silver cache addressing — content-and-config over content-only | Accepted |
+| [0008](0008-automatic-engine-routing-local-vs-global.md) | Automatic Local-vs-Global engine routing is a `mode="auto"` selector (deterministic + Bedrock twin), not a new retrieval engine | Accepted |
 
 ## Adding a new ADR
 
