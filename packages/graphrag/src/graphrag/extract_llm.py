@@ -32,6 +32,7 @@ enter the query Lambda's import graph (``packages/graphrag/AGENTS.md``).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass
@@ -146,6 +147,20 @@ for _se in EXTRACTION_SCHEMA.edges:
         raise ValueError(
             f"EXTRACTION_SCHEMA edge {_se.kind.value!r} is not an LLM-extractable kind"
         )
+
+
+def schema_fingerprint(schema: ExtractionSchema) -> str:
+    """A stable hex fingerprint of the schema's **structure** (medallion-staging AC2).
+
+    Hashes only the load-bearing fields — each edge's ``kind`` + endpoint pair — over a sorted
+    canonical form, **excluding** the free-text ``description``. So a description edit does **not**
+    invalidate the cached candidate-triples artifact, while adding/removing a kind or changing an
+    endpoint pair does. Used as the Silver *candidates* artifact's cache key component."""
+    canon = json.dumps(
+        sorted([e.kind.value, e.src_kind.value, e.dst_kind.value] for e in schema.edges),
+        sort_keys=True,
+    )
+    return hashlib.sha256(canon.encode("utf-8")).hexdigest()[:16]
 
 
 @dataclass(frozen=True)

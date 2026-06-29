@@ -80,6 +80,14 @@ MANIFEST_KEY = "manifest.json"
 # manifest.json only, so the trace write needs its own scoped grant (live AC9 finding 2026-06-27).
 SCHEMA_EXTRACTION_TRACE_KEY = "schema_extraction_trace.txt"
 
+# medallion-staging: the Silver artifact cache prefix at the corpus bucket root. Must match
+# `graphrag.silver.SILVER_PREFIX`. The staged delta task writes content+config-addressed Silver
+# objects (`silver/<fp>/<hash>/{chunks,candidates}.json`) here, so the PutObject grant below is a
+# **prefix** wildcard (`silver/*`) — broader than a single object key, but still NOT bucket-wide
+# (least privilege). Silver lives in the auto-emptied corpus bucket, so `destroy` leaves no
+# residual (AC7/AC8).
+SILVER_PREFIX = "silver/"
+
 # Synthesis Claude model (slice 3). Must equal the library
 # `graphrag.synthesize.DEFAULT_SYNTHESIS_MODEL_ID` — a synth test asserts the equality
 # so the Bedrock IAM grant scope and the runtime default can't drift. This is a
@@ -357,6 +365,9 @@ class GraphragStack(Stack):
         # PutObject for the schema-guided extraction trace artifact (still key-scoped, not
         # bucket-wide); default-off, so written only when SCHEMA_EXTRACTION is set.
         bucket.grant_put(task_role, SCHEMA_EXTRACTION_TRACE_KEY)
+        # PutObject for the medallion Silver cache (prefix-scoped to silver/*, never bucket-wide):
+        # the staged delta task writes content+config-addressed chunks/candidates artifacts here.
+        bucket.grant_put(task_role, SILVER_PREFIX + "*")
         task_role.add_to_policy(self._neptune_data_access(cluster))
 
         task_def = ecs.FargateTaskDefinition(
