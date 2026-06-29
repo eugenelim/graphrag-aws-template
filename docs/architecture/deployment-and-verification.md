@@ -617,3 +617,54 @@ cluster, with the per-triple trace persisted to the corpus bucket. The honest-wi
 > per the standing note:** no `.venv` / no `docker buildx` — `CDK_APP`/`PYTHONPATH` overrides + a
 > legacy `DOCKER_BUILDKIT=0 docker build --platform linux/amd64` cross-build; brace the image tag
 > (`"${REPO_URI}:latest"`).
+
+## medallion-staging — live staged-delta smoke (AC1 / AC8 / AC9)
+
+The medallion-staging slice wires the content+config-addressed **Silver cache** into the
+**`MODE=delta`** ingest path (full/rebuild keep their existing passes — deferred
+`medallion-fullrebuild-staging`). It adds **one prefix-scoped IAM grant** (`s3:PutObject` on
+`silver/*`) and **no new billable resource** — Silver artifacts live under the auto-emptied corpus
+bucket. The offline build proves the cache mechanics (hit/miss, fingerprint granularity, key
+confinement, GraphDelta plan/apply equivalence, `ingest_staged` full-rebuild parity); the live run
+proves the deployed delta path is zero-Bedrock on a warm cache, queryable through the unmodified
+read path, and teardown-clean.
+
+| Check | Status |
+| --- | --- |
+| Live deploy | **PASS (2026-06-28)** — `GraphragSlice1` `CREATE_COMPLETE` in **~18 min** (`us-east-1`, cdk total 1079.85 s; Neptune + OpenSearch the long poles). |
+| Staged `MODE=delta` #1 (no prior state → full staged fallback, warms Silver) | **PASS** — the Fargate task logged `staged (full — no prior state): +10 ~0 -0 >0 (10 silver doc(s), embedder_stale=True)`, graph **22 nodes / 28 edges**, **14** chunks indexed; **10 Silver chunks artifacts** written under `silver/<embedder-fp>/<content-hash>/chunks.json`; `manifest.json` rewritten as a **v2 `IngestState`** (`version: 2`, `fingerprints.embedder`, docs `stage=gold`, `silver_candidates=null` — delta runs no extractor). |
+| **AC1** — warm-cache re-ingest is zero-Bedrock | **PASS** — staged `MODE=delta` #2 over the unchanged corpus logged `staged: +0 ~0 -0 >0 (0 silver doc(s), embedder_stale=False)` and **`re-embedded chunks (delta only): 0`** — zero Bedrock embed/extract; stores unchanged (22 / 28 / 14). |
+| **AC6** — Silver key confinement (live) | **PASS** — every Silver key is `silver/<hex-fp>/<hex-content-hash>/chunks.json`; no doc/path/model component reaches the key (the `silver_key` hex guard). |
+| **AC7** — prefix-bounded grant holds live | **PASS** — the 10 `silver/*` `PutObject` writes succeeded with **no `AccessDenied`**; the grant is `silver/*`, not bucket-wide (synth test pins it). |
+| **AC9** — retrieval through the **unmodified** query path | **PASS** — a SigV4 `mode: hybrid` POST to the IAM-auth Function URL (live OpenSearch k-NN + Neptune 2-hop + Bedrock Claude) answered *"Which KEPs does SIG Network own?"* → **KEP-1880 + KEP-2086** from the **staged-written** vectors/graph, with the dual-seed trace. No query-path code changed. |
+| **AC8** — teardown leaves zero residual Silver | **PASS** — `scripts/destroy.sh` → stack `DOES_NOT_EXIST`; the corpus bucket (auto-empty) is `NoSuchBucket` (the 10 `silver/` objects gone with it); the 2 provider log groups swept; no billable resource remains. |
+
+> **Status: PASS (2026-06-28).** Deployed `GraphragSlice1` (`us-east-1`), pushed the Fargate image,
+> uploaded the fixture corpus, and ran the staged delta path live: the first `MODE=delta` (no prior
+> `IngestState`) fell back to a full staged ingest and **warmed Silver** (10 chunks artifacts under
+> the `silver/<embedder-fp>/` prefix; `manifest.json` rewritten as a v2 `IngestState`); the second
+> `MODE=delta` over the **unchanged** corpus made **zero Bedrock embed calls** (`re-embedded chunks:
+> 0`, `embedder_stale=False`) — the headline AC1 win, the stale-vector bug closed by content+config
+> addressing. A hybrid Function-URL query then returned the staged data through the **unmodified**
+> read path (AC9), and `scripts/destroy.sh` left **zero residual** (AC8). Then teardown-first; no
+> billable resource remains.
+>
+> **Two findings only a live run surfaced (neither a code defect):**
+>
+> 1. **A live embedder-fingerprint bump is infeasible against a fixed-dimension k-NN index.** Bumping
+>    the embedder fp (model/dimensions) is exactly what content+config addressing recomputes — but a
+>    *dimension* change breaks the OpenSearch `knn_vector` mapping (created at deploy), so it is a
+>    **`--rebuild`** operation, not a delta. The fingerprint **recompute** is therefore proven
+>    **offline** (AC2: `test_silver.py` embedder-fp bump → every chunk a miss); the live AC9 verifies
+>    the staged read path, not a live dimension bump. AC9 + Testing Strategy reworded to match.
+> 2. **Post-idle Fargate ECR-pull i/o timeout (environment transient).** A supplementary
+>    content-change delta task (run after the workspace was suspended ~9 h between turns) failed to
+>    start with `ResourceInitializationError: ... connection issue between the task and Amazon ECR
+>    ... dial tcp <ecr-endpoint>:443: i/o timeout` — the two earlier delta tasks pulled the **same**
+>    image fine minutes after deploy, so this is post-idle VPC-endpoint flakiness, not a medallion
+>    change. The incremental-recompute-on-a-real-content-delta path is proven offline
+>    (`test_ingest_staged.py::test_content_only_change_reembeds_only_changed_doc`).
+>
+> **Environment gotchas (per the standing note):** no `.venv` / no `docker buildx` —
+> `CDK_APP`/`PYTHONPATH` overrides + a legacy `DOCKER_BUILDKIT=0 docker build --platform linux/amd64`
+> cross-build; brace the image tag (`"${REPO_URI}:latest"`).

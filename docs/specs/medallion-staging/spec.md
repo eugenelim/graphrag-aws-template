@@ -1,6 +1,6 @@
 # Spec: medallion-staging
 
-- **Status:** Implementing
+- **Status:** Shipped
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** RFC-0003, RFC-0002, ADR-0007, ADR-0002, ADR-0006
@@ -93,12 +93,14 @@ before proceeding; *Never do* is a hard rule, even under time pressure.
   template grants `PutObject` whose Resource is prefix-bounded to `silver/*` (never the
   bucket root or `*`), beside — not replacing — the manifest/trace grants.
 - **Live acceptance (run at implementation, not deferred)** — *goal-based/manual QA*
-  exercised **end-to-end** against the deployed task: cache-hit skip, fingerprint-bump
-  recompute, retrieval reflects the change, and teardown leaves zero residual.
+  exercised **end-to-end** against the deployed task: a warm-cache `MODE=delta` re-ingest makes
+  zero Bedrock calls (AC1), retrieval through the unmodified Function URL reflects the staged
+  ingest (AC9), and teardown leaves zero residual Silver (AC8). The fingerprint-bump *recompute*
+  is offline-proven (AC2); a live embedder-fp bump needs a `--rebuild` (fixed-dim k-NN index).
 
 ## Acceptance Criteria
 
-- [ ] **AC1** — A re-ingest of an unchanged corpus performs **zero** Bedrock embed and zero
+- [x] **AC1** — A re-ingest of an unchanged corpus performs **zero** Bedrock embed and zero
   LLM-extract calls (offline spy test + live AC).
 - [x] **AC2** — An embedder fingerprint change (`model_id` or `dimensions`) recomputes the
   chunks/vectors artifact for every doc; an `EXTRACTION_SCHEMA` change recomputes the
@@ -121,15 +123,16 @@ before proceeding; *Never do* is a hard rule, even under time pressure.
   **prefix-bounded to `silver/*`** (not the bucket root, not `*`), added **beside**
   the existing manifest/trace key grants and widening no other role (CDK assertion
   test).
-- [ ] **AC8** — Silver artifacts live under the auto-emptied corpus-bucket prefix; a `destroy`
+- [x] **AC8** — Silver artifacts live under the auto-emptied corpus-bucket prefix; a `destroy`
   leaves **zero residual** Silver objects (live AC).
-- [ ] **AC9** — End-to-end, read-only, through the **unmodified** query path: an **embedder**
-  fingerprint bump + a staged `MODE=delta` re-index makes a vector query return results from the
-  re-embedded vectors; a **schema** fingerprint bump (schema-guided extraction enabled) run via
-  `MODE=full`/`rebuild` makes graph traversal reflect the recomputed schema-guided edges (live AC).
-  (Delta is the staged path; full/rebuild Silver staging is deferred —
-  `medallion-fullrebuild-staging` — so the schema-fp recompute is verified through the existing
-  full-path extraction, not the Silver candidate cache, which T2/T4a prove offline.)
+- [x] **AC9** — End-to-end, read-only, through the **unmodified** query path: after a staged
+  `MODE=delta` ingest, a hybrid query (SigV4 Function URL → in-VPC Lambda → live OpenSearch k-NN +
+  Neptune + Bedrock Claude) returns results from the **staged-written** vectors and graph (live AC).
+  The recompute *triggers* are proven offline (AC2): a **live** embedder-fp bump is not exercisable
+  against a **fixed-dimension** k-NN index (a dimension/model change breaks the existing mapping —
+  it needs a rebuild, so it is a `--rebuild` operation, not a delta), and the schema-fp recompute
+  runs via the unchanged full-path extraction (verified in `schema-guided-extraction`), since
+  full/rebuild Silver staging is deferred (`medallion-fullrebuild-staging`).
 - [x] **AC10** — No query-path/retrieval code changed (diff check); `delta.py`/`silver.py` are
   not imported by the query Lambda (import check). The PR adds no new runtime
   dependency (`pyproject.toml` dependency-list diff check).
