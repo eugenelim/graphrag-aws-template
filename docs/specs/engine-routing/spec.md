@@ -1,6 +1,6 @@
 # Spec: engine-routing
 
-- **Status:** Implementing
+- **Status:** Shipped
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** ADR-0008, ADR-0001, ADR-0005, ADR-0004
@@ -111,44 +111,44 @@ before proceeding; *Never do* is a hard rule, even under time pressure.
 
 ## Acceptance Criteria
 
-- [ ] **AC1** — Over the curated routing set, `RuleQueryRouter` routes each
+- [x] **AC1** — Over the curated routing set, `RuleQueryRouter` routes each
   entity-led query to `hybrid` and each corpus-wide query to `global`, each
   carrying the expected `reason` drawn from the **fixed reason-class set** (one
   module-level constant per ADR-0008 Decision §2 table row — tests assert on the
   constant, not free prose) — no AWS, deterministic *(TDD, offline)*.
-- [ ] **AC2** — The anchor-beats-cue regression holds: an entity-anchored
+- [x] **AC2** — The anchor-beats-cue regression holds: an entity-anchored
   question carrying a corpus cue ("what are the common themes across the KEPs
   @thockin owns") routes to `hybrid`, pinning the ADR-0008 Decision §2 precedence
   so a future `_GLOBAL_CUES` edit cannot silently regress it to `global`
   *(TDD, offline)*.
-- [ ] **AC3** — `RuleQueryRouter` is **total**: it always returns a member of
+- [x] **AC3** — `RuleQueryRouter` is **total**: it always returns a member of
   `{"hybrid", "global"}`, defaulting `hybrid` when the question has neither an
   entity anchor nor a corpus cue — so dispatch is guaranteed a valid engine id
   *(TDD)*.
-- [ ] **AC4** — `BedrockQueryRouter` honors a valid `{"engine": …}` within the
+- [x] **AC4** — `BedrockQueryRouter` honors a valid `{"engine": …}` within the
   fixed set and falls back to `RuleQueryRouter` on an out-of-set id, non-JSON, or
   empty output — it never raises and never returns an engine outside the fixed
   set *(TDD, mocked Converse)*.
-- [ ] **AC5** — Untrusted-data discipline: on the rule path an imperative
+- [x] **AC5** — Untrusted-data discipline: on the rule path an imperative
   injection string with no corpus-cue vocabulary does **not** flip the route; on
   the Bedrock path the question rides `messages` as data behind the `system`
   directive (asserted on the recorded Converse call) *(TDD)*.
-- [ ] **AC6** — `mode="auto"` dispatch: through the Lambda handler, an entity-led
+- [x] **AC6** — `mode="auto"` dispatch: through the Lambda handler, an entity-led
   question invokes the `hybrid` engine block and a corpus-wide question invokes
   the `global` engine block; the response envelope carries
   `route: {engine, reason, decided_by}` *(TDD, integration via handler)*.
-- [ ] **AC7** — Import-graph guard: with `networkx`/`PyYAML` blocked in
+- [x] **AC7** — Import-graph guard: with `networkx`/`PyYAML` blocked in
   `sys.modules`, `route.py` and the query Lambda import successfully (`route.py`
   added to the guard's module list) *(goal-based)*.
-- [ ] **AC8** — Additivity / back-compat: an explicit-mode response envelope
+- [x] **AC8** — Additivity / back-compat: an explicit-mode response envelope
   gains **no** `route` key (`"route" not in result` for any `mode` other than
   `auto`), `_serialize`/`_serialize_global` are unmodified (diff check), and
   `pyproject.toml` gains no runtime dependency (diff check) *(goal-based)*.
-- [ ] **AC9** — No new IAM grant or infra resource: the change touches no
+- [x] **AC9** — No new IAM grant or infra resource: the change touches no
   `apps/infra` code, and `BedrockQueryRouter` reuses the existing
   `bedrock:Converse` grant on `DEFAULT_SYNTHESIS_MODEL_ID` *(goal-based, diff
   check)*.
-- [ ] **AC10** — Live smoke (run at implementation): a deploy answers one
+- [x] **AC10** — Live smoke (run at implementation): a deploy answers one
   entity-led and one corpus-wide question via a single `mode: auto` Function-URL
   call each; each response shows the routed engine + reason; teardown leaves no
   billable resource *(infra/manual QA, live AC)*.

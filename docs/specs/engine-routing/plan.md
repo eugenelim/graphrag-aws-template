@@ -1,7 +1,7 @@
 # Plan: engine-routing
 
 - **Spec:** [`spec.md`](spec.md)
-- **Status:** Executing
+- **Status:** Done
 
 > **Plan contract:** this is the implementation strategy. Unlike the spec, this
 > document is allowed to change as you learn. When it changes substantially
@@ -308,6 +308,15 @@ spec AC boxes updated.
 ## Changelog
 
 - 2026-06-28: initial plan (follows ADR-0008; relates ADR-0001/0005/0004).
+- 2026-06-29: T1–T4 shipped. Review-driven amendments folded into tests, not the
+  contract: anchor-beats-cue pinned as a structural invariant over every
+  `_GLOBAL_CUES` member (not one example); `global` fixture rows asserted
+  anchor-free; a `BedrockQueryRouter().model_id == DEFAULT_SYNTHESIS_MODEL_ID`
+  pin (no second model); the `auto` arm moved **after** persona resolution so an
+  unknown-persona request is rejected before the billable routing Converse; the
+  routing-decision log line covered by `caplog` + quoted `reason=%r`; the
+  swallowed-Bedrock-fault path logs a warning; and a real-`BedrockQueryRouter`
+  fail-safe integration test through the handler. AC10 verified live (see below).
 - 2026-06-28: spec-mode review amendments — resolved the `auto`-arm router
   construction to mirror the `governed` arm (construct `BedrockQueryRouter` +
   rule fallback unconditionally; offline tests monkeypatch the symbol), pinned
