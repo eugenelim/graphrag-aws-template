@@ -1,6 +1,6 @@
 # Spec: engine-routing
 
-- **Status:** Approved
+- **Status:** Implementing
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** ADR-0008, ADR-0001, ADR-0005, ADR-0004

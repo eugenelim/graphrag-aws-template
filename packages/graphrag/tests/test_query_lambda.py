@@ -259,6 +259,8 @@ def test_query_lambda_import_graph_is_pyyaml_free() -> None:
             "graphrag.governed",
             "graphrag.templates",
             "graphrag.select",
+            # engine-routing: the route.py engine router rides the same Code.from_asset bundle.
+            "graphrag.route",
             "graphrag.params",
             # text2opencypher-guarded: the text2cypher import graph also rides the bundle.
             "graphrag.text2cypher",
@@ -719,3 +721,131 @@ def test_text2cypher_pyyaml_free_import_graph_guarded() -> None:
     import graphrag.generate  # noqa: F401
     import graphrag.text2cypher  # noqa: F401
     import graphrag.validate  # noqa: F401
+
+
+# --- engine-routing: mode="auto" dispatch through the Lambda (AC6/AC7/AC8) -------------
+
+
+class _FakeRouter:
+    """A kwarg-swallowing engine-router stand-in (absorbs rule_fallback=/model_id=/region=) that
+    delegates to the real RuleQueryRouter — so the engine is chosen deterministically from the
+    question and decided_by is the rule twin's non-semantic model_id, and no boto3 path is
+    entered (mirrors how the governed test substitutes a bespoke _FakeSelector)."""
+
+    def __init__(self, *a: Any, **k: Any) -> None:
+        from graphrag.route import RuleQueryRouter
+
+        self._rule = RuleQueryRouter()
+
+    @property
+    def model_id(self) -> str:
+        return self._rule.model_id
+
+    def route(self, question: str) -> Any:
+        return self._rule.route(question)
+
+
+def test_auto_mode_routes_entity_led_to_hybrid_and_carries_route(
+    wired: None, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    from graphrag.route import RuleQueryRouter
+
+    monkeypatch.setattr(query_lambda, "BedrockQueryRouter", _FakeRouter)
+    with caplog.at_level(logging.INFO):
+        result = query_lambda.lambda_handler(
+            {"question": "what does @thockin own", "mode": "auto"}, None
+        )
+    # the HYBRID engine block ran (hybrid envelope: answer + seeds/hops) — not duplicated logic.
+    assert result["answer"] == "grounded answer"
+    assert isinstance(result["seeds"], list)
+    # the routing decision is surfaced on the auto path (engine + reason + decided_by).
+    assert result["route"]["engine"] == "hybrid"
+    assert result["route"]["reason"]
+    assert result["route"]["decided_by"] == RuleQueryRouter().model_id
+    # the decision is ALSO surfaced in the log line with the correlation id (charter principle 1 /
+    # ADR-0008 §5) — a watcher can narrate why this engine ran, not just read the envelope.
+    route_logs = [r for r in caplog.records if "auto route" in r.message]
+    assert len(route_logs) == 1
+    assert "correlation_id=%s" in route_logs[0].msg
+    assert "hybrid" in route_logs[0].getMessage()  # the chosen engine is in the log line
+
+
+def test_auto_mode_routes_corpus_wide_to_global_and_carries_route(
+    wired: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from graphrag.route import RuleQueryRouter
+
+    monkeypatch.setattr(query_lambda, "BedrockQueryRouter", _FakeRouter)
+    monkeypatch.setattr(query_lambda, "NeptuneCommunityStore", _FakeCommunityStore)
+    result = query_lambda.lambda_handler(
+        {"question": "summarize the corpus overall", "mode": "auto"}, None
+    )
+    # the GLOBAL engine block ran (global envelope: communities + map_verdicts).
+    assert [c["id"] for c in result["communities"]] == ["community-0", "community-1"]
+    assert result["answer"] == "grounded answer"
+    assert result["route"]["engine"] == "global"
+    assert result["route"]["decided_by"] == RuleQueryRouter().model_id
+
+
+class _ExplodingRouter:
+    """A router that fails if route() is ever called — proves the ordering guard didn't reach it."""
+
+    def __init__(self, *a: Any, **k: Any) -> None:
+        pass
+
+    @property
+    def model_id(self) -> str:
+        return "exploding"
+
+    def route(self, question: str) -> Any:
+        raise AssertionError("router.route called for a request that should have been rejected")
+
+
+def test_auto_mode_unknown_persona_rejected_before_router_runs(
+    wired: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An auto request with an unknown persona is rejected BEFORE the billable routing Converse
+    call — the router is never constructed/called (fail-closed ordering, no wasted spend)."""
+    monkeypatch.setattr(query_lambda, "BedrockQueryRouter", _ExplodingRouter)
+    result = query_lambda.lambda_handler(
+        {"question": "what does @thockin own", "mode": "auto", "persona": "root"}, None
+    )
+    assert "error" in result
+    assert "answer" not in result
+    assert "route" not in result
+
+
+def test_auto_mode_real_router_fails_safe_through_the_handler(
+    wired: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The join the per-class tests don't cover: the handler builds the REAL BedrockQueryRouter
+    with a rule_fallback, and when its Converse client raises, the request still routes (via the
+    rule twin) and returns a valid envelope — proving the handler's actual fail-safe wiring, not
+    a stubbed shortcut. Injects a raising client into the real router's client builder."""
+    from graphrag.route import RuleQueryRouter
+
+    class _RaisingClient:
+        def converse(self, **kwargs: Any) -> Any:
+            raise RuntimeError("bedrock throttled")
+
+    # Patch the real router's lazy client builder so route() enters its real try/except → rule.
+    monkeypatch.setattr(query_lambda.BedrockQueryRouter, "_bedrock", lambda self: _RaisingClient())
+    result = query_lambda.lambda_handler(
+        {"question": "what does @thockin own", "mode": "auto"}, None
+    )
+    assert result["answer"] == "grounded answer"  # the hybrid block still ran
+    assert result["route"]["engine"] == "hybrid"
+    # the fail-safe delegated to the rule twin — decided_by is the rule (non-semantic) model_id.
+    assert result["route"]["decided_by"] == RuleQueryRouter().model_id
+
+
+def test_explicit_modes_carry_no_route_key(wired: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Back-compat / additivity: an explicit-mode envelope gains NO `route` key — the concrete
+    check behind "byte-identical", the serializers being untouched (AC8)."""
+    monkeypatch.setattr(query_lambda, "NeptuneCommunityStore", _FakeCommunityStore)
+    hybrid = query_lambda.lambda_handler({"question": "what does @thockin own"}, None)  # default
+    glob = query_lambda.lambda_handler({"question": "summarize", "mode": "global"}, None)
+    assert "route" not in hybrid
+    assert "route" not in glob
