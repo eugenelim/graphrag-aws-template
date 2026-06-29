@@ -20,6 +20,7 @@ docs/specs/<feature>/
 | Spec | Status | Constrained by | Notes |
 | --- | --- | --- | --- |
 | [`medallion-staging`](medallion-staging/spec.md) | Draft | RFC-0003, RFC-0002, ADR-0007, ADR-0002, ADR-0006 | Bronze/Silver/Gold ingestion staging with a content-and-config-addressed Silver cache, backward-compatible `IngestState` (v1→v2), and an explicit `GraphDelta` (plan/apply). 9 ACs, task-sliced T1–T5 (T4 split a/b/c); live ACs (cache-skip, fingerprint-bump recompute, read-only retrieval reflection, zero-residual teardown) run at implementation. Cleared spec-mode adversarial review. |
+| [`engine-routing`](engine-routing/spec.md) | Approved | ADR-0008, ADR-0001, ADR-0005, ADR-0004 | Catalog slice — **automatic Local-vs-Global engine routing**. Additive `mode="auto"` dispatch backed by a new `route.py` `QueryRouter` seam (mirrors `select.py`): a deterministic `RuleQueryRouter` (anchor-beats-cue precedence via `link_question` + a frozen `_GLOBAL_CUES` set) + a `BedrockQueryRouter` twin that strict-validates to the fixed `{hybrid, global}` set and fails safe to the rule twin. The decision (engine + reason + `decided_by`) is surfaced in the `auto` envelope; explicit modes stay byte-identical; no new engine, grant, dependency, or infra. 10 ACs, task-sliced T1–T4; live smoke (AC10) runs at implementation. |
 
 ## Shipped specs (archived)
 
