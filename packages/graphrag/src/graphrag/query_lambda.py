@@ -50,6 +50,7 @@ from .globalsearch import GlobalSearchResult, global_query
 from .governed import GovernedResult, governed_query
 from .hybrid import HybridResult, hybrid_query
 from .parentchild import ParentChildResult, parentchild_query
+from .route import BedrockQueryRouter, RouteDecision, RuleQueryRouter
 from .select import BedrockTemplateSelector
 from .selfquery import BedrockMetadataExtractor, SelfQueryResult, selfquery_query
 from .store.community_neptune import NeptuneCommunityStore
@@ -102,11 +103,12 @@ def _extract_persona(payload: dict[str, Any]) -> str | None:
 
 def _extract_mode(payload: dict[str, Any]) -> str:
     """The optional ``mode`` (``hybrid`` default | ``governed`` | ``text2cypher`` |
-    ``selfquery`` | ``parentchild`` | ``global``) — the additive, back-compat Function-URL field
-    (``governed`` added by opencypher-templates, ``text2cypher`` by text2opencypher-guarded,
-    ``selfquery`` by metadata-filtering, ``parentchild`` by parent-child-retrieval, ``global`` by
-    global-community-summary). An absent or non-string mode is ``hybrid``, so an existing caller
-    is unaffected."""
+    ``selfquery`` | ``parentchild`` | ``global`` | ``auto``) — the additive, back-compat
+    Function-URL field (``governed`` added by opencypher-templates, ``text2cypher`` by
+    text2opencypher-guarded, ``selfquery`` by metadata-filtering, ``parentchild`` by
+    parent-child-retrieval, ``global`` by global-community-summary, ``auto`` by engine-routing —
+    picks ``hybrid``/``global`` from the question). An absent or non-string mode is ``hybrid``,
+    so an existing caller is unaffected."""
     mode = payload.get("mode")
     return mode if isinstance(mode, str) and mode else "hybrid"
 
@@ -200,6 +202,30 @@ def lambda_handler(event: Any, context: Any) -> dict[str, Any]:
         except ValueError:
             return {"error": "unknown persona", "correlation_id": correlation_id}
 
+        # Engine routing (additive, opt-in): mode="auto" picks the engine from the question.
+        # Resolved AFTER the persona check, so an unknown-persona request is rejected before the
+        # billable routing Converse call. The router is a thin selector — it sets the chosen mode
+        # and the existing hybrid/global block runs unchanged; the RouteDecision is carried to the
+        # return point and merged into the envelope as a `route` key (only on this path), so the
+        # serializers stay byte-identical and every explicit mode is untouched (ADR-0008). The
+        # router is constructed unconditionally, mirroring the governed arm's selector — the
+        # injected RuleQueryRouter is both the offline default (test monkeypatch / Bedrock-less
+        # env) and the runtime fail-safe.
+        route_decision: RouteDecision | None = None
+        if mode == "auto":
+            router = BedrockQueryRouter(
+                model_id=model_id, region=region, rule_fallback=RuleQueryRouter()
+            )
+            route_decision = router.route(question)
+            logger.info(
+                "query_lambda auto route (correlation_id=%s) engine=%s decided_by=%s reason=%r",
+                correlation_id,
+                route_decision.engine,
+                route_decision.decided_by,
+                route_decision.reason,  # %r-quoted: the reason is multi-word, keep it grep-safe
+            )
+            mode = route_decision.engine  # fall through to the unchanged hybrid / global block
+
         if mode == "selfquery":
             # The self-query path: Bedrock extracts a structured filter (source/entity_ids) from
             # the question; the vector search applies it DURING the ANN scan, composed with the
@@ -270,7 +296,7 @@ def lambda_handler(event: Any, context: Any) -> dict[str, Any]:
                 len(gresult.communities_considered),
                 sum(1 for v in gresult.map_verdicts if v.relevant),
             )
-            return _serialize_global(gresult)
+            return _with_route(_serialize_global(gresult), route_decision)
 
         if mode != "hybrid":
             return {"error": f"unknown mode {mode!r}", "correlation_id": correlation_id}
@@ -301,7 +327,7 @@ def lambda_handler(event: Any, context: Any) -> dict[str, Any]:
             len(result.hop_trace.trace),
             len(result.citations),
         )
-        return _serialize(result)
+        return _with_route(_serialize(result), route_decision)
     except Exception:  # noqa: BLE001 - the boundary: log detail, return a sanitized envelope
         # Log the real detail (endpoints/ARNs/stack) to CloudWatch only.
         logger.exception("query_lambda failure (correlation_id=%s)", correlation_id)
@@ -309,6 +335,20 @@ def lambda_handler(event: Any, context: Any) -> dict[str, Any]:
             "error": "internal error processing the query",
             "correlation_id": correlation_id,
         }
+
+
+def _with_route(envelope: dict[str, Any], decision: RouteDecision | None) -> dict[str, Any]:
+    """On the ``auto`` path only, merge the routing decision into the engine's envelope as a
+    ``route`` key (engine-routing, ADR-0008 §5). On every explicit-mode path ``decision`` is
+    ``None`` and the envelope is returned untouched — so an explicit-mode response is
+    byte-identical to before and the serializers themselves are never modified (AC8)."""
+    if decision is not None:
+        envelope["route"] = {
+            "engine": decision.engine,
+            "reason": decision.reason,
+            "decided_by": decision.decided_by,
+        }
+    return envelope
 
 
 def _serialize_governed(result: GovernedResult) -> dict[str, Any]:
