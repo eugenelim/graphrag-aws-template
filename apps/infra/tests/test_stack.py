@@ -243,9 +243,10 @@ def test_ingestion_task_can_write_manifest_scoped_to_manifest_key(template: Temp
     # Slice 5: the delta task records the ingest manifest to S3 and reads it back. The slice-1
     # task role was read-only, so an s3:PutObject is required — but scoped to specific keys, never
     # the whole bucket (least privilege). This pins the live-deploy IAM fix AC9 surfaced.
-    # (schema-guided-extraction added a SECOND key-scoped PutObject for the trace artifact —
-    # every PutObject statement must still be scoped to one of the allowed keys, never wildcard.)
-    _allowed_keys = ("manifest.json", "schema_extraction_trace.txt")
+    # (schema-guided-extraction added a SECOND key-scoped PutObject for the trace artifact, and
+    # medallion-staging a THIRD prefix-scoped one for the Silver cache (silver/*) — every PutObject
+    # statement must still be scoped to one of the allowed keys/prefixes, never the whole bucket.)
+    _allowed_keys = ("manifest.json", "schema_extraction_trace.txt", "silver/")
     found_manifest = False
     for stmt in _iam_statements(template):
         actions = set(_as_list(stmt.get("Action", [])))
@@ -584,6 +585,23 @@ def _as_list(value: object) -> list:
     return value if isinstance(value, list) else [value]
 
 
+def _resource_suffix(res: object) -> str | None:
+    """The trailing literal of an S3 Resource — the part after the bucket ARN.
+
+    CDK renders a scoped grant as ``{"Fn::Join": ["", [<bucket-arn-ref>, "/<suffix>"]]}``; a bare
+    bucket ARN is just the ref (no suffix). Returns the suffix string (e.g. ``"/silver/*"``,
+    ``"/manifest.json"``, or ``"/*"`` for a bucket-wide grant), or ``None`` if there is no literal
+    suffix. This lets a test distinguish a **prefix** grant (``/silver/*``) from a **bucket-wide**
+    grant (``/*``), which a crude ``endswith("/*")`` on the JSON blob cannot."""
+    if isinstance(res, str):
+        return res
+    if isinstance(res, dict) and "Fn::Join" in res:
+        parts = res["Fn::Join"][1]
+        tail = parts[-1] if parts else None
+        return tail if isinstance(tail, str) else None
+    return None
+
+
 # --- slice 4: permission-filtered-retrieval adds NO new infra resource ----------------
 def test_slice4_permission_filter_adds_no_new_infra(template: Template) -> None:
     # The persona rides the existing query Lambda's request body and the only store change
@@ -810,18 +828,41 @@ def test_schema_extraction_query_lambda_neptune_grant_stays_read_only(template: 
 def test_schema_extraction_trace_putobject_grant_is_key_scoped(template: Template) -> None:
     # AC7 (live finding 2026-06-27): the trace artifact needs its OWN s3:PutObject grant — the
     # existing grant was scoped to manifest.json only. The new grant must be key-scoped to the
-    # trace filename, NEVER bucket-wide (no `arn:.../*` PutObject).
-    put_resources: list[str] = []
+    # trace filename, NEVER bucket-wide. medallion-staging hardens the bucket-wide check: it now
+    # inspects the Fn::Join trailing literal, so a `/silver/*` PREFIX grant is correctly told apart
+    # from a bare bucket-root `/*` (the old `endswith("/*")` on the JSON blob conflated them — it
+    # never even fired on a Join-rendered resource).
+    suffixes: list[str] = []
     bucket_wide = False
     for stmt in _iam_statements(template):
         if "s3:PutObject" not in _as_list(stmt.get("Action", [])):
             continue
         for res in _as_list(stmt.get("Resource", [])):
-            blob = json.dumps(res)
-            put_resources.append(blob)
-            if blob.rstrip('"').endswith("/*"):  # a bare bucket ARN + "/*" is bucket-wide
-                bucket_wide = True
-    joined = " ".join(put_resources)
+            suffix = _resource_suffix(res)
+            if suffix is not None:
+                suffixes.append(suffix)
+                if suffix == "/*":  # the bucket ARN + bare "/*" is bucket-wide
+                    bucket_wide = True
+    joined = " ".join(suffixes)
     assert "schema_extraction_trace.txt" in joined, "trace-key PutObject grant is missing"
     assert "manifest.json" in joined, "manifest PutObject grant must remain"
-    assert not bucket_wide, "PutObject must stay key-scoped, never bucket-wide"
+    assert not bucket_wide, "PutObject must stay key/prefix-scoped, never bucket-wide (/*)"
+
+
+def test_silver_putobject_grant_is_prefix_bounded(template: Template) -> None:
+    # medallion-staging AC7: the staged delta task gets a PutObject grant prefix-bounded to
+    # `silver/*` — broader than a single key (the cache holds many objects) but NEVER the bucket
+    # root or `*`. Added BESIDE the manifest/trace grants, widening no other resource.
+    silver_suffixes: list[str] = []
+    for stmt in _iam_statements(template):
+        if "s3:PutObject" not in _as_list(stmt.get("Action", [])):
+            continue
+        for res in _as_list(stmt.get("Resource", [])):
+            suffix = _resource_suffix(res)
+            assert suffix != "*", "s3:PutObject must not target the wildcard resource"
+            assert suffix != "/*", "s3:PutObject must not be bucket-wide"
+            if suffix and "silver/" in suffix:
+                silver_suffixes.append(suffix)
+    assert silver_suffixes == ["/silver/*"], (
+        f"expected exactly one prefix-bounded silver/* PutObject grant, got {silver_suffixes}"
+    )

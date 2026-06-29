@@ -288,6 +288,12 @@ def test_query_lambda_import_graph_is_pyyaml_free() -> None:
         assert "graphrag.validate_triple" not in sys.modules
         assert "graphrag.ground" not in sys.modules
         assert "graphrag.schema_extract" not in sys.modules
+        # medallion-staging: the ingest-only staging modules must NOT enter the query Lambda
+        # import graph — silver/state ride the ingest path only (AC10), like delta.py.
+        assert "graphrag.silver" not in sys.modules
+        assert "graphrag.state" not in sys.modules
+        assert "graphrag.delta" not in sys.modules
+        assert "graphrag.ingest" not in sys.modules
     finally:
         builtins.__import__ = real_import
         for m in [m for m in list(sys.modules) if _is_target(m)]:

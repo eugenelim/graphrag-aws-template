@@ -19,10 +19,15 @@ from pathlib import Path
 from .chunk import chunk_corpus
 from .delta import Delta, Manifest, diff_manifests, manifest_from_docs
 from .embed import Embedder
+from .extract_llm import EXTRACTION_SCHEMA, ExtractionSchema, TripleExtractor, schema_fingerprint
+from .graphdelta import apply_graph_delta, plan_graph_delta
 from .labels import label_chunks, label_graph, load_labels
-from .model import Edge, Graph, Node
+from .model import Graph
 from .resolve import cross_source_merges, load_aliases, resolve
+from .schema_extract import ExtractionResult, ground_candidates
+from .silver import ArtifactStore, SilverArtifact, materialize_silver, silver_key
 from .sources import load_corpus
+from .state import DocState, IngestState, Stage
 from .store.base import GraphStore
 from .store.vector_base import EmbeddedChunk, VectorStore
 
@@ -97,110 +102,16 @@ def ingest(
     return _report(graph, parsed_docs=len(docs))
 
 
-def _sources_of(doc_paths: set[str]) -> set[str]:
-    """The source tags a provenance set implies — the ``{source}`` prefix of each doc id, so
-    reconciled ``sources`` match a full rebuild's exactly (slice 5)."""
-    return {did.split("/", 1)[0] for did in doc_paths}
-
-
-def _reconcile_node(
-    store_node: Node | None, scratch_node: Node | None, surviving: set[str]
-) -> Node:
-    """The exact target node: ``doc_paths`` = surviving set, ``sources`` derived from it, props
-    last-writer-wins (a changed/added document overrides the store's), id/kind from whichever
-    side is present (a store-only survivor keeps its props; only ``doc_paths``/``sources`` shrink).
-    Caller guarantees at least one side is present and ``surviving`` is non-empty."""
-    ref = scratch_node or store_node
-    if ref is None:  # pragma: no cover - caller guarantees one side
-        raise ValueError("_reconcile_node needs at least one node")
-    props: dict[str, object] = dict(store_node.props) if store_node else {}
-    if scratch_node is not None:
-        props.update(scratch_node.props)  # the changed/added document overrides
-    return Node(ref.id, ref.kind, props=props, sources=_sources_of(surviving), doc_paths=surviving)
-
-
-def _reconcile_edge(
-    store_edge: Edge | None, scratch_edge: Edge | None, surviving: set[str]
-) -> Edge:
-    """The exact target edge — the edge twin of :func:`_reconcile_node`."""
-    ref = scratch_edge or store_edge
-    if ref is None:  # pragma: no cover - caller guarantees one side
-        raise ValueError("_reconcile_edge needs at least one edge")
-    props: dict[str, object] = dict(store_edge.props) if store_edge else {}
-    if scratch_edge is not None:
-        props.update(scratch_edge.props)
-    return Edge(
-        ref.src_id,
-        ref.dst_id,
-        ref.kind,
-        props=props,
-        sources=_sources_of(surviving),
-        doc_paths=surviving,
-    )
-
-
-def _node_unchanged(store_node: Node, target: Node) -> bool:
-    return (
-        store_node.kind == target.kind
-        and store_node.doc_paths == target.doc_paths
-        and store_node.sources == target.sources
-        and store_node.props == target.props
-    )
-
-
-def _edge_unchanged(store_edge: Edge, target: Edge) -> bool:
-    return (
-        store_edge.doc_paths == target.doc_paths
-        and store_edge.sources == target.sources
-        and store_edge.props == target.props
-    )
-
-
 def _reconcile_graph(store: GraphStore, scratch: Graph, removed_ids: set[str]) -> int:
     """Reconcile the store to the new corpus state by provenance set, returning the orphan count.
 
-    For every node/edge currently in the store or freshly extracted, the surviving provenance is
-    ``(store.doc_paths - removed_ids) | scratch.doc_paths`` — **the union is computed before the
-    empty-check**, so a changed/moved document (which both removes and re-adds) never transiently
-    orphans a node a surviving document still contributes. Empty surviving set → orphan → delete;
-    otherwise the exact target replaces the store entry (only when it actually changed, so
-    unchanged rows are never re-written). Nodes are processed before edges so an edge's endpoints
-    exist when it is written.
+    The thin composition of the plan/apply pair (medallion-staging T3): plan the reconciliation as
+    a `GraphDelta` (pure), then apply it (the single mutating step). Behavior is unchanged from the
+    pre-refactor inline implementation — byte-identical store state and the same set of mutating
+    calls (unchanged rows are never re-written; an edge incident to a deleted node is removed by the
+    node cascade, not a separate delete). See `graphdelta.plan_graph_delta` / `apply_graph_delta`.
     """
-    orphans = 0
-    store_nodes = {n.id: n for n in store.all_nodes()}
-    scratch_nodes = dict(scratch.nodes)
-    for node_id in set(store_nodes) | set(scratch_nodes):
-        store_node = store_nodes.get(node_id)
-        scratch_node = scratch_nodes.get(node_id)
-        surviving = (store_node.doc_paths - removed_ids if store_node else set()) | (
-            scratch_node.doc_paths if scratch_node else set()
-        )
-        if not surviving:
-            store.delete_node(node_id)
-            orphans += 1
-            continue
-        node_target = _reconcile_node(store_node, scratch_node, surviving)
-        if store_node is None or not _node_unchanged(store_node, node_target):
-            store.replace_node(node_target)
-
-    store_edges = {e.key(): e for e in store.all_edges()}
-    scratch_edges = {e.key(): e for e in scratch.edges}
-    for key in set(store_edges) | set(scratch_edges):
-        store_edge = store_edges.get(key)
-        scratch_edge = scratch_edges.get(key)
-        surviving = (store_edge.doc_paths - removed_ids if store_edge else set()) | (
-            scratch_edge.doc_paths if scratch_edge else set()
-        )
-        if not surviving:
-            if store_edge is not None:
-                store.delete_edge(store_edge.src_id, store_edge.kind, store_edge.dst_id)
-                orphans += 1
-            continue
-        edge_target = _reconcile_edge(store_edge, scratch_edge, surviving)
-        if store_edge is None or not _edge_unchanged(store_edge, edge_target):
-            store.replace_edge(edge_target)
-    return orphans
+    return apply_graph_delta(store, plan_graph_delta(store, scratch, removed_ids))
 
 
 @dataclass
@@ -220,6 +131,9 @@ class DeltaReport:
     orphans_removed: int
     indexed_chunks: int
     full_ingest: bool = False  # the no-prior-manifest fallback ran a full ingest (AC8b)
+    # The schema-guided extraction trace, present only when `ingest_staged` ran grounding (an
+    # extractor was supplied — full/rebuild + SCHEMA_EXTRACTION). The entrypoint persists it.
+    extraction: ExtractionResult | None = None
 
     def render(self) -> str:
         d = self.delta
@@ -361,3 +275,184 @@ def rebuild(
         aliases=aliases,
         labels=labels,
     )
+
+
+def _staged_state(
+    new_manifest: Manifest,
+    prev_state: IngestState | None,
+    embedder_fp: str,
+    extraction_fp: str | None,
+) -> IngestState:
+    """Build the new v2 `IngestState` from the reconciled corpus — every doc Gold, Silver keys set.
+
+    A doc's chunks key is content+embedder addressed (valid for every current doc, since unchanged
+    docs were cached at this same ``embedder_fp``). Its candidates key is content+extraction
+    addressed when grounding ran (extractor supplied); otherwise the prior candidates key is carried
+    forward for an unchanged doc (delta runs do not re-materialize candidates — ADR-0006)."""
+    docs: dict[str, DocState] = {}
+    for doc_id, content_hash in new_manifest.items():
+        prev_doc = prev_state.docs.get(doc_id) if prev_state is not None else None
+        if extraction_fp is not None:
+            candidates_key: str | None = silver_key(extraction_fp, content_hash, "candidates")
+        elif prev_doc is not None and prev_doc.content_hash == content_hash:
+            candidates_key = prev_doc.silver_candidates
+        else:
+            candidates_key = None
+        docs[doc_id] = DocState(
+            content_hash=content_hash,
+            stage=Stage.GOLD,
+            silver_chunks=silver_key(embedder_fp, content_hash, "chunks"),
+            silver_candidates=candidates_key,
+        )
+    fingerprints = {"embedder": embedder_fp}
+    if extraction_fp is not None:
+        fingerprints["extraction"] = extraction_fp
+    elif prev_state is not None and "extraction" in prev_state.fingerprints:
+        fingerprints["extraction"] = prev_state.fingerprints["extraction"]
+    return IngestState(
+        docs=docs,
+        fingerprints=fingerprints,
+        ingested_commit=prev_state.ingested_commit if prev_state is not None else None,
+    )
+
+
+def ingest_staged(
+    prev_state: IngestState | None,
+    community_root: Path,
+    enhancements_root: Path,
+    graph_store: GraphStore,
+    vector_store: VectorStore,
+    artifacts: ArtifactStore,
+    embedder: Embedder,
+    *,
+    extractor: TripleExtractor | None = None,
+    schema: ExtractionSchema = EXTRACTION_SCHEMA,
+    aliases: dict[str, str] | None = None,
+    labels: dict[str, str] | None = None,
+) -> tuple[DeltaReport, IngestState]:
+    """The three-stage staged driver — Bronze → Silver → Gold; returns a report + `IngestState`.
+
+    **Bronze** parses the corpus and content-hashes it, diffing against ``prev_state`` (projected to
+    a v1 manifest). **Silver** materializes the Bedrock-expensive per-document outputs through the
+    content+config-addressed `ArtifactStore` cache — a doc whose content and fingerprints are
+    unchanged is a pure cache hit (zero Bedrock), so a moved document (same hash) and a re-ingest of
+    an unchanged corpus both make no Bedrock call (AC1, AC3). An **embedder fingerprint change** is
+    miss for *every* doc's chunks artifact (a new key), so it recomputes every vector even when no
+    content changed — closing the stale-vector bug (AC2). **Gold** re-derives the deterministic
+    (`resolve`, no Bedrock), grounds the cached schema-guided candidates when an extractor is
+    supplied (`ground_candidates` — full/rebuild-only, ADR-0006), reconciles the store via the
+    `GraphDelta` plan/apply pair, and delete-then-re-indexes the affected vectors from Silver.
+
+    Community detection and the trace-artifact S3 write stay with the entrypoint (T4b); this driver
+    returns the `ExtractionResult` on the report so the entrypoint can persist it."""
+    aliases = aliases if aliases is not None else load_aliases()
+    labels = labels if labels is not None else load_labels()
+    embedder_fp = embedder.fingerprint()
+    extraction_fp = schema_fingerprint(schema) if extractor is not None else None
+
+    docs = load_corpus(community_root, enhancements_root)
+    docs_by_id = {doc.doc_id: doc for doc in docs}
+    new_manifest = manifest_from_docs(docs, community_root, enhancements_root)
+    prev_manifest = prev_state.as_manifest() if prev_state is not None else None
+    delta = diff_manifests(prev_manifest, new_manifest)
+
+    before_nodes = len(graph_store.all_nodes())
+    before_edges = len(graph_store.all_edges())
+    before_chunks = _safe_count(vector_store)
+
+    content_added = delta.added_doc_ids()
+    removed_ids = delta.removed_doc_ids()
+    # An embedder-fp change forces a re-embed + re-index of EVERY surviving doc (new chunks key),
+    # not only the content delta — so a config change can never silently serve stale vectors (AC2).
+    prev_embedder_fp = prev_state.fingerprints.get("embedder") if prev_state is not None else None
+    embedder_stale = prev_embedder_fp != embedder_fp
+    vector_doc_ids = set(new_manifest) if embedder_stale else set(content_added)
+    silver_doc_ids = set(content_added) | vector_doc_ids
+
+    # Silver: materialize (cache-or-compute) each affected doc. Hits make zero Bedrock calls.
+    silver_by_id: dict[str, SilverArtifact] = {}
+    for doc_id in sorted(silver_doc_ids):
+        silver_by_id[doc_id] = materialize_silver(
+            docs_by_id[doc_id],
+            artifacts,
+            embedder,
+            content_hash=new_manifest[doc_id],
+            embedder_fp=embedder_fp,
+            extraction_fp=extraction_fp,
+            extractor=extractor,
+            schema=schema,
+        )
+    logger.info(
+        "staged%s: +%d ~%d -%d >%d (%d silver doc(s), embedder_stale=%s)",
+        " (full — no prior state)" if prev_state is None else "",
+        len(delta.added),
+        len(delta.changed),
+        len(delta.deleted),
+        len(delta.moved),
+        len(silver_doc_ids),
+        embedder_stale,
+    )
+
+    # Gold — deterministic graph over the content delta, then (optionally) schema-guided edges.
+    # Resolve in load_corpus order (NOT sorted) so the prop first-writer-wins merge matches
+    # ingest_delta/rebuild exactly (a multiply-contributed node's prop is order-sensitive).
+    scratch = resolve([doc for doc in docs if doc.doc_id in content_added], aliases)
+    label_graph(scratch, labels)
+
+    extraction_result: ExtractionResult | None = None
+    if extractor is not None:
+        # Ground the cached candidates of EVERY surviving doc in a stable (sorted doc-id) order
+        # against ``scratch``. This is correct **only on the full/rebuild path** (the only path that
+        # supplies an extractor today — ADR-0006), where ``content_added`` is every doc, so
+        # ``scratch`` IS the full resolved graph. A future delta-grounding path (deferred:
+        # medallion-fullrebuild-staging) must ground against the store-MERGED graph instead — a
+        # candidate whose endpoint lives in an unchanged doc is not in the delta-only ``scratch``
+        # and would be wrongly dropped.
+        candidates = [
+            cand
+            for doc_id in sorted(new_manifest)
+            if (art := silver_by_id.get(doc_id)) is not None
+            for cand in art.candidates
+        ]
+        entries, edges = ground_candidates(candidates, scratch, schema=schema, aliases=aliases)
+        for edge in edges:  # add schema-guided edges to the scratch graph so they reconcile in
+            scratch.upsert_edge(edge)
+        extraction_result = ExtractionResult(
+            schema=schema,
+            prompt=schema.render(),
+            extractor_model_id=extractor.model_id,
+            entries=entries,
+            edges=edges,
+        )
+
+    orphans = apply_graph_delta(graph_store, plan_graph_delta(graph_store, scratch, removed_ids))
+    logger.info("graph reconciled: %d orphan node(s)/edge(s) removed", orphans)
+
+    # Vector: delete chunks of every touched doc (removed + re-indexed), then re-index from Silver.
+    touched_ids = removed_ids | vector_doc_ids
+    if touched_ids:
+        vector_store.delete_by_doc(sorted(touched_ids))
+    indexed = 0
+    for doc_id in sorted(vector_doc_ids):
+        art = silver_by_id[doc_id]
+        label_chunks([chunk for chunk, _vector in art.chunks], labels)
+        for chunk, vector in art.chunks:
+            vector_store.index_chunk(EmbeddedChunk(chunk, vector))
+            indexed += 1
+    logger.info("vector: indexed %d staged chunk(s)", indexed)
+
+    report = DeltaReport(
+        delta=delta,
+        new_manifest=new_manifest,
+        before_nodes=before_nodes,
+        before_edges=before_edges,
+        before_chunks=before_chunks,
+        after_nodes=len(graph_store.all_nodes()),
+        after_edges=len(graph_store.all_edges()),
+        after_chunks=_safe_count(vector_store),
+        orphans_removed=orphans,
+        indexed_chunks=indexed,
+        full_ingest=prev_state is None,
+        extraction=extraction_result,
+    )
+    return report, _staged_state(new_manifest, prev_state, embedder_fp, extraction_fp)
