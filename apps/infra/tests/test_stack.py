@@ -494,7 +494,10 @@ def _classify_egress_target(rule: dict, neptune_id: str, opensearch_id: str) -> 
         return "opensearch"
     if dest:
         for name in _INTERFACE_ENDPOINT_NAMES:
-            if name in dest:  # endpoint SG logical id embeds the endpoint name
+            # Endpoint SG logical ids are `Vpc<Name>SecurityGroup<hash>` — anchor on that exact
+            # prefix (not a bare substring) so a future peer that merely contains an endpoint
+            # name can't mis-classify.
+            if dest.startswith(f"Vpc{name}SecurityGroup"):
                 return name
     return None
 
@@ -570,10 +573,10 @@ def test_s3_prefix_list_param_is_pattern_constrained(template: Template) -> None
 
 def test_cdk_nag_no_unsuppressed_findings() -> None:
     # AC4a (durable): applying AwsSolutionsChecks to the stack WITH the reason-signed
-    # suppressions leaves NO unsuppressed AwsSolutions error — the hard gate. This regresses
-    # offline if the aspect/suppressions are dropped from app.py OR a violating resource is
-    # added without a reasoned suppression, so the gate has an artifact that bites on
-    # regression (not just the one-time deliberate-violation proof, AC4b).
+    # suppressions leaves NO unsuppressed AwsSolutions error — the hard gate. This regresses if a
+    # violating resource is added OR a suppression is dropped (verified: 32 unsuppressed errors
+    # without suppressions). The CI `cdk synth` step guards the separate app.py aspect wiring
+    # (this test builds its own app + aspect).
     pytest.importorskip("cdk_nag", reason="cdk-nag not installed (infra extra)")
     from aws_cdk import Aspects
     from cdk_nag import AwsSolutionsChecks

@@ -212,10 +212,11 @@ Budgets alarm with a threshold + subscriber (charter principle 4).
   + `github-actions` ecosystems. ruff `S` stays on. Remaining open follow-on
   (its own backlog item, now unblocked): a repo-wide secret scanner +
   `shellcheck` job — see `infra-secret-scan-ci`.
-- **Live IAM/SG evaluation.** **Discharged** by `security-hardening-followups`
-  AC9: the tightened egress was evaluated on a live deploy (ingest + hybrid
-  Function-URL query + both smoke probes), the deployed SG-egress/IAM posture
-  captured below, then torn down. (See "Live SG-egress posture (AC9)".)
+- **Live IAM/SG evaluation.** Closed in code (AC1/AC2 synth assertions); the live
+  evaluation lands with the `security-hardening-followups` AC9 run — deploy →
+  ingest + hybrid Function-URL query + both smoke probes → capture the deployed
+  SG-egress/IAM posture → `cdk destroy`. See the "Live SG-egress posture (AC9)"
+  section below (filled when AC9 runs).
 - **Uniform least-privilege SG *egress*.** **Discharged** by
   `security-hardening-followups` (AC1/AC2): every in-VPC compute SG —
   `IngestionSg`, `SmokeSg`, `VectorSmokeSg`, `QuerySg` — now sets

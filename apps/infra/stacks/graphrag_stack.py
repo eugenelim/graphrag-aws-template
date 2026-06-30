@@ -69,12 +69,12 @@ _INTERFACE_ENDPOINTS = {
 # and the VPC endpoints they call (ADR-0002 no-NAT). The S3 corpus read rides a *gateway*
 # endpoint, which exposes no connectable/prefix-list handle — so the S3 egress targets the
 # AWS-managed S3 prefix list by id (`ec2.Peer.prefix_list`), supplied by the `S3PrefixListId`
-# CfnParameter. This default is **us-east-1's** (`com.amazonaws.us-east-1.s3`); every other
-# region MUST override it — `deploy.sh` resolves the right id per-region via
-# `describe-managed-prefix-lists`. The pattern below rejects a CIDR / free-form value at the
-# CloudFormation boundary so a typo can't widen the one egress hole the closed posture exists
-# to control.
-_DEFAULT_S3_PREFIX_LIST_ID = "pl-63a5400a"  # com.amazonaws.us-east-1.s3 (verified live)
+# CfnParameter. It carries **no default**: the right id is region-specific
+# (`com.amazonaws.<region>.s3`), so a region-wrong default would be a silent footgun — every
+# deploy must supply it (`deploy.sh` resolves it per-region via `describe-managed-prefix-lists`;
+# a raw `cdk deploy` fails loudly without it). The pattern rejects a CIDR / free-form value at
+# the CloudFormation boundary so a typo can't widen the one egress hole the closed posture
+# exists to control.
 _S3_PREFIX_LIST_ID_PATTERN = r"^pl-[0-9a-f]+$"
 
 # Vector half (slice 2). The domain name is fixed so its ARN is computable without a
@@ -292,7 +292,9 @@ def add_nag_suppressions(stack: Stack) -> None:
             {
                 "id": "AwsSolutions-EC23",
                 "reason": (
-                    "The VPC interface-endpoint SGs accept 443 from the VPC CIDR (CDK's default "
+                    "(Warning-level — suppressed to keep synth output clean, NOT required for the "
+                    "error gate.) The VPC interface-endpoint SGs accept 443 from the VPC CIDR "
+                    "(CDK's default "
                     "for an interface endpoint), an intrinsic-valued rule EC23 cannot statically "
                     "evaluate (it raises CdkNagValidationFailure). It is NOT a 0.0.0.0/0 rule, "
                     "and test_stack.py's no-public-ingress assertion is the independent guard "
@@ -329,12 +331,11 @@ class GraphragStack(Stack):
             self,
             "S3PrefixListId",
             type="String",
-            default=_DEFAULT_S3_PREFIX_LIST_ID,
             allowed_pattern=_S3_PREFIX_LIST_ID_PATTERN,
             description=(
                 "AWS-managed S3 gateway-endpoint prefix list id "
                 "(com.amazonaws.<region>.s3) the in-VPC compute SGs allow 443 egress to. "
-                "Default is us-east-1's; deploy.sh resolves it per-region."
+                "No default (region-specific); deploy.sh resolves it per-region."
             ),
         )
         self._s3_prefix_list_id = s3_prefix_list_id.value_as_string
