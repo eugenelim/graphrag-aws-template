@@ -103,12 +103,14 @@ before proceeding; *Never do* is a hard rule, even under time pressure.
   § Design decisions — Neptune `8182`, OpenSearch `443`, and the
   interface/gateway VPC endpoints `443` as that component requires, and nothing
   more. **Normalization (so set-equality is mechanically derivable against the
-  synthesized template):** CDK renders a compute SG's egress in two shapes — the
-  S3 prefix-list rule inline in the SG's `SecurityGroupEgress` array
-  (`{DestinationPrefixListId: {Ref: S3PrefixListId}}`), and each SG-to-SG rule as
-  a standalone `AWS::EC2::SecurityGroupEgress` resource keyed by `GroupId` Ref to
-  the compute SG, carrying a `DestinationSecurityGroupId` Ref/GetAtt to the peer
-  SG's logical id. The assertion, per compute SG: gather both shapes, resolve each
+  synthesized template):** with `allow_all_outbound=False`, CDK renders **every**
+  egress rule as a **standalone** `AWS::EC2::SecurityGroupEgress` resource keyed by
+  `GroupId` Ref to the compute SG — the SG-to-SG rules carry a
+  `DestinationSecurityGroupId` Ref/GetAtt to the peer SG's logical id, and the S3
+  rule carries `DestinationPrefixListId: {Ref: S3PrefixListId}` (the SG's inline
+  `SecurityGroupEgress` array is absent). The assertion, per compute SG: gather
+  both the standalone resources and any inline egress (robust to either shape),
+  resolve each
   `DestinationSecurityGroupId` Ref to its peer logical id and **classify** it
   against the known peer set (the Neptune SG, the OpenSearch SG, and the five
   named interface-endpoint SGs — matched by the endpoint name in the logical id),
@@ -123,12 +125,13 @@ before proceeding; *Never do* is a hard rule, even under time pressure.
 - [x] **AC2b** The `S3PrefixListId` `CfnParameter` (the one parameter-derived
   egress target the closed-egress posture rests on) carries
   `allowed_pattern=r"^pl-[0-9a-f]+$"` so a CIDR / free-form / over-broad value is
-  rejected at the CloudFormation boundary, and `apps/infra/scripts/deploy.sh`
-  resolves it per-region from `describe-managed-prefix-lists` filtered to the
-  AWS-managed `com.amazonaws.<region>.s3` list (the module default
-  `pl-63a5400a` is us-east-1's and is a synth/us-east-1 convenience only, not the
-  regional source of truth). Goal-checked: the param has the pattern; `deploy.sh`
-  passes `S3PrefixListId`.
+  rejected at the CloudFormation boundary. The parameter carries **no default**
+  (the id is region-specific, so a region-wrong default would be a silent footgun);
+  `apps/infra/scripts/deploy.sh` resolves it per-region from
+  `describe-managed-prefix-lists` filtered to the AWS-managed
+  `com.amazonaws.<region>.s3` list (rejecting a no-match before deploy), and a raw
+  `cdk deploy` without it fails loudly. Goal-checked: the param has the pattern and
+  no default; `deploy.sh` resolves + passes `S3PrefixListId`.
 - [x] **AC3** `pip-audit` runs in CI over the locked dependency set and the job
   fails on a known vulnerability; accepted exceptions live in a committed ignore
   file (`.pip-audit-ignore`, consumed by the CI command), each entry carrying a

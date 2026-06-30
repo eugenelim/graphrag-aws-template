@@ -54,6 +54,9 @@ jobs:
         with:
           node-version: "20"
       - name: Install cdk CLI
+        # Version-pinned (not digest-pinned, unlike the SHA-pinned actions above): accepted
+        # residual — the gate has no write token (contents: read), so a registry-tamper blast
+        # radius is read-only. Tracked under infra-secret-scan-ci.
         run: npm install -g aws-cdk@2.1128.1
       - name: Synth + cdk-nag (cdk synth)
         working-directory: apps/infra

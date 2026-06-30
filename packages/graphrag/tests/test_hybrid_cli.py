@@ -251,3 +251,29 @@ def test_function_url_unknown_persona_exits_before_network(
             ]
         )
     assert fake.calls == []  # no network call was made
+
+
+def test_function_url_default_deny_rejected_offline_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # --default-deny is an offline demonstration; on the live path it would print a fail-closed
+    # banner the server (persona-filtered) would not honor, so it is rejected before any call.
+    _fake_creds(monkeypatch)
+    fake = _FakeHttp()
+    monkeypatch.setattr(cli, "_make_http_client", lambda: fake)
+    with pytest.raises(SystemExit, match="offline demonstration"):
+        cli.main(
+            [
+                "hybrid-query",
+                "--community",
+                COMMUNITY,
+                "--enhancements",
+                ENHANCEMENTS,
+                "--function-url",
+                "https://abc123.lambda-url.us-east-1.on.aws/",
+                "--q",
+                "x",
+                "--default-deny",
+            ]
+        )
+    assert fake.calls == []  # no network call was made

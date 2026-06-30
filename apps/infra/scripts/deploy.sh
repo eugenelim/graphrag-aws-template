@@ -40,7 +40,13 @@ if [ -z "${S3_PREFIX_LIST_ID:-}" ]; then
     --filters "Name=prefix-list-name,Values=com.amazonaws.${CDK_DEFAULT_REGION}.s3" \
     --query 'PrefixLists[0].PrefixListId' --output text)"
 fi
-: "${S3_PREFIX_LIST_ID:?could not resolve the S3 managed prefix list id for ${CDK_DEFAULT_REGION}}"
+# `--output text` emits the literal "None" (not empty) on a no-match, which the `:?` guard would
+# pass through to fail late at the CFN allowed_pattern; reject anything not pl-shaped here for a
+# legible, region-named error.
+case "${S3_PREFIX_LIST_ID:-}" in
+  pl-*) : ;;
+  *) echo "ERROR: could not resolve the S3 managed prefix list id for ${CDK_DEFAULT_REGION} (got: '${S3_PREFIX_LIST_ID:-}'). Set S3_PREFIX_LIST_ID explicitly." >&2; exit 1 ;;
+esac
 
 # OpenSearch needs the VPC-access service-linked role(s) pre-created, or a VPC domain
 # fails to create ("you must enable a service-linked role ... to access your VPC"). CDK

@@ -167,6 +167,20 @@ def _clearance(args: argparse.Namespace) -> Clearance | None:
         raise SystemExit(f"error: {exc}") from exc
 
 
+def _reject_live_default_deny(args: argparse.Namespace) -> None:
+    """`--default-deny` is an OFFLINE teaching demonstration. The empty ``Clearance`` it produces
+    is applied by the offline query layer, but the live Function-URL path filters server-side by
+    the ``persona`` in the request body — an empty clearance has no wire representation there, so
+    the flag would not actually filter. Reject it on the live path rather than print a fail-closed
+    banner the server would not honor (the inversion stays demonstrable offline)."""
+    if getattr(args, "default_deny", False):
+        raise SystemExit(
+            "error: --default-deny is an offline demonstration; the live --function-url path "
+            "filters server-side by --persona. Re-run without --function-url to see the "
+            "fail-closed inversion (a present --persona resolves identically either way)."
+        )
+
+
 def _print_persona(clearance: Clearance | None) -> None:
     """Print the active persona + clearance when filtering is on; nothing when it's off
     (so no-persona output stays byte-identical to the pre-slice-4 trace)."""
@@ -323,6 +337,7 @@ def _cmd_hybrid_query(args: argparse.Namespace) -> int:
         # persona client-side first (fail-closed on an unknown one, before the network
         # call), and print the same persona banner the offline verbs print so the
         # synthetic-stand-in framing is consistent across ingresses.
+        _reject_live_default_deny(args)
         clearance = _clearance(args)
         result = _function_url_query(
             args.function_url, args.q, args.region, getattr(args, "persona", None)
@@ -467,6 +482,7 @@ def _cmd_selfquery_query(args: argparse.Namespace) -> int:
     question, the vector search applies it DURING the ANN scan, and the trace is printed."""
     if getattr(args, "function_url", None):
         # Live: thin SigV4 Function-URL client, mode=selfquery (persona rides the body too).
+        _reject_live_default_deny(args)
         clearance = _clearance(args)
         result = _function_url_query(
             args.function_url, args.q, args.region, getattr(args, "persona", None), mode="selfquery"
@@ -537,6 +553,7 @@ def _cmd_parentchild_query(args: argparse.Namespace) -> int:
     larger parent document body is returned for context-complete synthesis, with the trace."""
     if getattr(args, "function_url", None):
         # Live: thin SigV4 Function-URL client, mode=parentchild (persona rides the body too).
+        _reject_live_default_deny(args)
         clearance = _clearance(args)
         result = _function_url_query(
             args.function_url,
@@ -602,6 +619,7 @@ def _cmd_global_query(args: argparse.Namespace) -> int:
     per-community summaries (MS GraphRAG global), with the clearance-gated trace."""
     if getattr(args, "function_url", None):
         # Live: thin SigV4 Function-URL client, mode=global (persona rides the body).
+        _reject_live_default_deny(args)
         clearance = _clearance(args)
         result = _function_url_query(
             args.function_url, args.q, args.region, getattr(args, "persona", None), mode="global"
@@ -863,9 +881,10 @@ def _add_persona_arg(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--default-deny",
         action="store_true",
-        help="opt-in fail-CLOSED demo: with no --persona, see NOTHING instead of everything "
-        "(the fail-open->fail-closed inversion a real ACL needs). Still a synthetic TEACHING "
-        "stand-in, NOT real authorization. A present --persona resolves the same either way.",
+        help="opt-in fail-CLOSED demo (OFFLINE retrieval path): with no --persona, see NOTHING "
+        "instead of everything (the fail-open->fail-closed inversion a real ACL needs). Still a "
+        "synthetic TEACHING stand-in, NOT real authorization. A present --persona resolves the "
+        "same either way; rejected on the live --function-url path (server filters by --persona).",
     )
 
 
