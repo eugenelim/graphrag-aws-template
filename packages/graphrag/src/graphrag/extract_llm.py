@@ -262,8 +262,8 @@ class RuleTripleExtractor:
 _EXTRACT_SYSTEM_PROMPT = (
     "You extract relationship triples from Kubernetes SIG and KEP documents for a GraphRAG "
     "demo. You are given a fixed extraction schema and one document's prose. Return ONLY a JSON "
-    "array of objects of the form {\"subject_id\": \"<id>\", \"predicate\": \"<PREDICATE>\", "
-    "\"object_id\": \"<id>\", \"span\": \"<the exact sentence the triple came from>\"}. "
+    'array of objects of the form {"subject_id": "<id>", "predicate": "<PREDICATE>", '
+    '"object_id": "<id>", "span": "<the exact sentence the triple came from>"}. '
     "Emit a triple ONLY when the prose explicitly states the relationship, the predicate is one "
     "of the schema predicates, and BOTH endpoints are entities already named in the prose — "
     "never invent an entity. If the prose states no in-schema relationship, return []. "

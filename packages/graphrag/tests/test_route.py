@@ -68,9 +68,7 @@ def test_global_rows_are_anchor_free_by_construction() -> None:
 
 def test_anchor_beats_cue_regression() -> None:
     """The dominant-misroute row stays `hybrid` (entity anchor beats the corpus cue) — AC2."""
-    decision = RuleQueryRouter().route(
-        "what are the common themes across the KEPs @thockin owns"
-    )
+    decision = RuleQueryRouter().route("what are the common themes across the KEPs @thockin owns")
     assert decision.engine == ENGINE_HYBRID
     assert decision.reason == REASON_ANCHOR_BEATS_CUE
 

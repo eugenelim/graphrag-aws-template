@@ -216,4 +216,3 @@ def test_extract_schema_guided_trace_unchanged_for_multi_candidate_doc() -> None
     # Entries follow input order: accepted (the COLLABORATES_WITH) then off-schema-rejected.
     assert [e.verdict for e in result.entries] == ["accepted", "off-schema-rejected"]
     assert result.render().index("ok") < result.render().index("off")
-

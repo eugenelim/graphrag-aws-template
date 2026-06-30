@@ -110,14 +110,24 @@ def test_hit_makes_zero_embed_and_zero_extract_calls() -> None:
     artifacts = MemoryArtifactStore()
     doc = _doc("sig-network", "SIG Network does routing.")
     materialize_silver(
-        doc, artifacts, _SpyEmbedder(), content_hash="cafe00",
-        embedder_fp=EMB_FP, extraction_fp=EXT_FP, extractor=_SpyExtractor(),
+        doc,
+        artifacts,
+        _SpyEmbedder(),
+        content_hash="cafe00",
+        embedder_fp=EMB_FP,
+        extraction_fp=EXT_FP,
+        extractor=_SpyExtractor(),
     )
     # Second materialize at the same hash+fps is a pure hit.
     emb, ext = _SpyEmbedder(), _SpyExtractor()
     art = materialize_silver(
-        doc, artifacts, emb, content_hash="cafe00",
-        embedder_fp=EMB_FP, extraction_fp=EXT_FP, extractor=ext,
+        doc,
+        artifacts,
+        emb,
+        content_hash="cafe00",
+        embedder_fp=EMB_FP,
+        extraction_fp=EXT_FP,
+        extractor=ext,
     )
     assert emb.embed_calls == 0 and ext.extract_calls == 0
     assert art.chunks and art.candidates  # served from cache
@@ -134,14 +144,24 @@ def test_embedder_fp_bump_invalidates_only_chunks() -> None:
     ]
     for d, h in docs:  # warm both at EMB_FP/EXT_FP
         materialize_silver(
-            d, artifacts, _SpyEmbedder(), content_hash=h,
-            embedder_fp=EMB_FP, extraction_fp=EXT_FP, extractor=_SpyExtractor(),
+            d,
+            artifacts,
+            _SpyEmbedder(),
+            content_hash=h,
+            embedder_fp=EMB_FP,
+            extraction_fp=EXT_FP,
+            extractor=_SpyExtractor(),
         )
     emb, ext = _SpyEmbedder(), _SpyExtractor()
     for d, h in docs:  # bump ONLY the embedder fp
         materialize_silver(
-            d, artifacts, emb, content_hash=h,
-            embedder_fp="ffff9999", extraction_fp=EXT_FP, extractor=ext,
+            d,
+            artifacts,
+            emb,
+            content_hash=h,
+            embedder_fp="ffff9999",
+            extraction_fp=EXT_FP,
+            extractor=ext,
         )
     assert emb.embed_calls == len(docs)  # every doc's chunks recomputed
     assert ext.extract_calls == 0  # candidates stayed hits (extraction fp unchanged)
@@ -151,13 +171,23 @@ def test_schema_fp_bump_invalidates_only_candidates() -> None:
     artifacts = MemoryArtifactStore()
     doc = _doc("sig-network", "Network prose.")
     materialize_silver(
-        doc, artifacts, _SpyEmbedder(), content_hash="f1",
-        embedder_fp=EMB_FP, extraction_fp=EXT_FP, extractor=_SpyExtractor(),
+        doc,
+        artifacts,
+        _SpyEmbedder(),
+        content_hash="f1",
+        embedder_fp=EMB_FP,
+        extraction_fp=EXT_FP,
+        extractor=_SpyExtractor(),
     )
     emb, ext = _SpyEmbedder(), _SpyExtractor()
     materialize_silver(
-        doc, artifacts, emb, content_hash="f1",
-        embedder_fp=EMB_FP, extraction_fp="dddd8888", extractor=ext,
+        doc,
+        artifacts,
+        emb,
+        content_hash="f1",
+        embedder_fp=EMB_FP,
+        extraction_fp="dddd8888",
+        extractor=ext,
     )
     assert emb.embed_calls == 0  # chunks stayed a hit (embedder fp unchanged)
     assert ext.extract_calls == 1  # candidates recomputed
@@ -166,15 +196,25 @@ def test_schema_fp_bump_invalidates_only_candidates() -> None:
 def test_moved_doc_same_hash_and_fp_is_a_hit() -> None:
     artifacts = MemoryArtifactStore()
     materialize_silver(
-        _doc("sig-network", "prose"), artifacts, _SpyEmbedder(), content_hash="abcabc",
-        embedder_fp=EMB_FP, extraction_fp=EXT_FP, extractor=_SpyExtractor(),
+        _doc("sig-network", "prose"),
+        artifacts,
+        _SpyEmbedder(),
+        content_hash="abcabc",
+        embedder_fp=EMB_FP,
+        extraction_fp=EXT_FP,
+        extractor=_SpyExtractor(),
     )
     # Same content_hash (a move keeps the hash), new path/doc — still a hit because the key is
     # content+config-addressed, not path-addressed.
     emb, ext = _SpyEmbedder(), _SpyExtractor()
     materialize_silver(
-        _doc("sig-network-renamed", "prose"), artifacts, emb, content_hash="abcabc",
-        embedder_fp=EMB_FP, extraction_fp=EXT_FP, extractor=ext,
+        _doc("sig-network-renamed", "prose"),
+        artifacts,
+        emb,
+        content_hash="abcabc",
+        embedder_fp=EMB_FP,
+        extraction_fp=EXT_FP,
+        extractor=ext,
     )
     assert emb.embed_calls == 0 and ext.extract_calls == 0
 
@@ -184,22 +224,44 @@ def test_content_only_change_recomputes_only_the_changed_doc() -> None:
     a, b = _doc("sig-network", "Network prose."), _doc("sig-node", "Node prose.")
     for d, h in ((a, "aa"), (b, "bb")):
         materialize_silver(
-            d, artifacts, _SpyEmbedder(), content_hash=h,
-            embedder_fp=EMB_FP, extraction_fp=EXT_FP, extractor=_SpyExtractor(),
+            d,
+            artifacts,
+            _SpyEmbedder(),
+            content_hash=h,
+            embedder_fp=EMB_FP,
+            extraction_fp=EXT_FP,
+            extractor=_SpyExtractor(),
         )
     emb, ext = _SpyEmbedder(), _SpyExtractor()
     # 'a' changed (new content_hash); 'b' unchanged (same hash).
-    materialize_silver(a, artifacts, emb, content_hash="aa99",
-                       embedder_fp=EMB_FP, extraction_fp=EXT_FP, extractor=ext)
-    materialize_silver(b, artifacts, emb, content_hash="bb",
-                       embedder_fp=EMB_FP, extraction_fp=EXT_FP, extractor=ext)
+    materialize_silver(
+        a,
+        artifacts,
+        emb,
+        content_hash="aa99",
+        embedder_fp=EMB_FP,
+        extraction_fp=EXT_FP,
+        extractor=ext,
+    )
+    materialize_silver(
+        b,
+        artifacts,
+        emb,
+        content_hash="bb",
+        embedder_fp=EMB_FP,
+        extraction_fp=EXT_FP,
+        extractor=ext,
+    )
     assert emb.embed_calls == 1 and ext.extract_calls == 1  # only the changed doc recomputed
 
 
 def test_delta_run_without_extractor_caches_chunks_only() -> None:
     artifacts = MemoryArtifactStore()
     art = materialize_silver(
-        _doc("sig-network", "prose"), artifacts, _SpyEmbedder(), content_hash="f1",
+        _doc("sig-network", "prose"),
+        artifacts,
+        _SpyEmbedder(),
+        content_hash="f1",
         embedder_fp=EMB_FP,  # no extractor / extraction_fp → schema-guided is full/rebuild-only
     )
     assert art.candidates == []
@@ -213,8 +275,11 @@ def test_delta_run_without_extractor_caches_chunks_only() -> None:
 def test_chunks_serialized_round_trip_is_exact() -> None:
     artifacts = MemoryArtifactStore()
     art = materialize_silver(
-        _doc("sig-network", "Network prose with floats."), artifacts, HashEmbedder(),
-        content_hash="f1", embedder_fp=EMB_FP,
+        _doc("sig-network", "Network prose with floats."),
+        artifacts,
+        HashEmbedder(),
+        content_hash="f1",
+        embedder_fp=EMB_FP,
     )
     # Round-trip through the SERIALIZED text (not the in-memory dict): provenance + float vectors.
     assert chunks_from_json(chunks_to_json(art.chunks)) == art.chunks
@@ -250,7 +315,10 @@ def test_doc_id_with_traversal_cannot_alter_the_key() -> None:
     # A poisoned doc_id never reaches the key — the key is built from the server-computed hash only.
     artifacts = MemoryArtifactStore()
     evil = ParsedDoc(
-        COMMUNITY, "../../etc/passwd", "sig_readme", payload={"slug": "sig-network"},
+        COMMUNITY,
+        "../../etc/passwd",
+        "sig_readme",
+        payload={"slug": "sig-network"},
         markdown=ParsedMarkdown(front_matter={}, headings=[], body="prose"),
     )
     materialize_silver(evil, artifacts, HashEmbedder(), content_hash="5afe", embedder_fp=EMB_FP)

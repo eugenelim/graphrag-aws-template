@@ -29,9 +29,7 @@ class MemoryCommunityStore(CommunityStore):
         """The community an entity belongs to (offline trace affordance; not on the ABC)."""
         return self._entity_community.get(entity_id)
 
-    def all_communities(
-        self, *, allowed_labels: frozenset[str] | None = None
-    ) -> list[Community]:
+    def all_communities(self, *, allowed_labels: frozenset[str] | None = None) -> list[Community]:
         out = [
             c
             for c in self._items.values()

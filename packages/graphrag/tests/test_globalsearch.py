@@ -89,8 +89,12 @@ def test_citations_composed_in_global_query_no_synthetic_provenance() -> None:
     # surviving community ids + their member docs; the dropped c3 contributes neither
     assert "community:community-3" not in result.citations
     assert "src/d.md" not in result.citations
-    assert {"community:community-0", "community:community-1", "community:community-2",
-            "community:community-4"} <= set(result.citations)
+    assert {
+        "community:community-0",
+        "community:community-1",
+        "community:community-2",
+        "community:community-4",
+    } <= set(result.citations)
     assert {"src/a.md", "src/b.md", "src/c.md", "src/e.md"} <= set(result.citations)
     # citation docs are a subset of the considered communities' member docs (never exceed gate)
     considered_docs = {dp for c in result.communities_considered for dp in c.doc_paths}
