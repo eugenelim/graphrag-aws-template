@@ -19,6 +19,11 @@ dependencies = [
 infra = [
     "aws-cdk-lib>=2.140",
     "constructs>=10.3",
+    # cdk-nag: AwsSolutionsChecks applied as a synth-time Aspect (app.py) — a HARD gate, an
+    # unsuppressed finding fails `cdk synth` / CI (security-hardening-followups AC4). Every
+    # NagSuppressions entry carries a reason citing its sign-off. Pinned to the 2.x line: 3.x is
+    # ABI-incompatible with aws-cdk-lib 2.x ("aspect.visit is not a function" at synth).
+    "cdk-nag>=2.35,<3",
 ]
 # Ingest-only: community detection (Louvain) runs in the Fargate ingest task, never the
 # query Lambda (ADR-0005). networkx is imported lazily by graphrag.community_detect and is

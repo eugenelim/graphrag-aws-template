@@ -164,6 +164,145 @@ _NEPTUNE_ENGINE_VERSION = "1.3.5.0"  # latest neptune1.3.x; matches _NEPTUNE_PAR
 _NEPTUNE_PARAM_GROUP_FAMILY = "neptune1.3"
 
 
+def add_nag_suppressions(stack: Stack) -> None:
+    """Reason-signed cdk-nag suppressions for the accepted residuals of this EPHEMERAL,
+    single-node, teardown-first teaching stack (security-hardening-followups AC4). Applied by
+    ``app.py`` alongside the ``AwsSolutionsChecks`` aspect (and by the durable nag test). Each
+    entry is a posture exception authorized by the spec/ADRs/charter, **not** a default — and
+    the bespoke IAM assertions in ``test_stack.py`` independently guard against a genuinely
+    over-broad grant, so the IAM4/IAM5 suppressions never become a blanket hole. cdk-nag is
+    imported lazily so a non-nag synth/test path never needs it on the import graph."""
+    from cdk_nag import NagSuppressions
+
+    NagSuppressions.add_stack_suppressions(
+        stack,
+        [
+            {
+                "id": "AwsSolutions-IAM5",
+                "reason": (
+                    "Resource-PATH wildcards only — es domain/<name>/* sub-resources, the "
+                    "neptune-db cluster-resource-id ARN, and the S3 silver/* + key-scoped "
+                    "PutObject prefixes — never Action:* or a bare Resource:* (except "
+                    "ecr:GetAuthorizationToken, which grants nothing data-plane). The grants are "
+                    "minimal-necessary and independently guarded by test_stack.py's "
+                    "no-wildcard-resource + read-only-Neptune (ADR-0004) assertions. Accepted "
+                    "residual, sign-off: security-hardening-followups spec."
+                ),
+            },
+            {
+                "id": "AwsSolutions-IAM4",
+                "reason": (
+                    "The one AWS-managed policy is AWSLambdaVPCAccessExecutionRole — AWS's "
+                    "recommended grant for VPC-Lambda ENI lifecycle; an inline copy adds no "
+                    "security and risks drift. Sign-off: security-hardening-followups spec."
+                ),
+            },
+            {
+                "id": "AwsSolutions-L1",
+                "reason": (
+                    "Lambdas pin PYTHON_3_12, a current AWS-supported runtime; the teardown-first "
+                    "demo pins a known runtime rather than auto-chasing latest. Runtime currency "
+                    "rides the dependency review, not this egress slice. Sign-off: "
+                    "security-hardening-followups spec."
+                ),
+            },
+            {
+                "id": "AwsSolutions-VPC7",
+                "reason": (
+                    "No VPC flow log: the VPC is no-NAT + PRIVATE_ISOLATED (ADR-0002) with no "
+                    "internet path; a flow log is a standing log-sink cost the teardown-first "
+                    "posture omits (charter principle 4). Sign-off: security-hardening-followups."
+                ),
+            },
+            {
+                "id": "AwsSolutions-S1",
+                "reason": (
+                    "No S3 server access log: the corpus bucket is private (BlockPublicAccess "
+                    "ALL), encrypted, TLS-enforced and auto-emptied on destroy; access logging "
+                    "needs a second standing bucket the teardown-first demo omits (charter "
+                    "principle 4). Sign-off: security-hardening-followups spec."
+                ),
+            },
+            {
+                "id": "AwsSolutions-ECS2",
+                "reason": (
+                    "The ingest task's env vars are NON-secret config (Neptune/OpenSearch "
+                    "endpoints, bucket name, a default-off SCHEMA_EXTRACTION flag) — no credential "
+                    "is passed as an env var; creds come from the task role. Sign-off: "
+                    "security-hardening-followups spec."
+                ),
+            },
+            {
+                "id": "AwsSolutions-ECS4",
+                "reason": (
+                    "Container Insights disabled: a standing CloudWatch cost the ephemeral "
+                    "teardown-first demo omits (charter principle 4). Sign-off: "
+                    "security-hardening-followups spec."
+                ),
+            },
+            {
+                "id": "AwsSolutions-N2",
+                "reason": (
+                    "Neptune auto-minor-version-upgrade off: the engine version is PINNED to "
+                    "match the cluster parameter-group family (ADR-0004 read-cost backstop); an "
+                    "auto-upgrade would drift the pinned pair on an ephemeral cluster. Sign-off: "
+                    "security-hardening-followups spec."
+                ),
+            },
+            {
+                "id": "AwsSolutions-N3",
+                "reason": (
+                    "Neptune backup retention minimal: the cluster is ephemeral and removed by "
+                    "cdk destroy (charter principle 4); there is no data to retain across "
+                    "teardown. Sign-off: security-hardening-followups spec."
+                ),
+            },
+            {
+                "id": "AwsSolutions-OS3",
+                "reason": (
+                    "OpenSearch access is NOT IP-allowlisted because the domain is VPC-resident "
+                    "(no public endpoint) and gated by an IAM resource policy scoped to the named "
+                    "task/probe/query roles — a stronger control than IP allowlisting (ADR-0002). "
+                    "Sign-off: security-hardening-followups spec."
+                ),
+            },
+            {
+                "id": "AwsSolutions-OS4",
+                "reason": (
+                    "No dedicated master nodes: single-data-node, min-cost, VPC-private demo "
+                    "domain (ADR-0002 single-node posture). Sign-off: "
+                    "security-hardening-followups spec."
+                ),
+            },
+            {
+                "id": "AwsSolutions-OS7",
+                "reason": (
+                    "Zone awareness disabled: single-node domain by design (ADR-0002); zone "
+                    "awareness needs >=2 nodes. Sign-off: security-hardening-followups spec."
+                ),
+            },
+            {
+                "id": "AwsSolutions-OS9",
+                "reason": (
+                    "Slow logs not published: a standing CloudWatch Logs cost the ephemeral "
+                    "teardown-first demo omits (charter principle 4). Sign-off: "
+                    "security-hardening-followups spec."
+                ),
+            },
+            {
+                "id": "AwsSolutions-EC23",
+                "reason": (
+                    "The VPC interface-endpoint SGs accept 443 from the VPC CIDR (CDK's default "
+                    "for an interface endpoint), an intrinsic-valued rule EC23 cannot statically "
+                    "evaluate (it raises CdkNagValidationFailure). It is NOT a 0.0.0.0/0 rule, "
+                    "and test_stack.py's no-public-ingress assertion is the independent guard "
+                    "against a literal public CIDR. Sign-off: security-hardening-followups spec."
+                ),
+            },
+        ],
+    )
+
+
 class GraphragStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs: Any) -> None:
         super().__init__(scope, construct_id, **kwargs)
