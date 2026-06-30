@@ -69,7 +69,7 @@ from .vector_eval import (
     load_frozen,
     load_query_set,
 )
-from .visibility import PERSONAS, Clearance, resolve_clearance
+from .visibility import PERSONAS, Clearance, resolve_clearance_or_default_deny
 
 # Default region for SigV4 signing when a Function URL doesn't encode one.
 _DEFAULT_REGION = "us-east-1"
@@ -150,16 +150,19 @@ def _synthesizer(args: argparse.Namespace) -> Synthesizer:
 
 
 def _clearance(args: argparse.Namespace) -> Clearance | None:
-    """Resolve ``--persona`` to a Clearance, or ``None`` (unrestricted) when absent.
+    """Resolve ``--persona`` (and the opt-in ``--default-deny``) to a Clearance, or ``None``
+    (unrestricted) when absent and default-deny is off.
 
-    An unknown persona exits non-zero with a clear message (fail-closed — never a silent
-    fall-through to unrestricted). The labels are a synthetic stand-in for ACLs, not real
-    authz (charter principle 5)."""
-    persona = getattr(args, "persona", None)
-    if not persona:
-        return None
+    With ``--default-deny`` and no ``--persona``, resolution returns the empty ``Clearance``
+    (sees nothing) instead of ``None`` — the fail-open→fail-closed inversion, demonstrable
+    on the offline retrieval path. An unknown persona still exits non-zero (fail-closed — never
+    a silent fall-through). The labels are a synthetic stand-in for ACLs, not real authz
+    (charter principle 5)."""
     try:
-        return resolve_clearance(persona)
+        return resolve_clearance_or_default_deny(
+            getattr(args, "persona", None),
+            default_deny=getattr(args, "default_deny", False),
+        )
     except ValueError as exc:
         raise SystemExit(f"error: {exc}") from exc
 
@@ -849,12 +852,20 @@ def _cmd_resolve_eval(args: argparse.Namespace) -> int:
 
 
 def _add_persona_arg(p: argparse.ArgumentParser) -> None:
-    """Add the slice-4 ``--persona`` filter (a synthetic ACL stand-in, not real authz)."""
+    """Add the slice-4 ``--persona`` filter + the opt-in ``--default-deny`` inversion (both a
+    synthetic ACL stand-in, not real authz)."""
     p.add_argument(
         "--persona",
         help="synthetic visibility persona to permission-filter retrieval by — a TEACHING "
         f"stand-in for ACLs, not real authz. One of: {', '.join(sorted(PERSONAS))}. "
         "Omit for unrestricted (slice-1-3 behavior).",
+    )
+    p.add_argument(
+        "--default-deny",
+        action="store_true",
+        help="opt-in fail-CLOSED demo: with no --persona, see NOTHING instead of everything "
+        "(the fail-open->fail-closed inversion a real ACL needs). Still a synthetic TEACHING "
+        "stand-in, NOT real authorization. A present --persona resolves the same either way.",
     )
 
 
