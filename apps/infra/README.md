@@ -40,8 +40,11 @@ ladder live in
 ```bash
 cd apps/infra
 python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
-npm install -g aws-cdk      # the cdk CLI (Node)
+npm install -g aws-cdk      # the cdk CLI (Node 20/22/24 — the toolchain-supported majors)
 # AWS credentials reachable (env vars, SSO, or a profile). Region defaults to us-east-1.
+# Note: the deploy/destroy scripts auto-prefer a supported Node (nvm or `node@NN`) over an
+# unsupported one — on an untested Node major a long teardown can drop the CDK stack-monitor
+# connection (`read ENOTCONN`) mid-delete (CloudFormation still completes server-side).
 ```
 
 ### Configuration: parameters vs. logic
