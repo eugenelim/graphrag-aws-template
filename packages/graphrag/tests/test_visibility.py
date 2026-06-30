@@ -16,12 +16,14 @@ from typing import Any
 import pytest
 
 from graphrag.visibility import (
+    DEFAULT_DENY_PERSONA,
     PERSONAS,
     Clearance,
     Visibility,
     compose,
     rank,
     resolve_clearance,
+    resolve_clearance_or_default_deny,
 )
 
 
@@ -81,6 +83,54 @@ def test_empty_clearance_sees_nothing_fail_closed() -> None:
     locked = Clearance(persona="locked", allowed=frozenset())
     assert not locked.allows("public")
     assert not locked.allows("restricted")
+
+
+# --- security-hardening-followups: opt-in default-deny clearance (AC7) ----------------------
+
+
+def test_default_deny_no_principal_sees_nothing() -> None:
+    # The fail-open->fail-closed inversion: with default-deny on and no principal (None or ""),
+    # resolution returns the EMPTY Clearance (sees nothing), not None (unrestricted). The persona
+    # field is required, so the sentinel value is pinned.
+    for absent in (None, ""):
+        c = resolve_clearance_or_default_deny(absent, default_deny=True)
+        assert c == Clearance(persona=DEFAULT_DENY_PERSONA, allowed=frozenset())
+        for tier in (v.value for v in Visibility):
+            assert not c.allows(tier)
+
+
+def test_default_deny_unknown_persona_still_raises() -> None:
+    # The existing fail-closed raise is preserved under default-deny — never a silent deny.
+    with pytest.raises(ValueError, match="unknown persona"):
+        resolve_clearance_or_default_deny("root", default_deny=True)
+
+
+def test_default_deny_known_persona_is_normal_clearance() -> None:
+    # A present, known persona resolves to its normal clearance regardless of the flag.
+    assert resolve_clearance_or_default_deny("member", default_deny=True) == resolve_clearance(
+        "member"
+    )
+
+
+def test_default_deny_off_is_byte_identical_to_today() -> None:
+    # Flag off: no principal => None (unrestricted, today's fail-open default); a present persona
+    # resolves exactly as resolve_clearance — every shipped mode is byte-unchanged.
+    assert resolve_clearance_or_default_deny(None, default_deny=False) is None
+    assert resolve_clearance_or_default_deny("", default_deny=False) is None
+    assert resolve_clearance_or_default_deny("maintainer", default_deny=False) == resolve_clearance(
+        "maintainer"
+    )
+
+
+def test_default_deny_precedence_present_persona_ignores_flag() -> None:
+    # The flag governs ONLY the absent-principal cell: a present persona resolves the same with
+    # the flag on or off (unknown => raise either way; known => same clearance either way).
+    for flag in (True, False):
+        assert resolve_clearance_or_default_deny(
+            "public-reader", default_deny=flag
+        ) == resolve_clearance("public-reader")
+        with pytest.raises(ValueError):
+            resolve_clearance_or_default_deny("nope", default_deny=flag)
 
 
 def test_visibility_module_imports_no_yaml() -> None:
