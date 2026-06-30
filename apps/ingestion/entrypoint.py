@@ -446,8 +446,14 @@ def run(
             # Schema-guided LLM extraction (ADR-0006) — additive, default-off; after the graph
             # write so it grounds against the resolved entities. No-op unless SCHEMA_EXTRACTION.
             _schema_extraction_writeback(
-                env, store, community, enhancements,
-                s3_client=s3_client, bucket=bucket, prefix=prefix, extractor=extractor,
+                env,
+                store,
+                community,
+                enhancements,
+                s3_client=s3_client,
+                bucket=bucket,
+                prefix=prefix,
+                extractor=extractor,
             )
             new_manifest = build_manifest(community, enhancements)
         elif mode == "rebuild":
@@ -456,8 +462,14 @@ def run(
             # Rebuild recomputes communities too (a fresh partition over the rebuilt graph).
             _community_writeback(env, store, community_store, synthesizer)
             _schema_extraction_writeback(
-                env, store, community, enhancements,
-                s3_client=s3_client, bucket=bucket, prefix=prefix, extractor=extractor,
+                env,
+                store,
+                community,
+                enhancements,
+                s3_client=s3_client,
+                bucket=bucket,
+                prefix=prefix,
+                extractor=extractor,
             )
             new_manifest = report.new_manifest
         elif mode == "delta":
@@ -474,8 +486,13 @@ def run(
                 )
             # Delta passes no extractor: schema-guided extraction is full/rebuild-only (ADR-0006).
             report, new_state = ingest_staged(
-                prev_state, community, enhancements, store, vstore,
-                artifacts=art_store, embedder=emb,
+                prev_state,
+                community,
+                enhancements,
+                store,
+                vstore,
+                artifacts=art_store,
+                embedder=emb,
             )
             print(report.render())
             # Written last, only after both stores are updated: a crash leaves the old state, so the

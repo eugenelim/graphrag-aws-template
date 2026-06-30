@@ -301,9 +301,7 @@ class CountingSynth:
     def model_id(self) -> str:
         return "counting-offline"
 
-    def synthesize(
-        self, question: str, context_chunks: list[Any], graph_facts: list[Any]
-    ) -> Any:
+    def synthesize(self, question: str, context_chunks: list[Any], graph_facts: list[Any]) -> Any:
         from graphrag.synthesize import SynthesisResult
 
         self.calls += 1

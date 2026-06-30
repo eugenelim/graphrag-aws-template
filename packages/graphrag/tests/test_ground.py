@@ -72,9 +72,7 @@ def test_person_endpoint_resolves_via_the_alias_table() -> None:
     g.upsert_node(Node("person:thockin", EntityKind.PERSON))
     g.upsert_node(Node("person:bowei", EntityKind.PERSON))
     cand = _cand("Tim Hockin", "COLLABORATES_WITH", "bowei")
-    grounded = ground_triple(
-        cand, g, schema=person_schema, aliases={"tim hockin": "thockin"}
-    )
+    grounded = ground_triple(cand, g, schema=person_schema, aliases={"tim hockin": "thockin"})
     assert isinstance(grounded, GroundedTriple)
     assert grounded.src_id == "person:thockin" and grounded.dst_id == "person:bowei"
 

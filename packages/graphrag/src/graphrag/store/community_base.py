@@ -64,9 +64,7 @@ class CommunityStore(ABC):
         per-entity mirror, written from the same one detection pass so the two cannot disagree."""
 
     @abstractmethod
-    def all_communities(
-        self, *, allowed_labels: frozenset[str] | None = None
-    ) -> list[Community]:
+    def all_communities(self, *, allowed_labels: frozenset[str] | None = None) -> list[Community]:
         """Every stored community whose ``tier`` is within ``allowed_labels``.
 
         The clearance gate for corpus-wide summaries (a teaching stand-in for an ACL, never

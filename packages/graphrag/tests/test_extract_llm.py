@@ -126,9 +126,12 @@ def test_bedrock_extractor_strips_code_fence() -> None:
 def test_bedrock_extractor_empty_or_garbled_yields_no_candidates() -> None:
     doc = _sig_doc("some prose")
     assert BedrockTripleExtractor(client=_FakeBedrock("")).extract(doc, EXTRACTION_SCHEMA) == []
-    assert BedrockTripleExtractor(client=_FakeBedrock("not json at all")).extract(
-        doc, EXTRACTION_SCHEMA
-    ) == []
+    assert (
+        BedrockTripleExtractor(client=_FakeBedrock("not json at all")).extract(
+            doc, EXTRACTION_SCHEMA
+        )
+        == []
+    )
 
 
 def test_bedrock_extractor_caps_candidates_per_doc() -> None:
