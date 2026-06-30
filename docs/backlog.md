@@ -131,9 +131,10 @@ in-scope control — a fail-closed `tools/hooks/pre-pr.py` guard over exactly th
 `config*.env` files it introduces (rejects email-shaped `BUDGET_EMAIL=` and
 `arn:aws:iam::<digits>:role/` literals), with a pinned unit test — but the repo has **no CI
 at all**, so a repo-wide scanner and a `shellcheck` gate on every later change are a separate
-infrastructure concern. Blocked on the repo gaining a CI surface (`.github/workflows` or a
-committed pre-commit config). Unblocked by adding a `gitleaks`/`detect-secrets` job + a
-`shellcheck` job that runs on push/PR.
+infrastructure concern. **No longer blocked on the CI surface:** the
+`security-hardening-followups` spec (AC6) adds `.github/workflows/ci.yml`. Remaining open work
+is just adding a `gitleaks`/`detect-secrets` job + a `shellcheck` job to that workflow —
+deliberately kept out of `security-hardening-followups`' scope so the two specs don't collide.
 
 ## incremental-delta-reingest
 
@@ -238,3 +239,18 @@ full path (`prev_state=None` → every doc in `scratch`). When this item wires a
 real **delta**, grounding must run against the **store-merged** graph (store nodes ∪ scratch), or a
 candidate whose endpoint is in an unchanged doc will be wrongly dropped (`ingest.py` `ingest_staged`,
 the `if extractor is not None` block).
+
+## security-hardening-followups
+
+### security-hardening-followups-live-eval
+
+**AC9 (deferred only if live deploy is unavailable).** Live deployed-config evaluation of
+the tightened compute-SG egress: deploy on a clean account, confirm live ingest + hybrid
+Function-URL query + both smoke probes succeed under `allow_all_outbound=False` + explicit
+per-SG egress (no silent Bedrock/Neptune/OpenSearch/endpoint block — the documented hang
+regression), capture the deployed SG-egress + IAM posture into
+`docs/architecture/security.md`, then `cdk destroy` to zero billable resources (Budgets held
+at 150). Live deploy is expected to be available in this environment, so this **runs** with
+the spec rather than deferring; this anchor exists so AC9 has a register home if a live run
+is blocked. Unblocked by a maintainer running the documented deploy → verify → capture →
+destroy cycle and recording the result.
