@@ -127,14 +127,18 @@ tasks, not most — the work-loop skill covers when it's the right tool.
 
 ## Commands you'll need
 
-<!-- Keep this short. Detailed command reference goes in docs/. -->
+<!-- Keep this short. Detailed command reference goes in docs/. These mirror the CI gate
+     (.github/workflows/ci.yml) — a green local run of all of them is the merge gate. -->
 
 ```bash
-<install command>           # one-time setup
-<test command>              # run tests for the package you're in
-<test all command>          # run all tests (slow — usually CI's job)
-<lint command>              # lint + format check
-<build command>             # produce build artifacts
+pip install -e ".[dev,infra]"          # one-time setup (project + dev + infra extras)
+pytest packages/graphrag/tests         # run tests for the package you're in
+pytest                                 # run all tests (slow — usually CI's job)
+ruff check packages apps               # lint
+ruff format --check packages apps      # format check (ruff/mypy pinned in pyproject [dev])
+mypy                                   # typecheck
+python -m pip_audit                    # supply-chain vuln scan (honors .pip-audit-ignore)
+cd apps/infra && cdk synth --quiet     # IaC synth + cdk-nag hard gate
 ```
 
 ## Code style

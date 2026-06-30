@@ -1,0 +1,14 @@
+# pip-audit suppressions (security-hardening-followups AC3).
+#
+# Format: one accepted vulnerability per non-comment line — the vuln id first, then a
+# `#`-comment carrying BOTH a one-line reason AND a review-by date (or tracking issue).
+# A suppression without an expiry rots: it silently masks the CVE after an upstream fix
+# ships. Example:
+#
+#   GHSA-xxxx-xxxx-xxxx  # transitive via <pkg>, no fixed release; review-by 2026-09-30
+#   PYSEC-2026-123       # dev-only (ruff), not shipped; tracking #123; review-by 2026-12-31
+#
+# The CI workflow feeds each id here to `pip-audit --ignore-vuln <id>`. Keep this list as
+# short as the truth allows — every entry is a posture exception, not a default.
+#
+# (empty: the dependency closure has no accepted vulnerability at baseline.)
