@@ -1,6 +1,6 @@
 # Spec: security-hardening-followups
 
-- **Status:** Draft <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Implementing <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** charter (principle 5, principle 7, principle 4; Scope "Production authorization" non-goal), ADR-0009, ADR-0002, ADR-0004, ADR-0003
@@ -94,11 +94,11 @@ before proceeding; *Never do* is a hard rule, even under time pressure.
 
 ## Acceptance Criteria
 
-- [ ] **AC1** Every in-VPC compute SG — `IngestionSg`, `SmokeSg`,
+- [x] **AC1** Every in-VPC compute SG — `IngestionSg`, `SmokeSg`,
   `VectorSmokeSg`, `QuerySg` — renders `allow_all_outbound=False`; no compute SG
   renders a `0.0.0.0/0` protocol `-1` egress rule (synth assertion in
   `test_stack.py`).
-- [ ] **AC2** Each compute SG's rendered egress **equals** (not merely contains)
+- [x] **AC2** Each compute SG's rendered egress **equals** (not merely contains)
   the exact peer/port set defined for it in the per-SG egress table in `plan.md`
   § Design decisions — Neptune `8182`, OpenSearch `443`, and the
   interface/gateway VPC endpoints `443` as that component requires, and nothing
@@ -120,7 +120,7 @@ before proceeding; *Never do* is a hard rule, even under time pressure.
   synth assertion cannot see a missing-but-needed target — that surfaces only as
   the documented silent live hang); if AC9 reveals a missing target, the table
   and the assertion are corrected together.
-- [ ] **AC2b** The `S3PrefixListId` `CfnParameter` (the one parameter-derived
+- [x] **AC2b** The `S3PrefixListId` `CfnParameter` (the one parameter-derived
   egress target the closed-egress posture rests on) carries
   `allowed_pattern=r"^pl-[0-9a-f]+$"` so a CIDR / free-form / over-broad value is
   rejected at the CloudFormation boundary, and `apps/infra/scripts/deploy.sh`
@@ -129,13 +129,13 @@ before proceeding; *Never do* is a hard rule, even under time pressure.
   `pl-63a5400a` is us-east-1's and is a synth/us-east-1 convenience only, not the
   regional source of truth). Goal-checked: the param has the pattern; `deploy.sh`
   passes `S3PrefixListId`.
-- [ ] **AC3** `pip-audit` runs in CI over the locked dependency set and the job
+- [x] **AC3** `pip-audit` runs in CI over the locked dependency set and the job
   fails on a known vulnerability; accepted exceptions live in a committed ignore
   file (`.pip-audit-ignore`, consumed by the CI command), each entry carrying a
   one-line reason **and** a review-by date or tracking issue (a suppression
   without an expiry rots — it silently masks a CVE after an upstream fix ships).
   The file may start empty-but-headered if the tree has no known vuln.
-- [ ] **AC4** `cdk-nag` runs at synth time as a **hard gate**: an unsuppressed
+- [x] **AC4** `cdk-nag` runs at synth time as a **hard gate**: an unsuppressed
   finding fails `cdk synth` / CI. Verified two ways: (a) a **durable, committed**
   synth assertion in `test_stack.py` applies `AwsSolutionsChecks` and asserts the
   stack carries **no unsuppressed `AwsSolutions-*` error annotation** — this fails
@@ -145,9 +145,9 @@ before proceeding; *Never do* is a hard rule, even under time pressure.
   removed). Every `NagSuppressions` entry carries a non-empty `reason` that cites
   its sign-off (the approving PR/issue) — the reviewed sign-off itself is the
   Ask-first boundary below.
-- [ ] **AC5** `.github/dependabot.yml` covers the `pip` and `github-actions`
+- [x] **AC5** `.github/dependabot.yml` covers the `pip` and `github-actions`
   ecosystems and validates.
-- [ ] **AC6** `.github/workflows/ci.yml` runs, on push and PR, the full gate set
+- [x] **AC6** `.github/workflows/ci.yml` runs, on push and PR, the full gate set
   with pinned commands — `ruff check packages apps` + `ruff format --check
   packages apps` (scoped to the project's own Python, matching `[tool.ruff].src`;
   `.claude/` bundled agent assets and `tools/`/`scripts/` dev tooling are
@@ -160,7 +160,7 @@ before proceeding; *Never do* is a hard rule, even under time pressure.
   requires a **one-time `ruff format` of `packages apps` under the pin**
   (pre-existing drift, ~18 files) — a declared precondition for this gate to
   exist, landed as its own labeled commit so the security diff stays legible.
-- [ ] **AC6b** The workflow hardens its own (net-new) trust surface: a top-level
+- [x] **AC6b** The workflow hardens its own (net-new) trust surface: a top-level
   least-privilege `permissions: contents: read` (elevated per-job only where a
   step demonstrably needs it); it triggers on `pull_request` (never
   `pull_request_target`, which would run untrusted-PR code with a write-scoped
@@ -170,7 +170,7 @@ before proceeding; *Never do* is a hard rule, even under time pressure.
   deferred `infra-secret-scan-ci` backlog item was blocked on; adding the
   gitleaks/`shellcheck` jobs to it stays **out of scope** here and remains that
   item's open follow-on (now unblocked).
-- [ ] **AC7** An opt-in default-deny clearance mode exists and is **observable**,
+- [x] **AC7** An opt-in default-deny clearance mode exists and is **observable**,
   not just unit-asserted, with this exact input→outcome contract (unit-tested in
   `tests/test_visibility.py`, the resolver in `visibility.py`):
   - default-deny ON, **no principal** (`None`/absent or empty string `""`) ⇒ the
@@ -192,7 +192,7 @@ before proceeding; *Never do* is a hard rule, even under time pressure.
   is **additive and opt-in**: default-deny OFF keeps `clearance=None` ⇒
   unrestricted for every shipped mode, byte-identical. The query layer is
   unchanged — an empty `Clearance` already means "sees nothing" today.
-- [ ] **AC8** The default-deny mode is documented as still a synthetic teaching
+- [x] **AC8** The default-deny mode is documented as still a synthetic teaching
   stand-in (charter principle 5), demonstrating the fail-open→fail-closed
   inversion named in `security.md` (slice-4 boundary table) — explicitly *not*
   real authz — in **all three** surfaces a reader meets it: the `visibility.py`
