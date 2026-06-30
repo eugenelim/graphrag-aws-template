@@ -1,6 +1,6 @@
 # Spec: security-hardening-followups
 
-- **Status:** Implementing <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Shipped <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** charter (principle 5, principle 7, principle 4; Scope "Production authorization" non-goal), ADR-0009, ADR-0002, ADR-0004, ADR-0003
@@ -202,7 +202,7 @@ before proceeding; *Never do* is a hard rule, even under time pressure.
   resolver + `_clearance` docstrings, `security.md`, **and the `--default-deny`
   CLI `--help` string itself** (the most likely place a copy-paster first meets
   the flag).
-- [ ] **AC9** (live) Deployed on a clean account, the tightened SGs pass live:
+- [x] **AC9** (live) Deployed on a clean account, the tightened SGs pass live:
   ingest, hybrid Function-URL query, and both smoke probes succeed with no silent
   egress block; the deployed SG-egress + IAM posture is captured into
   `security.md`; then `cdk destroy` removes every billable resource (Budgets held
