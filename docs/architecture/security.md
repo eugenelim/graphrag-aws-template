@@ -212,11 +212,11 @@ Budgets alarm with a threshold + subscriber (charter principle 4).
   + `github-actions` ecosystems. ruff `S` stays on. Remaining open follow-on
   (its own backlog item, now unblocked): a repo-wide secret scanner +
   `shellcheck` job — see `infra-secret-scan-ci`.
-- **Live IAM/SG evaluation.** Closed in code (AC1/AC2 synth assertions); the live
-  evaluation lands with the `security-hardening-followups` AC9 run — deploy →
-  ingest + hybrid Function-URL query + both smoke probes → capture the deployed
-  SG-egress/IAM posture → `cdk destroy`. See the "Live SG-egress posture (AC9)"
-  section below (filled when AC9 runs).
+- **Live IAM/SG evaluation.** **Discharged** by `security-hardening-followups`
+  AC9: the tightened egress was evaluated on a clean live deploy (both smoke
+  probes + Fargate ingest + hybrid Function-URL query all succeeded with no
+  silent egress block), the deployed SG-egress/IAM posture captured, then torn
+  down. See "Live SG-egress posture (AC9)" below.
 - **Uniform least-privilege SG *egress*.** **Discharged** by
   `security-hardening-followups` (AC1/AC2): every in-VPC compute SG —
   `IngestionSg`, `SmokeSg`, `VectorSmokeSg`, `QuerySg` — now sets
@@ -228,7 +228,30 @@ Budgets alarm with a threshold + subscriber (charter principle 4).
 
 ## Live SG-egress posture (AC9)
 
-<!-- security-hardening-followups AC9: filled by the T6 live run (deploy → ingest +
-hybrid Function-URL query + both smoke probes → capture → cdk destroy). -->
+Live evaluation of the tightened closed-egress compute SGs on a clean deploy
+(account `752989493306`, `us-east-1`, stack `GraphragSlice1`, 2026-06-30), then
+`cdk destroy`. **Result: every live path succeeded under `allow_all_outbound=False`
+— no silent egress block (the documented Bedrock-hang regression did not occur).**
 
-_Pending the AC9 live evaluation (T6)._
+| Live path | Exercises | Egress validated (no block) | Result |
+| --- | --- | --- | --- |
+| Neptune smoke Lambda | `SmokeSg` | Neptune 8182, Logs/STS 443 | `{"ok": true, …, "neighbors":[…]}` |
+| Vector smoke Lambda | `VectorSmokeSg` | OpenSearch 443, **Bedrock 443**, Logs/STS | `{"ok": true, …, "dims": 256}` (real Titan embed) |
+| Fargate ingest task | `IngestionSg` | S3 (prefix list), ECR, **Bedrock**, Neptune, OpenSearch, Logs/STS | exit 0; parsed 10 docs, 22 nodes/28 edges, 14 vector chunks, 6 parents, 3 community summaries (Bedrock Converse), 6 cross-source resolutions |
+| Hybrid Function-URL query (SigV4) | `QuerySg` | Neptune 8182, OpenSearch 443, **Bedrock 443**, Logs/STS | full result — OpenSearch seeds → 2-hop Neptune traversal → Bedrock Claude synthesis |
+
+**Deployed egress (from `describe-security-groups`), confirming AC1/AC2 live:**
+
+| Compute SG | Rendered egress (live) |
+| --- | --- |
+| `IngestionSg` | `8182`→Neptune SG; `443`→OpenSearch SG + 5 interface-endpoint SGs (Bedrock/EcrApi/EcrDocker/Logs/STS); `443`→S3 managed prefix list `pl-63a5400a` |
+| `SmokeSg` | `8182`→Neptune SG; `443`→Logs + STS endpoint SGs |
+| `VectorSmokeSg` | `443`→OpenSearch SG + Bedrock/Logs/STS endpoint SGs |
+| `QuerySg` | `8182`→Neptune SG; `443`→OpenSearch SG + Bedrock/Logs/STS endpoint SGs |
+
+**No compute SG carries a `0.0.0.0/0` egress rule** (only the AWS-managed
+interface-endpoint SGs and the unused VPC `default` SG do — endpoints do not
+initiate outbound, so this is out of the closed-egress scope). The **`QueryRole`
+Neptune grant is read-only live** — `neptune-db:connect` + `ReadDataViaQuery`,
+no Write/Delete (ADR-0004 preserved; not weakened to pass any gate). The stack was
+torn down with `destroy.sh`; Budgets held at 150.
