@@ -171,7 +171,10 @@ def test_delta_converges_to_full_rebuild(tmp_path: Path) -> None:
     for nid, an in a_nodes.items():
         bn = b_nodes[nid]
         assert (an.kind, an.doc_paths, an.sources, an.props) == (
-            bn.kind, bn.doc_paths, bn.sources, bn.props
+            bn.kind,
+            bn.doc_paths,
+            bn.sources,
+            bn.props,
         ), nid
     a_edges = {e.key(): e for e in ga.all_edges()}
     b_edges = {e.key(): e for e in gb.all_edges()}

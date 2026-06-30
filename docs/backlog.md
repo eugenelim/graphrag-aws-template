@@ -254,3 +254,18 @@ at 150). Live deploy is expected to be available in this environment, so this **
 the spec rather than deferring; this anchor exists so AC9 has a register home if a live run
 is blocked. Unblocked by a maintainer running the documented deploy → verify → capture →
 destroy cycle and recording the result.
+
+### security-hardening-followups-nag-iam-resource-scope
+
+**cdk-nag IAM5/IAM4 suppression scope (deferred hardening).** `add_nag_suppressions`
+(`apps/infra/stacks/graphrag_stack.py`) suppresses `AwsSolutions-IAM5`/`IAM4` at **stack
+level**, so a *future* over-broad grant — e.g. a new action on a path-wildcard ARN
+(`arn:…:secret/*`) — would be silently suppressed. The present grants are all legitimately
+scoped, the most dangerous case (a bare `Resource:*`) is independently caught by
+`test_stack.py`'s `test_no_iam_statement_grants_app_actions_on_wildcard_resource`, and the
+read-only-Neptune (ADR-0004) + scoped-bedrock/es/s3 assertions guard the specific grants — so
+this is a defence-in-depth gap, not a present hole. **Fix (when picked up):** narrow the IAM5/
+IAM4 suppressions to the specific role/policy constructs via
+`NagSuppressions.add_resource_suppressions(..., apply_to_children=True)` (threading the role
+handles out of the per-component methods), and/or broaden the bespoke test to assert the
+no-`Resource:*`-and-no-unexpected-path-wildcard invariant across **all** app-action statements.

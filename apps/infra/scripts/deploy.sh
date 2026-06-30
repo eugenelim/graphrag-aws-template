@@ -30,6 +30,24 @@ if [ -z "${INVOKER_ROLE_ARN:-}" ]; then
   INVOKER_ROLE_ARN="arn:aws:iam::${_acct}:role/${_role}"
 fi
 
+# The AWS-managed S3 prefix list id the in-VPC compute SGs allow 443 egress to (the corpus
+# read rides the S3 gateway endpoint). Resolved PER-REGION from the managed prefix list name
+# so the closed-egress posture is correct in any region (the CDK default is us-east-1's).
+# Override with S3_PREFIX_LIST_ID (config.local.env or env) to pin it explicitly.
+if [ -z "${S3_PREFIX_LIST_ID:-}" ]; then
+  S3_PREFIX_LIST_ID="$(aws ec2 describe-managed-prefix-lists \
+    --region "$CDK_DEFAULT_REGION" \
+    --filters "Name=prefix-list-name,Values=com.amazonaws.${CDK_DEFAULT_REGION}.s3" \
+    --query 'PrefixLists[0].PrefixListId' --output text)"
+fi
+# `--output text` emits the literal "None" (not empty) on a no-match, which the `:?` guard would
+# pass through to fail late at the CFN allowed_pattern; reject anything not pl-shaped here for a
+# legible, region-named error.
+case "${S3_PREFIX_LIST_ID:-}" in
+  pl-*) : ;;
+  *) echo "ERROR: could not resolve the S3 managed prefix list id for ${CDK_DEFAULT_REGION} (got: '${S3_PREFIX_LIST_ID:-}'). Set S3_PREFIX_LIST_ID explicitly." >&2; exit 1 ;;
+esac
+
 # OpenSearch needs the VPC-access service-linked role(s) pre-created, or a VPC domain
 # fails to create ("you must enable a service-linked role ... to access your VPC"). CDK
 # does not create them. Idempotent: ignore the "has been taken" error if one exists.
@@ -43,6 +61,7 @@ cdk bootstrap "aws://${CDK_DEFAULT_ACCOUNT}/${CDK_DEFAULT_REGION}" --app "$CDK_A
 cdk deploy "$STACK" --app "$CDK_APP" --require-approval never \
   --parameters "BudgetAlarmEmail=${BUDGET_EMAIL}" \
   --parameters "InvokerRoleArn=${INVOKER_ROLE_ARN}" \
+  --parameters "S3PrefixListId=${S3_PREFIX_LIST_ID}" \
   -c "environment=${DEPLOY_ENV}" \
   -c "department=${DEPLOY_DEPARTMENT}" \
   -c "application=${DEPLOY_APPLICATION}" \

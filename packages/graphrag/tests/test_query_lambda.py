@@ -511,10 +511,24 @@ class _FakeCommunityStore:
         from graphrag.store.community_base import Community
 
         communities = [
-            Community("community-0", "Networking", "public summary", ("kep-2086",), "public", 3,
-                      ("enhancements/keps/2086/README.md",)),
-            Community("community-1", "Secret area", "restricted summary", ("kep-1287",),
-                      "restricted", 2, ("enhancements/keps/1287/README.md",)),
+            Community(
+                "community-0",
+                "Networking",
+                "public summary",
+                ("kep-2086",),
+                "public",
+                3,
+                ("enhancements/keps/2086/README.md",),
+            ),
+            Community(
+                "community-1",
+                "Secret area",
+                "restricted summary",
+                ("kep-1287",),
+                "restricted",
+                2,
+                ("enhancements/keps/1287/README.md",),
+            ),
         ]
         if allowed_labels is None:
             return communities

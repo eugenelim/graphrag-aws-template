@@ -65,6 +65,18 @@ _INTERFACE_ENDPOINTS = {
     "BedrockRuntime": ec2.InterfaceVpcEndpointAwsService.BEDROCK_RUNTIME,
 }
 
+# security-hardening-followups: the compute SGs deny egress except to the in-VPC stores
+# and the VPC endpoints they call (ADR-0002 no-NAT). The S3 corpus read rides a *gateway*
+# endpoint, which exposes no connectable/prefix-list handle — so the S3 egress targets the
+# AWS-managed S3 prefix list by id (`ec2.Peer.prefix_list`), supplied by the `S3PrefixListId`
+# CfnParameter. It carries **no default**: the right id is region-specific
+# (`com.amazonaws.<region>.s3`), so a region-wrong default would be a silent footgun — every
+# deploy must supply it (`deploy.sh` resolves it per-region via `describe-managed-prefix-lists`;
+# a raw `cdk deploy` fails loudly without it). The pattern rejects a CIDR / free-form value at
+# the CloudFormation boundary so a typo can't widen the one egress hole the closed posture
+# exists to control.
+_S3_PREFIX_LIST_ID_PATTERN = r"^pl-[0-9a-f]+$"
+
 # Vector half (slice 2). The domain name is fixed so its ARN is computable without a
 # self-reference in the access policy (avoids a CDK dependency cycle).
 _OPENSEARCH_DOMAIN_NAME = "graphrag-vectors"
@@ -152,6 +164,147 @@ _NEPTUNE_ENGINE_VERSION = "1.3.5.0"  # latest neptune1.3.x; matches _NEPTUNE_PAR
 _NEPTUNE_PARAM_GROUP_FAMILY = "neptune1.3"
 
 
+def add_nag_suppressions(stack: Stack) -> None:
+    """Reason-signed cdk-nag suppressions for the accepted residuals of this EPHEMERAL,
+    single-node, teardown-first teaching stack (security-hardening-followups AC4). Applied by
+    ``app.py`` alongside the ``AwsSolutionsChecks`` aspect (and by the durable nag test). Each
+    entry is a posture exception authorized by the spec/ADRs/charter, **not** a default — and
+    the bespoke IAM assertions in ``test_stack.py`` independently guard against a genuinely
+    over-broad grant, so the IAM4/IAM5 suppressions never become a blanket hole. cdk-nag is
+    imported lazily so a non-nag synth/test path never needs it on the import graph."""
+    from cdk_nag import NagSuppressions
+
+    NagSuppressions.add_stack_suppressions(
+        stack,
+        [
+            {
+                "id": "AwsSolutions-IAM5",
+                "reason": (
+                    "Resource-PATH wildcards only — es domain/<name>/* sub-resources, the "
+                    "neptune-db cluster-resource-id ARN, and the S3 silver/* + key-scoped "
+                    "PutObject prefixes — never Action:* or a bare Resource:* (except "
+                    "ecr:GetAuthorizationToken, which grants nothing data-plane). The grants are "
+                    "minimal-necessary and independently guarded by test_stack.py's "
+                    "no-wildcard-resource + read-only-Neptune (ADR-0004) assertions. Accepted "
+                    "residual, sign-off: security-hardening-followups spec."
+                ),
+            },
+            {
+                "id": "AwsSolutions-IAM4",
+                "reason": (
+                    "The one AWS-managed policy is AWSLambdaVPCAccessExecutionRole — AWS's "
+                    "recommended grant for VPC-Lambda ENI lifecycle; an inline copy adds no "
+                    "security and risks drift. Sign-off: security-hardening-followups spec."
+                ),
+            },
+            {
+                "id": "AwsSolutions-L1",
+                "reason": (
+                    "Lambdas pin PYTHON_3_12, a current AWS-supported runtime; the teardown-first "
+                    "demo pins a known runtime rather than auto-chasing latest. Runtime currency "
+                    "rides the dependency review, not this egress slice. Sign-off: "
+                    "security-hardening-followups spec."
+                ),
+            },
+            {
+                "id": "AwsSolutions-VPC7",
+                "reason": (
+                    "No VPC flow log: the VPC is no-NAT + PRIVATE_ISOLATED (ADR-0002) with no "
+                    "internet path; a flow log is a standing log-sink cost the teardown-first "
+                    "posture omits (charter principle 4). Sign-off: security-hardening-followups."
+                ),
+            },
+            {
+                "id": "AwsSolutions-S1",
+                "reason": (
+                    "No S3 server access log: the corpus bucket is private (BlockPublicAccess "
+                    "ALL), encrypted, TLS-enforced and auto-emptied on destroy; access logging "
+                    "needs a second standing bucket the teardown-first demo omits (charter "
+                    "principle 4). Sign-off: security-hardening-followups spec."
+                ),
+            },
+            {
+                "id": "AwsSolutions-ECS2",
+                "reason": (
+                    "The ingest task's env vars are NON-secret config (Neptune/OpenSearch "
+                    "endpoints, bucket name, a default-off SCHEMA_EXTRACTION flag) — no credential "
+                    "is passed as an env var; creds come from the task role. Sign-off: "
+                    "security-hardening-followups spec."
+                ),
+            },
+            {
+                "id": "AwsSolutions-ECS4",
+                "reason": (
+                    "Container Insights disabled: a standing CloudWatch cost the ephemeral "
+                    "teardown-first demo omits (charter principle 4). Sign-off: "
+                    "security-hardening-followups spec."
+                ),
+            },
+            {
+                "id": "AwsSolutions-N2",
+                "reason": (
+                    "Neptune auto-minor-version-upgrade off: the engine version is PINNED to "
+                    "match the cluster parameter-group family (ADR-0004 read-cost backstop); an "
+                    "auto-upgrade would drift the pinned pair on an ephemeral cluster. Sign-off: "
+                    "security-hardening-followups spec."
+                ),
+            },
+            {
+                "id": "AwsSolutions-N3",
+                "reason": (
+                    "Neptune backup retention minimal: the cluster is ephemeral and removed by "
+                    "cdk destroy (charter principle 4); there is no data to retain across "
+                    "teardown. Sign-off: security-hardening-followups spec."
+                ),
+            },
+            {
+                "id": "AwsSolutions-OS3",
+                "reason": (
+                    "OpenSearch access is NOT IP-allowlisted because the domain is VPC-resident "
+                    "(no public endpoint) and gated by an IAM resource policy scoped to the named "
+                    "task/probe/query roles — a stronger control than IP allowlisting (ADR-0002). "
+                    "Sign-off: security-hardening-followups spec."
+                ),
+            },
+            {
+                "id": "AwsSolutions-OS4",
+                "reason": (
+                    "No dedicated master nodes: single-data-node, min-cost, VPC-private demo "
+                    "domain (ADR-0002 single-node posture). Sign-off: "
+                    "security-hardening-followups spec."
+                ),
+            },
+            {
+                "id": "AwsSolutions-OS7",
+                "reason": (
+                    "Zone awareness disabled: single-node domain by design (ADR-0002); zone "
+                    "awareness needs >=2 nodes. Sign-off: security-hardening-followups spec."
+                ),
+            },
+            {
+                "id": "AwsSolutions-OS9",
+                "reason": (
+                    "Slow logs not published: a standing CloudWatch Logs cost the ephemeral "
+                    "teardown-first demo omits (charter principle 4). Sign-off: "
+                    "security-hardening-followups spec."
+                ),
+            },
+            {
+                "id": "AwsSolutions-EC23",
+                "reason": (
+                    "(Warning-level — suppressed to keep synth output clean, NOT required for the "
+                    "error gate.) The VPC interface-endpoint SGs accept 443 from the VPC CIDR "
+                    "(CDK's default "
+                    "for an interface endpoint), an intrinsic-valued rule EC23 cannot statically "
+                    "evaluate (it raises CdkNagValidationFailure). It is NOT a 0.0.0.0/0 rule, "
+                    "and test_stack.py's no-public-ingress assertion is the independent guard "
+                    "against a literal public CIDR. Sign-off: security-hardening-followups spec."
+                ),
+            },
+        ],
+    )
+
+
 class GraphragStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs: Any) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -171,6 +324,21 @@ class GraphragStack(Stack):
             type="String",
             description="IAM role ARN permitted to invoke the query Function URL (SigV4).",
         )
+        # The AWS-managed S3 prefix list id the compute SGs allow 443 egress to (gateway
+        # endpoint, no connectable handle). Pattern-constrained so a CIDR/free-form value is
+        # rejected at the CFN boundary; deploy.sh resolves it per-region.
+        s3_prefix_list_id = CfnParameter(
+            self,
+            "S3PrefixListId",
+            type="String",
+            allowed_pattern=_S3_PREFIX_LIST_ID_PATTERN,
+            description=(
+                "AWS-managed S3 gateway-endpoint prefix list id "
+                "(com.amazonaws.<region>.s3) the in-VPC compute SGs allow 443 egress to. "
+                "No default (region-specific); deploy.sh resolves it per-region."
+            ),
+        )
+        self._s3_prefix_list_id = s3_prefix_list_id.value_as_string
 
         vpc = self._vpc()
         bucket = self._corpus_bucket()
@@ -262,9 +430,46 @@ class GraphragStack(Stack):
             ],
         )
         vpc.add_gateway_endpoint("S3Endpoint", service=ec2.GatewayVpcEndpointAwsService.S3)
-        for name, service in _INTERFACE_ENDPOINTS.items():
-            vpc.add_interface_endpoint(name, service=service)
+        # Captured so each closed compute SG can allow 443 egress to exactly the endpoints it
+        # calls (security-hardening-followups closed-egress posture).
+        self._interface_endpoints = {
+            name: vpc.add_interface_endpoint(name, service=service)
+            for name, service in _INTERFACE_ENDPOINTS.items()
+        }
         return vpc
+
+    # --- Closed-egress wiring: explicit per-call egress on a compute SG (no allow-all) ----
+    def _allow_egress(
+        self,
+        sg: ec2.SecurityGroup,
+        *,
+        neptune_sg: ec2.SecurityGroup | None = None,
+        opensearch_sg: ec2.SecurityGroup | None = None,
+        endpoints: tuple[str, ...] = (),
+        s3: bool = False,
+    ) -> None:
+        """Add the explicit egress a closed (`allow_all_outbound=False`) compute SG needs and
+        nothing more (ADR-0002 no-NAT; the SG is the defence-in-depth layer, AC1/AC2). Store
+        egress is **egress-only** (`add_egress_rule`) because the matching ingress already
+        exists on the store SG with a description the tests pin — `connections.allow_to` there
+        would add a duplicate ingress. Interface-endpoint egress uses `connections.allow_to`
+        (the endpoint is `IConnectable`); S3 rides the managed prefix list (gateway endpoint,
+        no connectable handle). Descriptions stay within the EC2 charset."""
+        sgid = sg.node.id
+        if neptune_sg is not None:
+            sg.add_egress_rule(neptune_sg, ec2.Port.tcp(8182), f"{sgid} egress to neptune 8182")
+        if opensearch_sg is not None:
+            sg.add_egress_rule(opensearch_sg, ec2.Port.tcp(443), f"{sgid} egress to opensearch 443")
+        for name in endpoints:
+            sg.connections.allow_to(
+                self._interface_endpoints[name], ec2.Port.tcp(443), f"{sgid} egress to {name} 443"
+            )
+        if s3:
+            sg.add_egress_rule(
+                ec2.Peer.prefix_list(self._s3_prefix_list_id),
+                ec2.Port.tcp(443),
+                f"{sgid} egress to s3 prefix list 443",
+            )
 
     # --- S3 corpus snapshot bucket: private, encrypted, teardown-removable ---------
     def _corpus_bucket(self) -> s3.Bucket:
@@ -396,9 +601,21 @@ class GraphragStack(Stack):
 
         # The task's ENI sits in the private subnets; Neptune accepts it on 8182,
         # OpenSearch on 443.
-        task_sg = ec2.SecurityGroup(self, "IngestionSg", vpc=vpc, description="Fargate ingestion")
+        task_sg = ec2.SecurityGroup(
+            self, "IngestionSg", vpc=vpc, description="Fargate ingestion", allow_all_outbound=False
+        )
         neptune_sg.add_ingress_rule(task_sg, ec2.Port.tcp(8182), "ingestion to neptune 8182")
         opensearch_sg.add_ingress_rule(task_sg, ec2.Port.tcp(443), "ingestion to opensearch 443")
+        # Closed egress: the container image is pulled via the ECR + S3 endpoints, the corpus
+        # read via the S3 gateway endpoint, embeddings/summaries via Bedrock, and the dual-write
+        # to Neptune (8182) + OpenSearch (443) — and nothing else (AC1/AC2).
+        self._allow_egress(
+            task_sg,
+            neptune_sg=neptune_sg,
+            opensearch_sg=opensearch_sg,
+            endpoints=("BedrockRuntime", "EcrApi", "EcrDocker", "CloudWatchLogs", "Sts"),
+            s3=True,
+        )
 
         # Handles for `aws ecs run-task` (the live ingest + retrieve smoke).
         private_subnets = vpc.select_subnets(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED)
@@ -412,8 +629,13 @@ class GraphragStack(Stack):
     def _smoke_lambda(
         self, vpc: ec2.Vpc, cluster: neptune.CfnDBCluster, neptune_sg: ec2.SecurityGroup
     ) -> None:
-        sg = ec2.SecurityGroup(self, "SmokeSg", vpc=vpc, description="Neptune smoke probe")
+        sg = ec2.SecurityGroup(
+            self, "SmokeSg", vpc=vpc, description="Neptune smoke probe", allow_all_outbound=False
+        )
         neptune_sg.add_ingress_rule(sg, ec2.Port.tcp(8182), "smoke probe to neptune 8182")
+        # Closed egress: Neptune (8182) + Logs/STS endpoints only — the zip Lambda pulls no
+        # image and touches no other store (AC1/AC2).
+        self._allow_egress(sg, neptune_sg=neptune_sg, endpoints=("CloudWatchLogs", "Sts"))
 
         # Stack-managed log group so `cdk destroy` removes it -- a Lambda's default
         # /aws/lambda/<fn> group is auto-created and would otherwise survive teardown.
@@ -552,10 +774,20 @@ class GraphragStack(Stack):
         role: iam.Role,
     ) -> None:
         sg = ec2.SecurityGroup(
-            self, "VectorSmokeSg", vpc=vpc, description="OpenSearch+Bedrock vector smoke probe"
+            self,
+            "VectorSmokeSg",
+            vpc=vpc,
+            description="OpenSearch+Bedrock vector smoke probe",
+            allow_all_outbound=False,
         )
         opensearch_sg.add_ingress_rule(
             sg, ec2.Port.tcp(443), "vector smoke probe to opensearch 443"
+        )
+        # Closed egress: OpenSearch (443) + Bedrock/Logs/STS endpoints only (AC1/AC2).
+        self._allow_egress(
+            sg,
+            opensearch_sg=opensearch_sg,
+            endpoints=("BedrockRuntime", "CloudWatchLogs", "Sts"),
         )
         log_group = logs.LogGroup(
             self,
@@ -589,22 +821,29 @@ class GraphragStack(Stack):
         opensearch_sg: ec2.SecurityGroup,
         invoker_role_arn: str,
     ) -> None:
-        # Private isolated subnets only (not public); the Function URL is the sole
-        # The query Lambda is in-VPC COMPUTE that initiates outbound to Neptune (8182),
-        # OpenSearch (443), and the Bedrock VPC endpoint (443) — so it allows outbound,
-        # exactly like the Fargate task and the smoke probes (IngestionSg / SmokeSg /
-        # VectorSmokeSg). The "no-egress-path" guarantee is the no-NAT topology, not a
-        # closed SG: with no NAT, outbound can only reach VPC endpoints + in-VPC stores,
-        # there is no internet path. (allow_all_outbound=False here would silently block
-        # the first Bedrock call and hang the function to its timeout.)
+        # Private isolated subnets only (not public); the Function URL is the sole ingress.
+        # Closed egress, explicit per-call rules: the query Lambda is in-VPC COMPUTE that
+        # initiates outbound to Neptune (8182), OpenSearch (443), and the Bedrock/Logs/STS VPC
+        # endpoints (443) — those exact targets and nothing more (security-hardening-followups
+        # AC1/AC2). A bare allow_all_outbound=False with no explicit egress would silently
+        # block the first Bedrock call and hang the function to its 120s timeout (the
+        # documented prior live finding), so the explicit egress below is load-bearing — AC9
+        # confirms it live.
         sg = ec2.SecurityGroup(
             self,
             "QuerySg",
             vpc=vpc,
             description="query lambda - in-VPC compute (egress to stores + VPC endpoints)",
+            allow_all_outbound=False,
         )
         neptune_sg.add_ingress_rule(sg, ec2.Port.tcp(8182), "query lambda to neptune 8182")
         opensearch_sg.add_ingress_rule(sg, ec2.Port.tcp(443), "query lambda to opensearch 443")
+        self._allow_egress(
+            sg,
+            neptune_sg=neptune_sg,
+            opensearch_sg=opensearch_sg,
+            endpoints=("BedrockRuntime", "CloudWatchLogs", "Sts"),
+        )
 
         role = iam.Role(
             self,

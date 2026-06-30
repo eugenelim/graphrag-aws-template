@@ -147,9 +147,7 @@ def summarize_communities(
             edge for edge in edges if edge.src_id in member_set and edge.dst_id in member_set
         ]
         rels = (
-            "; ".join(
-                f"{edge.src_id} -{edge.kind.value}-> {edge.dst_id}" for edge in intra_edges
-            )
+            "; ".join(f"{edge.src_id} -{edge.kind.value}-> {edge.dst_id}" for edge in intra_edges)
             or "(no internal relationships)"
         )
         question = (

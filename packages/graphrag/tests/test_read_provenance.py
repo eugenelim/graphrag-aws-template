@@ -158,8 +158,7 @@ def test_template_derives_methods_from_traversed_edge_kinds() -> None:
         description="SIGs a given SIG collaborates with.",
         params=(),
         cypher=(
-            "MATCH (s:Entity {id: $sig})-[r:REL {kind: 'COLLABORATES_WITH'}]->"
-            "(n:Entity) RETURN n"
+            "MATCH (s:Entity {id: $sig})-[r:REL {kind: 'COLLABORATES_WITH'}]->(n:Entity) RETURN n"
         ),
         evaluate=lambda store, params: [],
     )
