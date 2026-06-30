@@ -17,8 +17,8 @@ import pytest
 os.environ.setdefault("JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION", "1")
 
 cdk = pytest.importorskip("aws_cdk", reason="aws-cdk-lib not installed (infra extra)")
-from aws_cdk.assertions import Match, Template  # noqa: E402
-from stacks.graphrag_stack import GraphragStack  # noqa: E402
+from aws_cdk.assertions import Annotations, Match, Template  # noqa: E402
+from stacks.graphrag_stack import GraphragStack, add_nag_suppressions  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -563,6 +563,29 @@ def test_s3_prefix_list_param_is_pattern_constrained(template: Template) -> None
     params = template.to_json().get("Parameters", {})
     assert "S3PrefixListId" in params, "expected the S3PrefixListId CfnParameter"
     assert params["S3PrefixListId"].get("AllowedPattern") == r"^pl-[0-9a-f]+$"
+
+
+# --- security-hardening-followups: cdk-nag hard gate (AC4) ----------------------------------
+
+
+def test_cdk_nag_no_unsuppressed_findings() -> None:
+    # AC4a (durable): applying AwsSolutionsChecks to the stack WITH the reason-signed
+    # suppressions leaves NO unsuppressed AwsSolutions error — the hard gate. This regresses
+    # offline if the aspect/suppressions are dropped from app.py OR a violating resource is
+    # added without a reasoned suppression, so the gate has an artifact that bites on
+    # regression (not just the one-time deliberate-violation proof, AC4b).
+    pytest.importorskip("cdk_nag", reason="cdk-nag not installed (infra extra)")
+    from aws_cdk import Aspects
+    from cdk_nag import AwsSolutionsChecks
+
+    app = cdk.App()
+    stack = GraphragStack(app, "NagGateStack")
+    add_nag_suppressions(stack)
+    Aspects.of(stack).add(AwsSolutionsChecks())
+    errors = Annotations.from_stack(stack).find_error(
+        "*", Match.string_like_regexp("AwsSolutions-.*")
+    )
+    assert errors == [], f"unsuppressed cdk-nag findings: {[e.entry.data for e in errors]}"
 
 
 def test_bedrock_claude_grant_scopes_profile_and_foundation_no_wildcard(
