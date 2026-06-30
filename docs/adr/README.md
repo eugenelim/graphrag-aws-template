@@ -14,6 +14,7 @@
 | [0006](0006-schema-guided-llm-extraction-guard.md) | Schema-guided LLM extraction is guarded by a closed schema + entity-grounding, runs at ingest, and is distinguishable in the graph | Accepted |
 | [0007](0007-silver-cache-content-and-config-addressed.md) | Silver cache addressing — content-and-config over content-only | Accepted |
 | [0008](0008-automatic-engine-routing-local-vs-global.md) | Automatic Local-vs-Global engine routing is a `mode="auto"` selector (deterministic + Bedrock twin), not a new retrieval engine | Accepted |
+| [0009](0009-access-control-synthetic-labels-not-real-authz.md) | Access-control depth — synthetic visibility labels over real authorization | Accepted |
 
 ## Adding a new ADR
 
