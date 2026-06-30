@@ -1,0 +1,63 @@
+# CI gate (security-hardening-followups AC6/AC6b). A green run on push + PR is the merge
+# gate. Commands are pinned and match AGENTS.md § Commands; ruff/mypy versions are pinned in
+# pyproject [dev] so this gate is deterministic.
+#
+# Self-hardening (AC6b): least-privilege GITHUB_TOKEN (contents:read only); `pull_request`
+# (NOT pull_request_target — never run untrusted-PR code with a write token); and every
+# `uses:` is pinned to a 40-char commit SHA (Dependabot's github-actions ecosystem bumps them).
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# Least privilege: the gate only reads the repo. No job needs write.
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
+      - name: Install (project + dev + infra extras)
+        run: |
+          python -m pip install --upgrade pip  # current pip — also clears pip's own CVEs
+          python -m pip install -e ".[dev,infra]"
+
+      - name: Lint (ruff check)
+        run: ruff check packages apps
+      - name: Format check (ruff format --check)
+        run: ruff format --check packages apps
+      - name: Typecheck (mypy)
+        run: mypy
+      - name: Test (pytest)
+        run: pytest
+
+      - name: Supply-chain audit (pip-audit)
+        run: |
+          # Audit the installed dependency closure; honor reason+expiry suppressions from
+          # .pip-audit-ignore (one vuln id per non-comment line). Fails on any other vuln.
+          ignores=()
+          while IFS= read -r id; do
+            ignores+=(--ignore-vuln "$id")
+          done < <(grep -vE '^[[:space:]]*#|^[[:space:]]*$' .pip-audit-ignore | awk '{print $1}')
+          python -m pip_audit "${ignores[@]}"
+
+      # cdk synth with cdk-nag as a hard gate (AC4/AC6): an unsuppressed AwsSolutions finding
+      # fails the synth. The in-process nag assertion also runs under pytest above (AC4a); this
+      # step additionally proves the app.py aspect wiring end-to-end via the real CLI.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "20"
+      - name: Install cdk CLI
+        # Version-pinned (not digest-pinned, unlike the SHA-pinned actions above): accepted
+        # residual — the gate has no write token (contents: read), so a registry-tamper blast
+        # radius is read-only. Tracked under infra-secret-scan-ci.
+        run: npm install -g aws-cdk@2.1128.1
+      - name: Synth + cdk-nag (cdk synth)
+        working-directory: apps/infra
+        run: cdk synth --quiet

@@ -63,13 +63,30 @@ aspect; `pip-audit` + GitHub Actions + Dependabot for supply chain; the
 
 ### Design decisions
 
-- **Egress via CDK `connections.allow_to`, not hand-built rules** — set
-  `allow_all_outbound=False` on each compute SG, then express each needed path as
-  `compute_sg.connections.allow_to(<peer>, ec2.Port.tcp(<n>))`. Peers: the store
-  SGs (already handles), the interface endpoints (captured from the
-  `add_interface_endpoint` loop into a dict), and the S3 gateway endpoint's
-  prefix list. Rejected hand-built `add_egress_rule(Peer.ipv4(...))` — it would
-  hard-code endpoint CIDRs that CDK already models. Traces to: AC1, AC2.
+- **Egress via CDK `connections`/`add_egress_rule`, not hand-built CIDR rules** —
+  set `allow_all_outbound=False` on each compute SG, then express each needed
+  path with CDK-modelled peers. **Refined during grounding (2026-06-30):**
+  - *Interface endpoints* (Bedrock/ECR-api/ECR-dkr/Logs/STS): captured from the
+    `add_interface_endpoint` loop into `self._interface_endpoints`, wired with
+    `compute_sg.connections.allow_to(endpoint, ec2.Port.tcp(443))` —
+    `InterfaceVpcEndpoint` is `IConnectable` (verified against the installed
+    aws-cdk-lib).
+  - *Store SGs* (Neptune 8182 / OpenSearch 443): the **ingress** rule already
+    exists on the store SG (`neptune_sg.add_ingress_rule(compute_sg, …)`) and its
+    description is asserted by existing tests — so add the **egress-only** rule on
+    the compute SG via `compute_sg.add_egress_rule(<store_sg>, port, desc)`
+    (peer is the store SG, an `IPeer`). Using `connections.allow_to` here would
+    add a *duplicate* ingress rule and break the description-pinned ingress tests.
+  - *S3 gateway endpoint* (corpus read, `IngestionSg` only): a **gateway**
+    endpoint exposes **no** `.connections` / prefix-list handle (verified), and
+    `PrefixList.from_lookup` needs a live account/region context that the offline
+    `Template.from_stack` tests don't have. So the S3 egress targets the
+    AWS-managed S3 prefix list via `ec2.Peer.prefix_list(<id>)`, where `<id>`
+    comes from a new `CfnParameter` `S3PrefixListId` (default the us-east-1
+    `pl-63a5400a`, verified live; `deploy.sh` fills it per-region from
+    `describe-managed-prefix-lists`). This stays inside the `aws_ec2`-only
+    structural bound (no custom resource), synths offline (renders as a `Ref`
+    token), and AC9 confirms the live S3 read works. Traces to: AC1, AC2, AC9.
 - **Per-SG egress is the minimal real set, not a uniform block** — this table is
   the **source of truth** for AC2's set-equality assertion (corrected with the
   assertion together if AC9 reveals a missing target). Over-broad egress defeats
@@ -120,15 +137,20 @@ remap or re-ingest. Traces to: AC7.
 ### T1: Compute SGs deny egress except their explicit call set
 
 **Depends on:** none
-**Touches:** apps/infra/stacks/graphrag_stack.py, apps/infra/tests/test_stack.py
+**Touches:** apps/infra/stacks/graphrag_stack.py, apps/infra/tests/test_stack.py, apps/infra/scripts/deploy.sh (S3PrefixListId param resolved per-region), apps/infra/scripts/config.env (doc the new param)
 
 **Tests:**
 - Synth assertion: each of `IngestionSg`/`SmokeSg`/`VectorSmokeSg`/`QuerySg`
   renders `allow_all_outbound=False` and **no** `0.0.0.0/0` protocol `-1` egress
   rule (AC1).
-- Synth assertion per SG: the expected explicit egress ports are present
-  (8182/443 by component); `test_query_lambda_sg_allows_outbound` is replaced by
-  this closed-egress assertion (AC2).
+- Synth assertion per SG: set-equality of the resolved `{peer, port}` egress set
+  against the table, per AC2's normalization (resolve `DestinationSecurityGroupId`
+  Refs to peer logical ids + classify; resolve the inline prefix-list rule to
+  `S3PrefixListId`); `test_query_lambda_sg_allows_outbound` is replaced by this
+  closed-egress assertion (AC2).
+- Synth assertion: the `S3PrefixListId` CfnParameter carries
+  `allowed_pattern=^pl-[0-9a-f]+$` (AC2b); goal-check: `deploy.sh` passes
+  `S3PrefixListId` resolved per-region.
 - Existing ingress + no-public-ingress + description-charset tests stay green
   (no regression).
 
@@ -151,7 +173,12 @@ closed-egress assertions; `cdk synth` succeeds.
 
 **Tests:**
 - (TDD) `default_deny` ON + no principal (`None` and `""`) ⇒
-  `Clearance(allowed=frozenset())`, `allows(x)` False for every tier (AC7).
+  `Clearance(persona="default-deny", allowed=frozenset())` (the `persona` field is
+  required — the literal `Clearance(allowed=frozenset())` won't construct),
+  `allows(x)` False for every tier (AC7).
+- (TDD) precedence: `default_deny` ON + a **present** persona resolves exactly as
+  default-deny OFF would (unknown ⇒ raise, known ⇒ normal) — the flag governs only
+  the absent-principal cell (AC7).
 - (TDD) `default_deny` ON + unrecognized non-empty persona ⇒ `ValueError`
   (fail-closed raise preserved, not silent-deny).
 - (TDD) `default_deny` ON + known persona ⇒ that persona's normal clearance.
@@ -167,8 +194,9 @@ closed-egress assertions; `cdk synth` succeeds.
 - Wire `cli.py:_clearance` to construct the empty `Clearance` when
   `--default-deny` is set and no persona is given (query layer untouched —
   empty `Clearance` already means "sees nothing").
-- Update the module + `_clearance` docstrings to name the inversion as a
-  teaching demonstration, still a synthetic stand-in (feeds AC8).
+- Update the module + `_clearance` docstrings **and the `--default-deny` flag's
+  `--help` string** to name the inversion as a teaching demonstration, still a
+  synthetic stand-in, not real authz (feeds AC8).
 
 **Done when:** `pytest packages/graphrag/tests/test_visibility.py` + the CLI test
 green; `--default-deny` with no persona observably filters to nothing; no
@@ -177,7 +205,7 @@ shipped-mode (default-deny OFF) behavior change.
 ### T3: pip-audit + Dependabot + CI workflow (pinned commands)
 
 **Depends on:** none
-**Touches:** .github/workflows/ci.yml, .github/dependabot.yml, pyproject.toml, AGENTS.md, (pip-audit ignore file)
+**Touches:** .github/workflows/ci.yml, .github/dependabot.yml, pyproject.toml, AGENTS.md, .pip-audit-ignore
 
 **Tests:** (goal-based)
 - `pip-audit` runs locally and in CI over the locked set and exits non-zero on a
@@ -188,13 +216,35 @@ shipped-mode (default-deny OFF) behavior change.
 - `AGENTS.md` § Commands no longer contains the `<…>` placeholders — its
   commands match the workflow's (AC6).
 
+**Task-zero (grounding 2026-06-30):** the repo has **no CI**, so `ruff format`
+has never been enforced — `ruff format --check` shows ~18 files / ~276 lines of
+pre-existing drift under *every* ruff 0.6–0.15 (the formatter style drifted
+across versions). A green `ruff format --check` gate (AC6) therefore requires
+**pinning the toolchain** (`ruff==0.15.17`, `mypy==2.1.0` — both already green
+for `ruff check`/`mypy`) and a one-time `ruff format` of the project code under
+that pin. This is the precondition for the AC6 mechanism to exist, not optional
+polish. **Scope:** CI lint/format runs over `packages apps` (the project's own
+Python, matching `[tool.ruff].src`); `.claude/` (bundled agent assets) and
+`tools/`/`scripts/` (dev tooling) are deliberately **out** of the strict gate to
+bound blast radius. The one-time reformat lands as its own labeled commit so the
+security diff stays legible.
+
 **Approach:**
-- Add `pip-audit` to a dev/CI dependency group; author the workflow with the
-  **pinned** commands: `ruff check`, `ruff format --check`, `mypy`, `pytest`,
-  `pip-audit` (the `cdk synth` + cdk-nag step lands in T4).
+- Add `pip-audit` to a dev/CI dependency group; **pin** `ruff`/`mypy`; author the
+  workflow with the **pinned** commands: `ruff check packages apps`,
+  `ruff format --check packages apps`, `mypy`, `pytest`, `pip-audit` (the
+  `cdk synth` + cdk-nag step lands in T4).
 - Fill `AGENTS.md` § Commands (`128-138`) with those same commands so doc and CI
   agree (closes the unfilled-template gap).
 - Author `dependabot.yml` for the `pip` + `github-actions` ecosystems.
+- **CI self-hardening (AC6b):** top-level `permissions: contents: read`; trigger
+  on `push` + `pull_request` (never `pull_request_target`); pin every `uses:` to a
+  40-char commit SHA with a `# vX.Y` comment (resolve current SHAs via
+  `gh api repos/<owner>/<repo>/git/refs/tags/<tag>` at EXECUTE).
+- **`.pip-audit-ignore`:** start empty-but-headered (the tree has no known vuln at
+  baseline); each future entry = vuln id + one-line reason + review-by date; the CI
+  command consumes it (`pip-audit ... $(grep -v '^#' .pip-audit-ignore | ...)` →
+  `--ignore-vuln` args, or `--ignore-vuln` inline if empty).
 - This workflow is the CI surface `infra-secret-scan-ci` was blocked on; **do
   not** add gitleaks/`shellcheck` here (that stays the other item's scope) — just
   unblock it (the backlog entry is updated in T5).
@@ -207,11 +257,19 @@ known vuln in a scratch test; `AGENTS.md` commands match; YAML validates.
 **Depends on:** T1
 **Touches:** apps/infra/app.py, apps/infra/tests/test_stack.py, .github/workflows/ci.yml, pyproject.toml, (suppressions)
 
-**Tests:** (goal-based)
+**Tests:** (goal-based + one durable synth assertion)
+- **Durable (AC4a):** a committed `test_stack.py` assertion applies
+  `AwsSolutionsChecks` to the stack and asserts **no unsuppressed `AwsSolutions-*`
+  error annotation** remains (`Annotations.from_stack`); regresses offline if the
+  aspect is dropped or a violating resource is added.
 - `cdk synth` fails on a **deliberate temporary** nag violation (proves the gate
-  bites), passes once removed (AC4).
+  bites), passes once removed (AC4b).
 - CI's `cdk synth` step is wired and gates the merge (AC6, cdk-nag step).
-- Every `NagSuppressions` entry carries a non-empty `reason`.
+- Every `NagSuppressions` entry carries a non-empty `reason` citing sign-off.
+
+**Task-zero (grounding 2026-06-30):** `cdk-nag` is not installed — `pip install
+cdk-nag` (it is pip-installable) and add it to the `infra` extra so `cdk synth`
+can apply the aspect locally and in CI.
 
 **Approach:**
 - Add `cdk-nag` to the IaC dev deps; apply `AwsSolutionsChecks` via `Aspects` in
@@ -294,3 +352,12 @@ the backlog anchor if live deploy is unavailable.
   B5 default-deny clearance, A3 live eval) from the session's non-RFC hardening
   work; T1/T2/T3 `Depends on: none` (parallelizable), T4←T1, T5←T1/T2/T4,
   T6 last.
+- 2026-06-30: pre-EXECUTE grounding refinements (no spec/AC change). (1) S3
+  gateway-endpoint egress uses a `CfnParameter` + `ec2.Peer.prefix_list`, not
+  `connections.allow_to` — a gateway endpoint exposes no connectable/prefix-list
+  handle and `from_lookup` can't run in the offline synth test. Store-SG egress
+  uses egress-only `add_egress_rule` (the ingress already exists, description-
+  pinned). (2) AC6's `ruff format --check` requires pinning ruff/mypy + a
+  one-time `ruff format` of `packages apps` (pre-existing drift; no CI ever
+  enforced format) — task-zero, scoped to bound blast radius. (3) `cdk-nag`
+  install is task-zero for T4.

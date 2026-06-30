@@ -116,9 +116,7 @@ class NeptuneCommunityStore(CommunityStore):
             {"id": entity_id, "cid": community_id},
         )
 
-    def all_communities(
-        self, *, allowed_labels: frozenset[str] | None = None
-    ) -> list[Community]:
+    def all_communities(self, *, allowed_labels: frozenset[str] | None = None) -> list[Community]:
         # Clearance gate applied server-side, parameterized: None ⇒ no filter (all); an empty
         # set ⇒ `c.tier IN []` which matches nothing (fail-closed). The summary blends all
         # members, so the gate is the community's composed (most-restrictive) tier.
@@ -129,8 +127,7 @@ class NeptuneCommunityStore(CommunityStore):
             where = " WHERE c.tier IN $allowed"
         res = self._run(f"MATCH (c:{_COMMUNITY_LABEL}){where} RETURN c", params)
         communities = [
-            _community_from_props(dict(row["c"]["~properties"]))
-            for row in res.get("results", [])
+            _community_from_props(dict(row["c"]["~properties"])) for row in res.get("results", [])
         ]
         communities.sort(key=lambda c: (-c.size, c.id))
         return communities

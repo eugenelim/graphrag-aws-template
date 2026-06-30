@@ -17,6 +17,12 @@ Fail-closed by construction:
   unrestricted; only the *query layer's* literal ``clearance=None`` means unrestricted, the
   opt-in teaching default that is safe only because the labels are non-authz behind a
   trusted, IAM-auth scoped-principal ingress (see the slice-4 spec Boundaries).
+
+An opt-in **default-deny** mode (``resolve_clearance_or_default_deny``) lets the demo *show* the
+fail-open→fail-closed inversion a real ACL requires: with it on, an absent principal resolves to
+the empty ``Clearance`` (sees nothing) instead of ``None`` (unrestricted). It is still a synthetic
+teaching stand-in — **not** real authorization — and is additive: with it off, every shipped
+mode's behavior is byte-identical (security-hardening-followups AC7/AC8).
 """
 
 from __future__ import annotations
@@ -104,3 +110,37 @@ def resolve_clearance(persona: str) -> Clearance:
         known = ", ".join(sorted(PERSONAS))
         raise ValueError(f"unknown persona {persona!r}; known personas: {known}")
     return Clearance(persona=persona, allowed=allowed)
+
+
+# The sentinel persona the fail-closed default-deny clearance carries: ``Clearance.persona`` is
+# required and default-less, and a named value makes the trace banner legible
+# (``persona: default-deny  clearance allows: []``).
+DEFAULT_DENY_PERSONA = "default-deny"
+
+
+def resolve_clearance_or_default_deny(
+    persona: str | None, *, default_deny: bool
+) -> Clearance | None:
+    """Resolve a principal to a ``Clearance``, with an opt-in **default-deny** mode — a TEACHING
+    demonstration of the fail-open→fail-closed inversion a real ACL needs, still a synthetic
+    stand-in, **never real authz** (charter principle 5 / ADR-0009).
+
+    The flag governs **only the absent-principal cell**; a present persona resolves identically
+    either way:
+
+    - ``default_deny`` **OFF** — today's fail-OPEN posture, byte-unchanged: no principal
+      (``None``/``""``) ⇒ ``None`` (unrestricted, the opt-in teaching default), a known persona
+      ⇒ its ``Clearance``, an unknown one ⇒ ``ValueError``.
+    - ``default_deny`` **ON** — the inversion: no principal ⇒ the **empty** ``Clearance``
+      (``allowed`` empty, sees nothing); a known persona ⇒ its normal ``Clearance``; an unknown
+      non-empty persona ⇒ ``ValueError`` (the existing fail-closed raise is preserved — never a
+      silent deny).
+
+    The empty ``Clearance`` is what the query layer already treats as "sees nothing", so the
+    inversion is observable end-to-end with no query-layer change.
+    """
+    if not persona:
+        if default_deny:
+            return Clearance(persona=DEFAULT_DENY_PERSONA, allowed=frozenset())
+        return None
+    return resolve_clearance(persona)

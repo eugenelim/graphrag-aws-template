@@ -12,8 +12,14 @@ fills `user` from the caller identity).
 from __future__ import annotations
 
 import aws_cdk as cdk
-from stacks.graphrag_stack import GraphragStack
+from cdk_nag import AwsSolutionsChecks
+from stacks.graphrag_stack import GraphragStack, add_nag_suppressions
 
 app = cdk.App()
-GraphragStack(app, "GraphragSlice1")
+stack = GraphragStack(app, "GraphragSlice1")
+# cdk-nag HARD gate (security-hardening-followups AC4): an unsuppressed AwsSolutions finding
+# fails `cdk synth` / CI. The accepted residuals carry reason-signed suppressions; the bespoke
+# IAM/topology assertions in apps/infra/tests/test_stack.py are the independent guard.
+add_nag_suppressions(stack)
+cdk.Aspects.of(stack).add(AwsSolutionsChecks())
 app.synth()

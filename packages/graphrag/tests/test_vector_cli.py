@@ -127,3 +127,31 @@ def test_vector_query_unknown_persona_exits_nonzero() -> None:
 
     with _pytest.raises(SystemExit):
         main(_vquery(["--persona", "root"]))
+
+
+# --- security-hardening-followups: --default-deny observable inversion (AC7) ----------------
+
+
+def test_vector_query_default_deny_no_persona_sees_nothing(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The fail-open->fail-closed inversion is demonstrable at the CLI: --default-deny with no
+    # --persona resolves to the empty clearance, so the offline k-NN filters to nothing and the
+    # banner names the synthetic stand-in (NOT real authz).
+    rc = main(_vquery(["--default-deny"]))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "persona: default-deny" in out
+    assert "clearance allows: []" in out  # the empty clearance — sees nothing
+    assert "not real authz" in out
+    assert "1287" not in out  # every chunk filtered, including the public ones
+
+
+def test_vector_query_default_deny_with_persona_resolves_normally(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Precedence: a present --persona resolves the same with --default-deny as without it.
+    rc = main(_vquery(["--default-deny", "--persona", "public-reader"]))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "persona: public-reader" in out  # not the default-deny sentinel

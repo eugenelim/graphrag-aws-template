@@ -17,8 +17,8 @@ import pytest
 os.environ.setdefault("JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION", "1")
 
 cdk = pytest.importorskip("aws_cdk", reason="aws-cdk-lib not installed (infra extra)")
-from aws_cdk.assertions import Match, Template  # noqa: E402
-from stacks.graphrag_stack import GraphragStack  # noqa: E402
+from aws_cdk.assertions import Annotations, Match, Template  # noqa: E402
+from stacks.graphrag_stack import GraphragStack, add_nag_suppressions  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -429,25 +429,166 @@ def test_query_lambda_sg_reaches_neptune_and_opensearch(template: Template) -> N
     assert 443 in ports, "query Lambda SG must reach OpenSearch 443"
 
 
-def test_query_lambda_sg_allows_outbound(template: Template) -> None:
-    # Regression guard (live-deploy finding): the query Lambda is in-VPC COMPUTE that
-    # must initiate outbound to Neptune + OpenSearch + the Bedrock VPC endpoint. A
-    # closed SG (allow_all_outbound=False) silently blocks the first Bedrock call and
-    # hangs the function to its 120s timeout. With no NAT, allow-all egress can only
-    # reach VPC endpoints + in-VPC stores — there is no internet path.
-    query_sgs = [
-        r
-        for r in _resources(template).values()
-        if r["Type"] == "AWS::EC2::SecurityGroup"
-        and "query lambda" in str(r["Properties"].get("GroupDescription", "")).lower()
-    ]
-    assert len(query_sgs) == 1, "expected exactly one query-Lambda SG"
-    egress = query_sgs[0]["Properties"].get("SecurityGroupEgress", [])
-    # allow_all_outbound=True renders as a single 0.0.0.0/0 / protocol -1 allow rule;
-    # the closed shape renders as a 255.255.255.255/32 disallow sentinel.
-    assert any(
-        e.get("CidrIp") == "0.0.0.0/0" and str(e.get("IpProtocol")) == "-1" for e in egress
-    ), f"query Lambda SG must allow outbound (egress={egress})"
+# --- security-hardening-followups: closed least-privilege egress on every compute SG ---
+# (AC1/AC2). Replaces the slice-3 `test_query_lambda_sg_allows_outbound` allow-all guard.
+# The source-of-truth egress table (plan.md § Design decisions): each compute SG, keyed by
+# its GroupDescription, maps to the EXACT {(target, port)} set it may egress to — Neptune
+# 8182, OpenSearch 443, the named interface endpoints 443, and the S3 prefix list 443 — and
+# nothing more (set-equality, not containment). The set's *completeness* is provisional until
+# AC9 (a synth assertion cannot see a missing-but-needed target — that surfaces as a live hang).
+_COMPUTE_SG_EGRESS: dict[str, set[tuple[str, int]]] = {
+    "Fargate ingestion": {
+        ("neptune", 8182),
+        ("opensearch", 443),
+        ("BedrockRuntime", 443),
+        ("EcrApi", 443),
+        ("EcrDocker", 443),
+        ("CloudWatchLogs", 443),
+        ("Sts", 443),
+        ("s3", 443),
+    },
+    "Neptune smoke probe": {("neptune", 8182), ("CloudWatchLogs", 443), ("Sts", 443)},
+    "OpenSearch+Bedrock vector smoke probe": {
+        ("opensearch", 443),
+        ("BedrockRuntime", 443),
+        ("CloudWatchLogs", 443),
+        ("Sts", 443),
+    },
+    "query lambda - in-VPC compute (egress to stores + VPC endpoints)": {
+        ("neptune", 8182),
+        ("opensearch", 443),
+        ("BedrockRuntime", 443),
+        ("CloudWatchLogs", 443),
+        ("Sts", 443),
+    },
+}
+_INTERFACE_ENDPOINT_NAMES = ("BedrockRuntime", "EcrApi", "EcrDocker", "CloudWatchLogs", "Sts")
+
+
+def _logical_id_of(ref: object) -> str | None:
+    """The logical id a CFN GetAtt/Ref points at (the resolution AC2's normalization needs)."""
+    if isinstance(ref, dict):
+        if "Fn::GetAtt" in ref:
+            return ref["Fn::GetAtt"][0]
+        if "Ref" in ref:
+            return ref["Ref"]
+    return None
+
+
+def _sg_logical_ids_by_desc(template: Template) -> dict[str, str]:
+    return {
+        v["Properties"].get("GroupDescription"): k
+        for k, v in _resources(template).items()
+        if v["Type"] == "AWS::EC2::SecurityGroup"
+    }
+
+
+def _classify_egress_target(rule: dict, neptune_id: str, opensearch_id: str) -> str | None:
+    """Classify one egress rule's destination into the egress-set vocabulary (AC2)."""
+    if rule.get("DestinationPrefixListId") is not None:
+        return "s3"  # the sole prefix-list egress is the AWS-managed S3 list
+    dest = _logical_id_of(rule.get("DestinationSecurityGroupId"))
+    if dest == neptune_id:
+        return "neptune"
+    if dest == opensearch_id:
+        return "opensearch"
+    if dest:
+        for name in _INTERFACE_ENDPOINT_NAMES:
+            # Endpoint SG logical ids are `Vpc<Name>SecurityGroup<hash>` — anchor on that exact
+            # prefix (not a bare substring) so a future peer that merely contains an endpoint
+            # name can't mis-classify.
+            if dest.startswith(f"Vpc{name}SecurityGroup"):
+                return name
+    return None
+
+
+def _egress_set_for(
+    template: Template, sg_logical_id: str, neptune_id: str, opensearch_id: str
+) -> set[tuple[str | None, int | None]]:
+    """The resolved {(target-label, FromPort)} egress set for a compute SG — gathering both the
+    standalone `AWS::EC2::SecurityGroupEgress` resources keyed on the SG and any inline egress
+    (none today, but robust to either CDK rendering shape)."""
+    out: set[tuple[str | None, int | None]] = set()
+    for v in _resources(template).values():
+        if v["Type"] != "AWS::EC2::SecurityGroupEgress":
+            continue
+        p = v["Properties"]
+        if _logical_id_of(p.get("GroupId")) != sg_logical_id:
+            continue
+        out.add((_classify_egress_target(p, neptune_id, opensearch_id), p.get("FromPort")))
+    sg = _resources(template)[sg_logical_id]
+    for rule in sg["Properties"].get("SecurityGroupEgress", []) or []:
+        if rule.get("CidrIp") == "0.0.0.0/0" and str(rule.get("IpProtocol")) == "-1":
+            continue  # the allow-all sentinel is AC1's concern, not a target
+        out.add((_classify_egress_target(rule, neptune_id, opensearch_id), rule.get("FromPort")))
+    return out
+
+
+def test_compute_sgs_deny_all_outbound(template: Template) -> None:
+    # AC1: every in-VPC compute SG renders allow_all_outbound=False — no 0.0.0.0/0 / protocol
+    # -1 egress rule, inline or standalone (the prior slice-3 allow-all guard is now inverted).
+    by_desc = _sg_logical_ids_by_desc(template)
+    for desc in _COMPUTE_SG_EGRESS:
+        sgid = by_desc[desc]
+        inline = _resources(template)[sgid]["Properties"].get("SecurityGroupEgress", []) or []
+        assert not any(
+            r.get("CidrIp") == "0.0.0.0/0" and str(r.get("IpProtocol")) == "-1" for r in inline
+        ), f"{desc!r} must not allow_all_outbound (inline 0.0.0.0/0 -1)"
+        for v in _resources(template).values():
+            if (
+                v["Type"] == "AWS::EC2::SecurityGroupEgress"
+                and _logical_id_of(v["Properties"].get("GroupId")) == sgid
+            ):
+                p = v["Properties"]
+                assert not (p.get("CidrIp") == "0.0.0.0/0" and str(p.get("IpProtocol")) == "-1"), (
+                    f"{desc!r} must not have a standalone allow-all egress rule"
+                )
+
+
+def test_compute_sgs_egress_equals_exact_call_set(template: Template) -> None:
+    # AC2: each compute SG's egress EQUALS (not merely contains) its exact peer/port set.
+    by_desc = _sg_logical_ids_by_desc(template)
+    neptune_id = by_desc["Neptune - VPC-internal only"]
+    opensearch_id = by_desc["OpenSearch - VPC-internal only"]
+    for desc, expected in _COMPUTE_SG_EGRESS.items():
+        actual = _egress_set_for(template, by_desc[desc], neptune_id, opensearch_id)
+        assert None not in {label for label, _ in actual}, (
+            f"{desc!r} has an unclassified egress target: {actual}"
+        )
+        assert actual == expected, (
+            f"{desc!r} egress {sorted(actual)} != expected {sorted(expected)}"
+        )
+
+
+def test_s3_prefix_list_param_is_pattern_constrained(template: Template) -> None:
+    # AC2b: the one parameter-derived egress target is constrained to a prefix-list-id shape at
+    # the CFN boundary, so a CIDR / free-form value can't widen the closed-egress posture.
+    params = template.to_json().get("Parameters", {})
+    assert "S3PrefixListId" in params, "expected the S3PrefixListId CfnParameter"
+    assert params["S3PrefixListId"].get("AllowedPattern") == r"^pl-[0-9a-f]+$"
+
+
+# --- security-hardening-followups: cdk-nag hard gate (AC4) ----------------------------------
+
+
+def test_cdk_nag_no_unsuppressed_findings() -> None:
+    # AC4a (durable): applying AwsSolutionsChecks to the stack WITH the reason-signed
+    # suppressions leaves NO unsuppressed AwsSolutions error — the hard gate. This regresses if a
+    # violating resource is added OR a suppression is dropped (verified: 32 unsuppressed errors
+    # without suppressions). The CI `cdk synth` step guards the separate app.py aspect wiring
+    # (this test builds its own app + aspect).
+    pytest.importorskip("cdk_nag", reason="cdk-nag not installed (infra extra)")
+    from aws_cdk import Aspects
+    from cdk_nag import AwsSolutionsChecks
+
+    app = cdk.App()
+    stack = GraphragStack(app, "NagGateStack")
+    add_nag_suppressions(stack)
+    Aspects.of(stack).add(AwsSolutionsChecks())
+    errors = Annotations.from_stack(stack).find_error(
+        "*", Match.string_like_regexp("AwsSolutions-.*")
+    )
+    assert errors == [], f"unsuppressed cdk-nag findings: {[e.entry.data for e in errors]}"
 
 
 def test_bedrock_claude_grant_scopes_profile_and_foundation_no_wildcard(

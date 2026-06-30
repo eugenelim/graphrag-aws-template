@@ -80,9 +80,7 @@ class ExtractionResult:
             cand = entry.candidate
             lines.append(f"  - doc: {cand.source_doc}")
             lines.append(f"    span: {cand.span}")
-            lines.append(
-                f"    triple: ({cand.subject}) -[{cand.predicate}]-> ({cand.object})"
-            )
+            lines.append(f"    triple: ({cand.subject}) -[{cand.predicate}]-> ({cand.object})")
             verdict_line = f"    verdict: {entry.verdict}"
             if entry.reason:
                 verdict_line += f" ({entry.reason})"

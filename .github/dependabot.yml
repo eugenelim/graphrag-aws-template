@@ -1,0 +1,17 @@
+# Dependabot (security-hardening-followups AC5). Keeps the supply chain current:
+# - pip: the project's Python dependency closure (pyproject extras).
+# - github-actions: the SHA-pinned `uses:` in .github/workflows/ — Dependabot bumps the SHA
+#   (and the `# vX` comment) so pinning by digest stays current rather than going stale.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

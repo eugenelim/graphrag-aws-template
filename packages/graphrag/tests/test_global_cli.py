@@ -49,9 +49,7 @@ def test_global_offline_prints_ordered_trace(capsys: pytest.CaptureFixture[str])
 
 
 def test_detect_communities_offline_lists_partition(capsys: pytest.CaptureFixture[str]) -> None:
-    rc = cli.main(
-        ["detect-communities", "--community", COMMUNITY, "--enhancements", ENHANCEMENTS]
-    )
+    rc = cli.main(["detect-communities", "--community", COMMUNITY, "--enhancements", ENHANCEMENTS])
     assert rc == 0
     out = capsys.readouterr().out
     assert "== detect-communities (offline) ==" in out

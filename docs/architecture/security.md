@@ -47,6 +47,7 @@
 | Persona (untrusted input) → query filter | The `persona` is a query-time input. It resolves through `visibility.resolve_clearance` **fail-closed**: an unknown persona raises (CLI: non-zero exit; Lambda: a sanitized `unknown persona` envelope), never a silent fall-through to unrestricted. The resolved clearance's `allowed` tier set rides the openCypher `parameters` map (`$allowed`) and an OpenSearch `terms` filter — **never string-interpolated** (the `ruff S` ruleset stays on; injection-safe by construction). |
 | Forbidden entity → traversal (the leak guard) | The graph filter is applied **DURING traversal, on edges** (`GraphStore.neighbors`/`neighbors_batch`: in-memory and a parameterized Neptune `WHERE r.visibility IN $allowed AND b.visibility IN $allowed`), **not** as a post-filter on the final node set. A forbidden node therefore never enters the frontier, never appears in the hop trace, and cannot bridge to a node reachable only through it. A redundant independent guard also drops any above-clearance node from the final merged set. |
 | Default-when-no-persona = unrestricted | Omitting the persona yields unfiltered retrieval (slice-1–3 behavior). Read as an authz mechanism this is the textbook **fail-open default** a real ACL must invert (default-deny) — it is safe **here only** because the labels are non-authz **and** the query ingress is the IAM-auth, scoped-principal Function URL (the caller is the trusted deploying/CLI role, not an end-user). Named so the seam is never copied into a context where the persona is the security principal. |
+| Opt-in **default-deny** demonstration (`--default-deny`) | `visibility.resolve_clearance_or_default_deny` lets the demo *show* the inversion the row above names: with the flag on, an **absent** principal resolves to the **empty** `Clearance` (sees nothing) instead of `None` (unrestricted) — fail-**closed**. It is **additive and opt-in**: off, every shipped mode is byte-identical; on, it governs **only** the absent-principal cell (a present persona resolves the same either way, an unknown one still raises). Still a **synthetic teaching stand-in, not real authz** — it makes the fail-open→fail-closed flip legible in code (`graphrag … --default-deny` prints `clearance allows: []` and returns nothing), it does not turn the labels into an access-control system (security-hardening-followups AC7/AC8). |
 | Filtered-out trace → caller | The trace names the *identity* of filtered items (an enumeration oracle in a real ACL system) as a **teaching observability aid**, explicitly labeled "a real ACL would not reveal this." This disclosure is **contained by the trusted-caller ingress**: the filtered-out trace crosses the IAM-auth, scoped-principal Function URL only to the trusted operator role — *never* to the persona as an authenticated end-user. Surfacing filtered IDs to a less-trusted caller (a multi-tenant fork, an end-user endpoint) is out of scope and would require re-deciding this boundary. |
 
 The labels are written to **both** stores at ingest (Neptune node + edge properties;
@@ -202,18 +203,55 @@ Budgets alarm with a threshold + subscriber (charter principle 4).
   output is display-only, so a successful injection can at worst produce a misleading
   display string — it routes to `security-reviewer` if the demo ever ingests private
   data or wires the output into a tool.
-- **SAST/SCA scanners, cdk-nag, pip-audit.** Recommended as CI gates; ruff `S` +
-  the explicit synth assertions cover the controls in the meantime. (Wiring
-  `pip-audit`/Dependabot is the standing follow-up — see the security-review note in
-  the `vector-rag-baseline` plan.)
-- **Live IAM/SG evaluation.** Source/synth review only; the deployed-config review
-  rides the deferred `graph-ingestion-resolution-live-deploy` backlog item.
-- **Uniform least-privilege SG *egress*.** The OpenSearch SG and the slice-3 query
-  Lambda SG set `allow_all_outbound=False`, but the other compute SGs (Fargate
-  ingestion, both smoke probes) default to allow-all egress. In the no-NAT,
-  VPC-endpoint-only VPC there is no internet path, so this is **not exploitable** —
-  accepted as defence-in-depth debt.
-  The follow-up is a single uniform pass setting `allow_all_outbound=False` + explicit
-  443 egress on every compute SG (do it across all SGs at once, not per-slice, to
-  avoid asymmetry); it becomes load-bearing only if a NAT or public endpoint is ever
-  added.
+- **SAST/SCA scanners, cdk-nag, pip-audit.** **Discharged** by
+  `security-hardening-followups`: CI (`.github/workflows/ci.yml`) now runs
+  `pip-audit` (fails on a known vuln; reason+expiry suppressions in
+  `.pip-audit-ignore`) and `cdk synth` with **cdk-nag** as a **hard** gate (an
+  unsuppressed `AwsSolutions` finding fails the build; accepted residuals carry
+  reason-signed `NagSuppressions`), and `.github/dependabot.yml` covers the `pip`
+  + `github-actions` ecosystems. ruff `S` stays on. Remaining open follow-on
+  (its own backlog item, now unblocked): a repo-wide secret scanner +
+  `shellcheck` job — see `infra-secret-scan-ci`.
+- **Live IAM/SG evaluation.** **Discharged** by `security-hardening-followups`
+  AC9: the tightened egress was evaluated on a clean live deploy (both smoke
+  probes + Fargate ingest + hybrid Function-URL query all succeeded with no
+  silent egress block), the deployed SG-egress/IAM posture captured, then torn
+  down. See "Live SG-egress posture (AC9)" below.
+- **Uniform least-privilege SG *egress*.** **Discharged** by
+  `security-hardening-followups` (AC1/AC2): every in-VPC compute SG —
+  `IngestionSg`, `SmokeSg`, `VectorSmokeSg`, `QuerySg` — now sets
+  `allow_all_outbound=False` with explicit egress to **exactly** the in-VPC
+  stores (Neptune 8182 / OpenSearch 443) and VPC endpoints (443) it calls (the
+  S3 corpus read via the managed S3 prefix list). A per-SG set-equality synth
+  assertion holds the minimal set; the no-NAT topology (ADR-0002) is preserved,
+  now with the SG as a defence-in-depth layer too rather than allow-all.
+
+## Live SG-egress posture (AC9)
+
+Live evaluation of the tightened closed-egress compute SGs on a clean deploy
+(account `752989493306`, `us-east-1`, stack `GraphragSlice1`, 2026-06-30), then
+`cdk destroy`. **Result: every live path succeeded under `allow_all_outbound=False`
+— no silent egress block (the documented Bedrock-hang regression did not occur).**
+
+| Live path | Exercises | Egress validated (no block) | Result |
+| --- | --- | --- | --- |
+| Neptune smoke Lambda | `SmokeSg` | Neptune 8182, Logs/STS 443 | `{"ok": true, …, "neighbors":[…]}` |
+| Vector smoke Lambda | `VectorSmokeSg` | OpenSearch 443, **Bedrock 443**, Logs/STS | `{"ok": true, …, "dims": 256}` (real Titan embed) |
+| Fargate ingest task | `IngestionSg` | S3 (prefix list), ECR, **Bedrock**, Neptune, OpenSearch, Logs/STS | exit 0; parsed 10 docs, 22 nodes/28 edges, 14 vector chunks, 6 parents, 3 community summaries (Bedrock Converse), 6 cross-source resolutions |
+| Hybrid Function-URL query (SigV4) | `QuerySg` | Neptune 8182, OpenSearch 443, **Bedrock 443**, Logs/STS | full result — OpenSearch seeds → 2-hop Neptune traversal → Bedrock Claude synthesis |
+
+**Deployed egress (from `describe-security-groups`), confirming AC1/AC2 live:**
+
+| Compute SG | Rendered egress (live) |
+| --- | --- |
+| `IngestionSg` | `8182`→Neptune SG; `443`→OpenSearch SG + 5 interface-endpoint SGs (Bedrock/EcrApi/EcrDocker/Logs/STS); `443`→S3 managed prefix list `pl-63a5400a` |
+| `SmokeSg` | `8182`→Neptune SG; `443`→Logs + STS endpoint SGs |
+| `VectorSmokeSg` | `443`→OpenSearch SG + Bedrock/Logs/STS endpoint SGs |
+| `QuerySg` | `8182`→Neptune SG; `443`→OpenSearch SG + Bedrock/Logs/STS endpoint SGs |
+
+**No compute SG carries a `0.0.0.0/0` egress rule** (only the AWS-managed
+interface-endpoint SGs and the unused VPC `default` SG do — endpoints do not
+initiate outbound, so this is out of the closed-egress scope). The **`QueryRole`
+Neptune grant is read-only live** — `neptune-db:connect` + `ReadDataViaQuery`,
+no Write/Delete (ADR-0004 preserved; not weakened to pass any gate). The stack was
+torn down with `destroy.sh`; Budgets held at 150.

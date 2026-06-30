@@ -1,6 +1,6 @@
 # Spec: security-hardening-followups
 
-- **Status:** Draft <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Shipped <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** charter (principle 5, principle 7, principle 4; Scope "Production authorization" non-goal), ADR-0009, ADR-0002, ADR-0004, ADR-0003
@@ -94,60 +94,124 @@ before proceeding; *Never do* is a hard rule, even under time pressure.
 
 ## Acceptance Criteria
 
-- [ ] **AC1** Every in-VPC compute SG — `IngestionSg`, `SmokeSg`,
+- [x] **AC1** Every in-VPC compute SG — `IngestionSg`, `SmokeSg`,
   `VectorSmokeSg`, `QuerySg` — renders `allow_all_outbound=False`; no compute SG
   renders a `0.0.0.0/0` protocol `-1` egress rule (synth assertion in
   `test_stack.py`).
-- [ ] **AC2** Each compute SG's rendered egress **equals** (not merely contains)
+- [x] **AC2** Each compute SG's rendered egress **equals** (not merely contains)
   the exact peer/port set defined for it in the per-SG egress table in `plan.md`
   § Design decisions — Neptune `8182`, OpenSearch `443`, and the
   interface/gateway VPC endpoints `443` as that component requires, and nothing
-  more. Asserted per-SG as a set-equality; the prior
-  `test_query_lambda_sg_allows_outbound` allow-all guard is replaced by this
-  closed-egress assertion. (The table is the source of truth; if AC9's live run
-  reveals a missing target, the table and the assertion are corrected together.)
-- [ ] **AC3** `pip-audit` runs in CI over the locked dependency set and the job
+  more. **Normalization (so set-equality is mechanically derivable against the
+  synthesized template):** with `allow_all_outbound=False`, CDK renders **every**
+  egress rule as a **standalone** `AWS::EC2::SecurityGroupEgress` resource keyed by
+  `GroupId` Ref to the compute SG — the SG-to-SG rules carry a
+  `DestinationSecurityGroupId` Ref/GetAtt to the peer SG's logical id, and the S3
+  rule carries `DestinationPrefixListId: {Ref: S3PrefixListId}` (the SG's inline
+  `SecurityGroupEgress` array is absent). The assertion, per compute SG: gather
+  both the standalone resources and any inline egress (robust to either shape),
+  resolve each
+  `DestinationSecurityGroupId` Ref to its peer logical id and **classify** it
+  against the known peer set (the Neptune SG, the OpenSearch SG, and the five
+  named interface-endpoint SGs — matched by the endpoint name in the logical id),
+  resolve the prefix-list rule to the `S3PrefixListId` parameter, then assert the
+  resulting `{peer, FromPort}` set equals the table — exactly, nothing extra,
+  nothing missing. The prior `test_query_lambda_sg_allows_outbound` allow-all
+  guard is replaced by this closed-egress assertion. The table is the source of
+  truth and its *completeness* is **provisional until AC9** (a closed-egress
+  synth assertion cannot see a missing-but-needed target — that surfaces only as
+  the documented silent live hang); if AC9 reveals a missing target, the table
+  and the assertion are corrected together.
+- [x] **AC2b** The `S3PrefixListId` `CfnParameter` (the one parameter-derived
+  egress target the closed-egress posture rests on) carries
+  `allowed_pattern=r"^pl-[0-9a-f]+$"` so a CIDR / free-form / over-broad value is
+  rejected at the CloudFormation boundary. The parameter carries **no default**
+  (the id is region-specific, so a region-wrong default would be a silent footgun);
+  `apps/infra/scripts/deploy.sh` resolves it per-region from
+  `describe-managed-prefix-lists` filtered to the AWS-managed
+  `com.amazonaws.<region>.s3` list (rejecting a no-match before deploy), and a raw
+  `cdk deploy` without it fails loudly. Goal-checked: the param has the pattern and
+  no default; `deploy.sh` resolves + passes `S3PrefixListId`.
+- [x] **AC3** `pip-audit` runs in CI over the locked dependency set and the job
   fails on a known vulnerability; accepted exceptions live in a committed ignore
-  file, each with a one-line reason.
-- [ ] **AC4** `cdk-nag` runs at synth time as a **hard gate**: an unsuppressed
-  finding fails `cdk synth` / CI. Verified by a deliberate temporary violation
-  that fails the build. Every `NagSuppressions` entry carries a non-empty
-  `reason` that cites its sign-off (the approving PR/issue) — the reviewed
-  sign-off itself is the Ask-first boundary below.
-- [ ] **AC5** `.github/dependabot.yml` covers the `pip` and `github-actions`
+  file (`.pip-audit-ignore`, consumed by the CI command), each entry carrying a
+  one-line reason **and** a review-by date or tracking issue (a suppression
+  without an expiry rots — it silently masks a CVE after an upstream fix ships).
+  The file may start empty-but-headered if the tree has no known vuln.
+- [x] **AC4** `cdk-nag` runs at synth time as a **hard gate**: an unsuppressed
+  finding fails `cdk synth` / CI. Verified two ways: (a) a **durable, committed**
+  synth assertion in `test_stack.py` applies `AwsSolutionsChecks` and asserts the
+  stack carries **no unsuppressed `AwsSolutions-*` error annotation** — this fails
+  offline if the aspect is later dropped from `app.py` or a violating resource is
+  added, so the gate has an artifact that regresses, not just a one-time check;
+  and (b) a deliberate temporary violation that fails the build (proven once, then
+  removed). Every `NagSuppressions` entry carries a non-empty `reason` that cites
+  its sign-off (the approving PR/issue) — the reviewed sign-off itself is the
+  Ask-first boundary below.
+- [x] **AC5** `.github/dependabot.yml` covers the `pip` and `github-actions`
   ecosystems and validates.
-- [ ] **AC6** `.github/workflows/ci.yml` runs, on push and PR, the full gate set
-  with pinned commands — `ruff check` + `ruff format --check`, `mypy`, `pytest`,
-  `pip-audit`, and `cdk synth` (with `cdk-nag`) — and a green run is the
-  documented merge gate; the same commands replace the unfilled `<…>` template in
-  `AGENTS.md` § Commands so the workflow and the doc agree. This workflow is the
-  CI surface the deferred `infra-secret-scan-ci` backlog item was blocked on;
-  adding the gitleaks/`shellcheck` jobs to it stays **out of scope** here and
-  remains that item's open follow-on (now unblocked).
-- [ ] **AC7** An opt-in default-deny clearance mode exists and is **observable**,
+- [x] **AC6** `.github/workflows/ci.yml` runs, on push and PR, the full gate set
+  with pinned commands — `ruff check packages apps` + `ruff format --check
+  packages apps` (scoped to the project's own Python, matching `[tool.ruff].src`;
+  `.claude/` bundled agent assets and `tools/`/`scripts/` dev tooling are
+  deliberately out of the strict gate), `mypy`, `pytest`, `pip-audit`, and `cdk
+  synth` (with `cdk-nag`) — and a green run is the documented merge gate; the same
+  commands replace the unfilled `<…>` template in `AGENTS.md` § Commands so the
+  workflow and the doc agree. **Toolchain pinned:** `ruff`/`mypy` are pinned to
+  exact versions (a floating `ruff>=0.5` is itself a non-deterministic gate);
+  because the repo has never had a CI surface, a green `ruff format --check`
+  requires a **one-time `ruff format` of `packages apps` under the pin**
+  (pre-existing drift, ~18 files) — a declared precondition for this gate to
+  exist, landed as its own labeled commit so the security diff stays legible.
+- [x] **AC6b** The workflow hardens its own (net-new) trust surface: a top-level
+  least-privilege `permissions: contents: read` (elevated per-job only where a
+  step demonstrably needs it); it triggers on `pull_request` (never
+  `pull_request_target`, which would run untrusted-PR code with a write-scoped
+  token); and **every `uses:` action is pinned to a full 40-char commit SHA**
+  (with a `# vX.Y` comment), not a mutable tag — Dependabot's `github-actions`
+  ecosystem (AC5) keeps the SHAs current. This workflow is the CI surface the
+  deferred `infra-secret-scan-ci` backlog item was blocked on; adding the
+  gitleaks/`shellcheck` jobs to it stays **out of scope** here and remains that
+  item's open follow-on (now unblocked).
+- [x] **AC7** An opt-in default-deny clearance mode exists and is **observable**,
   not just unit-asserted, with this exact input→outcome contract (unit-tested in
   `tests/test_visibility.py`, the resolver in `visibility.py`):
   - default-deny ON, **no principal** (`None`/absent or empty string `""`) ⇒ the
-    empty `Clearance` (`allowed=frozenset()`, sees nothing) — the fail-closed
-    inversion;
+    empty `Clearance` — exactly `Clearance(persona="default-deny",
+    allowed=frozenset())` (the `persona` field is required and default-less, so
+    the sentinel value is pinned; it also makes `_print_persona` render a legible
+    `persona: default-deny  clearance allows: []` banner) — sees nothing, the
+    fail-closed inversion;
   - default-deny ON, **unrecognized non-empty** persona ⇒ still raises
     `ValueError` (the existing fail-closed raise, unchanged);
   - default-deny ON, **known** persona ⇒ that persona's normal `Clearance`.
-  The mode is wired through the CLI (`cli.py:_clearance`, e.g. a `--default-deny`
-  flag) so "no principal ⇒ sees nothing" is demonstrable at the command line. It
+  **Flag precedence (so the inversion is unambiguous):** `--default-deny` governs
+  **only the absent-principal cell** — it must not short-circuit before persona
+  resolution. When a `--persona` is present the three persona rows above hold
+  *regardless* of the flag (unknown ⇒ raise, known ⇒ normal clearance); the flag
+  changes behavior only when no persona is given. The mode is wired through the
+  CLI (`cli.py:_clearance`, a `--default-deny` store-true flag) so "no principal
+  ⇒ sees nothing" is demonstrable at the command line (a goal-checked CLI run). It
   is **additive and opt-in**: default-deny OFF keeps `clearance=None` ⇒
   unrestricted for every shipped mode, byte-identical. The query layer is
   unchanged — an empty `Clearance` already means "sees nothing" today.
-- [ ] **AC8** The default-deny mode is documented in-code and in `security.md`
-  as still a synthetic teaching stand-in (charter principle 5), demonstrating the
-  fail-open→fail-closed inversion named in `security.md` (slice-4 boundary table)
-  — explicitly *not* real authz.
-- [ ] **AC9** (live) Deployed on a clean account, the tightened SGs pass live:
+- [x] **AC8** The default-deny mode is documented as still a synthetic teaching
+  stand-in (charter principle 5), demonstrating the fail-open→fail-closed
+  inversion named in `security.md` (slice-4 boundary table) — explicitly *not*
+  real authz — in **all three** surfaces a reader meets it: the `visibility.py`
+  resolver + `_clearance` docstrings, `security.md`, **and the `--default-deny`
+  CLI `--help` string itself** (the most likely place a copy-paster first meets
+  the flag).
+- [x] **AC9** (live) Deployed on a clean account, the tightened SGs pass live:
   ingest, hybrid Function-URL query, and both smoke probes succeed with no silent
   egress block; the deployed SG-egress + IAM posture is captured into
   `security.md`; then `cdk destroy` removes every billable resource (Budgets held
   at 150). (run-or-defer per live-deploy availability; deferred:
-  security-hardening-followups-live-eval if unavailable)
+  security-hardening-followups-live-eval if unavailable) **Terminal status:** T5
+  sets the spec `Status:` to `Shipped` **iff** AC9 runs and passes; if AC9 is
+  deferred (live deploy unavailable), `Status:` is `Implementing` and AC9 carries
+  `(deferred: security-hardening-followups-live-eval)`. Live deploy is available
+  in this environment (Assumptions), so the expected path is `Shipped`.
 
 ## Assumptions
 
