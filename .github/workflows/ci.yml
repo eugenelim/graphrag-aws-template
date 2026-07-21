@@ -50,7 +50,7 @@ jobs:
       # cdk synth with cdk-nag as a hard gate (AC4/AC6): an unsuppressed AwsSolutions finding
       # fails the synth. The in-process nag assertion also runs under pytest above (AC4a); this
       # step additionally proves the app.py aspect wiring end-to-end via the real CLI.
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "20"
       - name: Install cdk CLI
