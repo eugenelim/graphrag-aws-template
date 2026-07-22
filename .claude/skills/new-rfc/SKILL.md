@@ -1,6 +1,6 @@
 ---
 name: new-rfc
-description: Use this skill when the user asks to propose, draft, or open an RFC (request for comments). Triggers on "RFC", "propose a change to...", "let's get input on...", "draft a proposal". Do NOT use for already-decided things (use `new-adr`) or single-feature specs (use `new-spec`).
+description: Use this skill when the user asks to propose, draft, or open an RFC, OR when generating follow-on implementation artifacts (specs, ADRs) for an already-Accepted RFC. Triggers on "RFC", "propose a change to...", "let's get input on...", "draft a proposal", "create the follow-on specs for RFC-NNNN", "generate ADRs for the accepted RFC", "implement the follow-on work from an RFC". Do NOT use for recording a standalone architectural decision outside an RFC context (use `new-adr`), or for authoring a spec with no associated Accepted RFC (use `new-spec` for standalone spec authoring; for RFC follow-on work, invoke this skill first).
 ---
 
 # Skill: new-rfc
@@ -118,19 +118,29 @@ push back: a normal PR (or a spec, if it's a feature) is enough.
      source, fetch it and confirm it resolves *and* contains the borrowed
      claim before that claim enters the findings. Never pass an unverified
      citation through.
-   - **Recommend per decision.** For each decision/subpoint: the question,
-     what repo precedent suggests, what external prior art suggests, and a
-     recommended answer with one-sentence reasoning + owner + decide-by. Cap
-     genuinely-open questions at ~3.
+   - **Recommend per decision — and make each one decidable in this message.**
+     Present enough per decision that the human can decide *here*, without
+     opening a file: the question in plain language; the concrete options with
+     their real trade-offs and what accepting each one costs; what repo
+     precedent and external prior art suggest; and a recommended answer with
+     one- or two-sentence reasoning + owner + decide-by. A bare list of option
+     *names* is not decidable — give the trade-offs and the consequence of each.
+     Cap genuinely-open questions at ~3.
 
-   Emit the findings under exactly these headings:
+   Emit the findings under exactly these headings. Each decision is
+   self-contained — a reader decides from the block alone:
 
    ```
    RESEARCH FINDINGS:
 
    ## Decisions / subpoints
-   1. **<subpoint>** — options (MECE along <axis>, prior-art-grounded): …
-      · recommendation: … · owner: … · decide-by: …
+   1. **<subpoint — the decision, as a plain-language question>**
+      - Options (MECE along <axis>, prior-art-grounded; always include do-nothing):
+        - **<option A>** — <what it is, in plain terms> · trade-off: <what it
+          buys vs. costs> · if accepted: <the concrete consequence>
+        - **<option B>** — … · trade-off: … · if accepted: …
+      - Recommendation: **<option>** — <one or two sentences of why, from the
+        evidence below> · owner: … · decide-by: …
 
    ## Prior art (in repo)
    - …
@@ -174,6 +184,17 @@ push back: a normal PR (or a spec, if it's a feature) is enough.
    detail to the optional `NNNN-notes/` companion (step 2). Default the body to
    the argument and link the proof.
 
+   **Write for a cold reader — define coined terms on first use.** An RFC must be
+   readable by someone who has *not* read the related RFCs. Every project-coined
+   term, acronym, or back-reference to a sibling RFC gets a plain-language gloss
+   the first time it appears in the body — **inline, in a few words, not in a
+   separate glossary section**. Don't lean on vocabulary inherited from related
+   RFCs as if the reader already holds it: a reviewer arrives at the RFC from the
+   index, cold. (The cautionary case: an RFC that has to be hand-patched with
+   inline glosses *after* drafting because the draft assumed its siblings' terms;
+   the cold-reader check in the gate, step 6, exists to catch this before
+   handoff.)
+
    Sections to push hardest on:
    - **Reviewer brief.** The fixed first-screen orientation grid, above The ask,
      de-duplicated against it (orients, doesn't argue).
@@ -189,7 +210,7 @@ push back: a normal PR (or a spec, if it's a feature) is enough.
      assumptions + drawbacks. If they say "no drawbacks", push back.
    - **Evidence & prior art.** Empty prior art is a finding (no one has done
      this) — surface it; never leave it blank or fabricated. Promoted research
-     from a sustained investigation (e.g. a `research`-pack project brief) can
+     from a sustained investigation (e.g. a `desk-research`-pack project brief) can
      live in the optional `NNNN-notes/` companion; summarize and link it here.
    - **Open questions.** Each carries a recommended default + owner +
      decide-by; aim for ≤3.
@@ -230,6 +251,17 @@ push back: a normal PR (or a spec, if it's a feature) is enough.
      reports clean; add `security-reviewer` if the RFC touches a security
      boundary. If no such subagent is installed, note it in the summary
      rather than skipping silently.
+   - **Cold-reader readability check.** Dispatch a **generic** subagent in a
+     fresh context, given **only the RFC text** and told *not* to read the
+     project docs, `CLAUDE.md`/`AGENTS.md`, or sibling RFCs — its sole job is to
+     list every term, acronym, or back-reference it cannot resolve from the RFC
+     alone. Gloss each flagged item (step 5's cold-reader rule) before handoff.
+     This is a *generic* dispatch with a context-denial prompt, **not** a named
+     reviewer role, and it runs **in addition to** — never as a substitute for —
+     the adversarial pass above (which loads project conventions by design and so
+     cannot be the cold-reader instrument). If the harness offers no subagent
+     dispatch at all, do the cold read in a fresh pass and note it rather than
+     skipping silently.
 
    **Hand back a reviewer-friendly readiness summary, not a compliance dump.**
    The checks above are run to build the *reviewer's* confidence, so report
@@ -247,6 +279,7 @@ push back: a normal PR (or a spec, if it's a feature) is enough.
    - Citations checked: yes/no
    - Open questions owned: yes/no
    - Adversarial pass: clean | issues linked
+   - Cold-reader check: clean | terms glossed | skipped (no subagent)
    ```
 
 7. Set status to `Draft` until the user is ready to circulate, then `Open`.
@@ -256,12 +289,62 @@ push back: a normal PR (or a spec, if it's a feature) is enough.
 
 ## After acceptance
 
-When the RFC is accepted, the *follow-on artifacts* section should list
-concrete next steps — usually:
+**Session-fragmentation guard.** Before generating any follow-on artifact,
+check `workspace.toml` for each `spec/<path>` you are about to create (the
+only artifact form the `[work]` queue accepts; ADRs and CONVENTIONS edits are
+not checkable and stay in the follow-on artifact list below):
+
+1. If `workspace.toml` is absent → skip this check silently and proceed to
+   the prompt.
+2. Scan all `status = "active"` initiative sections. For each spec path about
+   to be created, check `[work].queue`, `[work].active`, and `[work].shipped`.
+   Match both bare-string entries (`"spec/foo"`) and inline-object entries
+   (`{path = "spec/foo", ...}`). If more than one initiative is active, the
+   existing tie-break (ask which initiative) applies when appending in the
+   prompt below (step 5).
+3. Collect the absent spec paths — those not found in any of the three arrays.
+4. If **all** spec paths are already present → skip this check silently and
+   proceed to artifact generation.
+5. If **any** spec paths are absent → run the prompt below, offering to queue
+   the absent paths.
+
+This guard fires for both the in-session case (RFC just moved to Accepted in
+this session) and the follow-on session case (RFC was Accepted in a prior
+session and you are now generating follow-on artifacts). Both cases reach the
+single shared prompt below — there is no separate in-session trigger. If the
+user declines the prompt, paths remain absent; a subsequent same-session
+invocation will re-prompt over the still-absent paths.
+
+When the guard fires, offer to queue the missing follow-on implementation work
+in `workspace.toml`:
+
+**Prompt the user:** "Add implementation specs to `workspace.toml` queue?"
+
+- **If yes:** check for `workspace.toml` in the working directory.
+  - **If present:** read the target initiative section (`["<initiative-slug>"]`).
+    If the section is absent, ask the user to confirm the initiative slug and
+    offer to create the section with an empty `[work].queue` before appending —
+    do not silently skip and do not auto-create. Help the user add entries in
+    the `{path = "...", needs = "..."}` inline-object format (see
+    `docs/product/workspace-toml-deps.md` for the full entry format and prefix
+    notation). If
+    `[work].queue` already contains an entry for the same path, surface the
+    duplicate and ask whether to add anyway or skip. Stage the file. If
+    `workspace.toml` has more than one `status = "active"` initiative section,
+    ask which initiative's queue to append to.
+  - **If absent:** emit the literal note
+    "workspace.toml not found — add the entry manually when Batch 2 lands"
+    and continue to the follow-on artifact list. No error or exception.
+- **If no:** leave `workspace.toml` unchanged and continue to the
+  follow-on artifact list.
+
+Then present the *follow-on artifacts* section — the queue-write step is
+additive; the following list runs unchanged:
 
 - One or more ADRs to record the architectural decisions.
 - One or more specs in `docs/specs/` for features.
 - Edits to `docs/CONVENTIONS.md` if the RFC changes conventions.
+- **Phase-slice sequencing (multi-phase RFCs only):** when the RFC covers multiple journey phases, confirm that each phase's roadmap includes its guide(s). Guides ship with the phase that introduces their capability — not in a terminal documentation wave. A phase entry in `workspace.toml` or the RFC's roadmap that ships tooling without a `docs/guides/` artifact is an incomplete slice; name the missing guide in the follow-on spec or as a `workspace.toml` queue entry.
 
 The RFC itself is then "done" and stays as historical record.
 
@@ -309,8 +392,8 @@ present rules without diffing the whole log by hand:
   the section so a reader knows which layer to trust.
 - The layer *names* above are illustrative; the contract is the two-layer split
   (authoritative current state over a dated audit trail), not the exact heading
-  wording. RFC-0048 / PR #430 is the worked precedent this generalizes — it uses
-  "Current reconciliation state" over an "Amendment history / audit trail."
+  wording. One worked precedent uses "Current reconciliation state" over an
+  "Amendment history / audit trail."
 
 ### Append-only and supersession
 
@@ -325,8 +408,8 @@ present rules without diffing the whole log by hand:
   in-flight Amendments** (a Frozen RFC's entries can't be touched).
 - **Whole-RFC replacement is out of scope.** When an entire RFC — not one
   correction within it — is superseded by a later one, record that as an
-  **Errata entry naming the superseding RFC** (e.g. RFC-0012 carries an erratum
-  recording that its Alternative #7 was superseded by RFC-0052). This convention
+  **Errata entry naming the superseding RFC** (e.g. an RFC carries an erratum
+  recording that its Alternative #7 was superseded by a later RFC). This convention
   governs corrections *within* an RFC; it neither defines nor changes the
   whole-RFC-supersession mechanism.
 
@@ -359,3 +442,12 @@ present rules without diffing the whole log by hand:
 - A title that carries the whole abstract → shorten it to *identify* the
   proposal; the explanation lives in **The ask**, and a scannable RFC index
   depends on it.
+- Leaning on vocabulary inherited from sibling RFCs — a coined term, acronym, or
+  back-reference the cold reader can't resolve — without glossing it on first use
+  → the reviewer arrives from the index, not from the related RFC; define it
+  inline (step 5), and let the gate's cold-reader check (step 6) catch what you
+  missed.
+- Handing the human a decision too terse to decide from — a bare list of option
+  *names* with no trade-offs and no consequence-of-each → the research phase
+  already produced the trade-offs; put them in the chat handoff so the decision
+  can be made in the message, not after opening files (step 4).
