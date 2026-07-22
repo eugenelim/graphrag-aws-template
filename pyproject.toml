@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=83"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -34,6 +34,9 @@ ingest = [
     "networkx>=3.0",
 ]
 dev = [
+    # setuptools floor pinned above the PYSEC-2026-3447 fix (83.0.0); forces pip to upgrade
+    # the runner's pre-installed 79.0.1 so pip-audit stays clean.
+    "setuptools>=83",
     "pytest>=8.0",
     # ruff/mypy are pinned to EXACT versions, not floors: the CI `ruff format --check`
     # gate (security-hardening-followups AC6) is only deterministic if every run formats
