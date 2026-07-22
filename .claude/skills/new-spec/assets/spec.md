@@ -5,6 +5,7 @@
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** <!-- ADR-NNNN, RFC-NNNN, or "none" -->
 - **Brief:** <!-- optional: the product brief this spec was derived from (`docs/product/briefs/<slug>.md`); stamped by receive-brief. Omit, or "none", for a spec authored directly. Distinct from Constrained by: this is product provenance, not a governance constraint. -->
+- **Discovery:** <!-- optional: the upstream discovery artifact this spec descended from (a decision brief / intent produced by an upstream discovery process), named by its stable id; the discovery-side sibling of Brief: (the spec→discovery up-edge a traceability check walks). Omit, or "none", for a spec authored without an upstream discovery. -->
 - **Contract:** <!-- contracts/<type>/<name> this spec defines or touches (see new-spec step 4b / CONVENTIONS § 4 Contracts), or "none" for a non-API feature. A contract surface is not just a synchronous REST API — an event interface or a backend-for-frontend (BFF) boundary is a contract too; name it here and author it under contracts/<type>/. -->
 - **Shape:** <!-- optional: ui | service | data | integration | mixed — selects which `## Design (LLD)` sub-sections scaffold in plan.md (e.g. ui pulls in component decomposition + state & control flow; service pulls in interfaces & contracts + data & schema + resilience — the plan template carries the authoritative map). Omit, or "mixed", when the feature spans several or you're unsure; the plan then scaffolds the full set and you prune. Stack-neutral: it names the *kind* of work, never a framework. -->
 
@@ -117,11 +118,11 @@ mere design detail:
 - [ ] <observable outcome>
 
 A criterion that ships unmet *on purpose* is never left silently unchecked —
-mark it deferred with an inline anchor into the backlog register:
+mark it deferred with a slug that resolves in `workspace.toml [backlog].open`:
 
-- [ ] <observable outcome> (deferred: <backlog-anchor>)
+- [ ] <observable outcome> (deferred: <slug>)
 
-where <backlog-anchor> resolves to a heading in `docs/backlog.md`.
+where <slug> matches a `slug` field in `workspace.toml [backlog].open`.
 
 Optional story trace: when this spec was derived from a product brief that
 carries user stories (Shape B; see receive-brief), append `Satisfies: US-n`

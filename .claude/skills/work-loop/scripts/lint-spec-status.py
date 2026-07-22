@@ -37,7 +37,8 @@ header `- **Status:**` field is checked; `plan.md` status is out of v1 scope.
         exit code); promoting it to a hard invariant stays deferred pending
         the observed warn rate.
   (iv)  deferral anchors resolve — every real `(deferred: <slug>)` marker
-        resolves to a heading anchor in `docs/backlog.md`. HARD (exit non-zero).
+        resolves against `workspace.toml [backlog].open` slug fields.
+        HARD (exit non-zero).
   (v)   spec↔contract traceability — a spec's
         `- **Contract:**` header (forward ref) names contract file(s) under
         `contracts/<type>/`; each must exist and carry a backward pointer — an
@@ -86,8 +87,6 @@ _CONTRACT_TOKEN_RE = re.compile(r"contracts/[A-Za-z0-9._/-]+")
 # Vendor-extension-bearing contract formats (carry `x-spec` inline); other
 # formats (e.g. .proto, .graphql) use the REGISTRY.md back-ref channel.
 _XSPEC_FORMATS = (".yaml", ".yml", ".json")
-# Markdown heading line.
-_HEADING_RE = re.compile(r"^#{1,6}\s+(.*?)\s*#*\s*$")
 # AC checklist items.
 _AC_OPEN_RE = re.compile(r"^\s*-\s*\[ \]\s")
 _AC_DONE_RE = re.compile(r"^\s*-\s*\[[xX]\]\s")
@@ -117,26 +116,53 @@ def parse_status(spec_text: str) -> str | None:
     return None
 
 
-def slugify(heading: str) -> str:
-    """GitHub-style heading anchor slug: lowercase, drop punctuation
-    other than spaces/hyphens, spaces → hyphens."""
-    text = heading.strip().lower()
-    # Strip inline markdown emphasis/code markers before slugging.
-    text = text.replace("`", "")
-    text = re.sub(r"[^\w\s-]", "", text)
-    # GitHub does NOT collapse consecutive hyphens: a stripped `/` between
-    # two spaces yields a double hyphen (`a / b` → `a--b`). Match that —
-    # only spaces become hyphens; existing/produced hyphen runs are kept.
-    return text.replace(" ", "-")
+
+def _regex_backlog_slugs(workspace_text: str) -> set[str]:
+    """Extract [backlog].open slugs from workspace.toml text via regex fallback.
+
+    Used when tomllib/tomli is unavailable or the TOML is malformed.
+    Scans for slug = "..." lines within the [backlog] section only.
+    """
+    slugs: set[str] = set()
+    in_backlog = False
+    for line in workspace_text.splitlines():
+        if re.match(r"^\s*\[backlog\]", line):
+            in_backlog = True
+        elif re.match(r"^\s*\[", line) and "[backlog]" not in line:
+            in_backlog = False
+        if in_backlog:
+            m = re.search(r'\bslug\s*=\s*"([^"]+)"', line)
+            if m:
+                slugs.add(m.group(1))
+    return slugs
 
 
-def backlog_anchors(backlog_text: str) -> set[str]:
-    anchors: set[str] = set()
-    for line in backlog_text.splitlines():
-        m = _HEADING_RE.match(line)
-        if m:
-            anchors.add(slugify(m.group(1)))
-    return anchors
+def backlog_open_slugs(workspace_path: Path) -> set[str]:
+    """Return the set of slugs from workspace.toml [backlog].open.
+
+    Uses tomllib (Python 3.11+ stdlib) or tomli (backport) when available;
+    falls back to regex for all other cases including malformed TOML.
+    Returns an empty set when workspace.toml is absent.
+    """
+    if not workspace_path.is_file():
+        return set()
+    text = workspace_path.read_text(encoding="utf-8", errors="replace")
+    try:
+        try:
+            import tomllib  # type: ignore[import]
+        except ImportError:
+            try:
+                import tomli as tomllib  # type: ignore[import,no-redef]
+            except ImportError:
+                return _regex_backlog_slugs(text)
+        data = tomllib.loads(text)
+        return {
+            e["slug"]
+            for e in data.get("backlog", {}).get("open", [])
+            if isinstance(e, dict) and "slug" in e
+        }
+    except ValueError:
+        return _regex_backlog_slugs(text)
 
 
 def deferred_anchors(spec_text: str) -> list[tuple[int, str]]:
@@ -268,6 +294,8 @@ def _repo_root() -> Path:
         if r.returncode == 0 and r.stdout.strip():
             return Path(r.stdout.strip())
     except FileNotFoundError:
+        # `git` may be unavailable on PATH; fall through to the
+        # script-relative root, which is the intended fallback.
         pass
     return Path(__file__).resolve().parent.parent
 
@@ -277,12 +305,8 @@ def check(root: Path, base_ref: str | None) -> tuple[list[str], list[str]]:
     hard: list[str] = []
     warn: list[str] = []
 
-    backlog_path = root / "docs" / "backlog.md"
-    anchors = (
-        backlog_anchors(backlog_path.read_text(encoding="utf-8", errors="replace"))
-        if backlog_path.is_file()
-        else set()
-    )
+    workspace_path = root / "workspace.toml"
+    anchors = backlog_open_slugs(workspace_path)
 
     base_resolvable = base_ref is not None
     if not base_resolvable:
@@ -311,7 +335,7 @@ def check(root: Path, base_ref: str | None) -> tuple[list[str], list[str]]:
             if anchor not in anchors:
                 hard.append(
                     f"{rel}:{lineno}: invariant (iv) — (deferred: {anchor}) "
-                    f"does not resolve to a heading in docs/backlog.md"
+                    f"does not resolve in workspace.toml [backlog].open"
                 )
 
         # (ii) ACs at the ship transition (diff-triggered)
