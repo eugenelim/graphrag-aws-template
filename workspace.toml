@@ -1,0 +1,113 @@
+# workspace.toml
+#
+# Declared-intent coordination artifact for this repo.
+# Each initiative gets its own named section. Run `workspace-status` to surface
+# ready items, blocked items, and active signals — or to initialise this file
+# with your first initiative and the full schema.
+#
+# Queue entries are strings (no deps) or inline objects {path/slug, needs}.
+# `needs` uses queue-prefix notation:
+#   "work:<path>"      — depends on a work queue entry
+#   "shape:<slug>"     — depends on a shaping queue entry
+#   "research:<slug>"  — depends on a research entry
+#   "brief:<path>"     — depends on a brief queue entry
+#   "backlog:<slug>"   — depends on a repo-level [backlog] item
+#
+# The [backlog] section below tracks open work not yet scoped to an initiative.
+# Add items as: {slug = "my-deferred-item"}
+# Run `workspace-status` to see all open backlog items.
+
+[backlog]
+open = [
+
+  # ── easy: self-contained code fixes (no live deploy needed) ──────────────
+
+  # Mirror the opensearch urllib fix to neptune: catch HTTPError, return
+  # HttpResponse(status, text) instead of raising — same unit test pattern.
+  # store/neptune.py _UrllibClient.request.  Source: vector-rag-baseline spec.
+  {slug = "neptune-urllib-http-error-idempotency", source = "docs/specs/opensearch-create-index-idempotency/"},
+
+  # Add errors="replace" to the 2xx decode path in _UrllibClient.request
+  # (opensearch + neptune) so a malformed-body 200 doesn't bypass _request's
+  # uniform RuntimeError.  One-liner; symmetric with the error-path fix.
+  {slug = "opensearch-urllib-success-decode", source = "docs/specs/opensearch-create-index-idempotency/"},
+
+  # Clamp k to a sane ceiling at both VectorStore.knn and
+  # ParentChildStore.search adapters (cross-cutting one-liner; OWASP API4).
+  # Doing only one adapter leaves the sibling inconsistent.
+  {slug = "bound-knn-k-at-vector-adapters", source = "docs/specs/parent-child-retrieval/"},
+
+  # Narrow cdk-nag IAM5/IAM4 suppressions from stack-level to specific
+  # role/policy constructs via add_resource_suppressions — defence-in-depth
+  # gap today; present grants are legitimately scoped.
+  # apps/infra/stacks/graphrag_stack.py add_nag_suppressions.
+  {slug = "security-hardening-followups-nag-iam-resource-scope", source = "docs/specs/security-hardening-followups/"},
+
+  # Include typed edges (src → kind → dst) from the hop trace in the context
+  # synthesize() builds for the Bedrock Claude call — hybrid_query already has
+  # the trace with edge kinds; this stops Claude hedging on the ownership chain.
+  # Verify: re-run live entity-led query, confirm KEP-1880/2086 named as owned.
+  {slug = "hybrid-orchestration-synthesis-edges", source = "docs/specs/hybrid-orchestration/"},
+
+  # Add a debug-level log line on create_index's tolerated-4xx branch so the
+  # already-exists tolerance is observable.  Only when the store grows logging;
+  # no change to the error contract.
+  {slug = "opensearch-urllib-no-trace-on-tolerated-400", source = "docs/specs/opensearch-create-index-idempotency/"},
+
+  # Extract a shared module-level _signed_opencypher helper in store/neptune.py
+  # and wire both NeptuneGraphStore and NeptuneCommunityStore to it — stops
+  # hardening changes (timeout, header, credential) from needing to land twice.
+  {slug = "share-signed-opencypher-run-helper", source = "docs/specs/global-community-summary/"},
+
+  # Add gitleaks/detect-secrets + shellcheck -x CI jobs to
+  # .github/workflows/ci.yml — the in-scope pre-pr.py guard is already landed;
+  # this is the repo-wide scanner gap kept out of security-hardening-followups.
+  {slug = "infra-secret-scan-ci", source = "docs/specs/infra-config-separation/"},
+
+  # ── larger implementation work (code-only, no live deploy needed) ─────────
+
+  # Refactor MODE=full / MODE=rebuild in entrypoint.py to parse the corpus
+  # once and thread docs through ingest(), _vector_dual_write(), and
+  # build_manifest() — currently parses three times.  Needs per-doc prop
+  # provenance or singly-sourced KEP title to do cleanly.
+  {slug = "incremental-delta-full-mode-triple-parse", source = "docs/specs/incremental-delta-reingest/"},
+
+  # Route MODE=full/rebuild through ingest_staged (Silver-cached Bronze/Silver/
+  # Gold driver) while preserving: IngestReport return, parent-child one-embed-
+  # pass, community summaries, schema-extraction flag/trace contract.  Rewrite
+  # test_entrypoint.py expectations.  Grounding caveat: when delta is wired,
+  # ground against store-merged graph (store ∪ scratch), not scratch alone.
+  {slug = "medallion-fullrebuild-staging", source = "docs/specs/medallion-staging/"},
+
+  # Recompute (or fail-closed clear) Community nodes in MODE=delta when any
+  # member entity's visibility label changes — today delta leaves Community.tier
+  # stale, producing a down-classification leak the query-time gate can't catch.
+  # Must handle both directions: stale-low (leak) and stale-high (availability).
+  {slug = "global-community-summary-delta-tier-refresh", source = "docs/specs/global-community-summary/"},
+
+  # ── live eval / QA (needs a live AWS deploy cycle) ────────────────────────
+
+  # AC9 deferred: deploy slice-1 stack, upload corpus snapshot, run ingestion
+  # task once; verify cdk destroy leaves no billable resource; confirm Budgets
+  # alarm fires.  Blocked on a maintainer running deploy/destroy on a clean
+  # account.
+  {slug = "graph-ingestion-resolution-live-deploy", source = "docs/specs/graph-ingestion-resolution/"},
+
+  # AC5 follow-on: run resolver eval over full kubernetes/community +
+  # kubernetes/enhancements clone (not the pinned CI excerpts) and record
+  # precision/recall on the complete shared-entity set.
+  {slug = "graph-ingestion-resolution-full-corpus-eval", source = "docs/specs/graph-ingestion-resolution/"},
+
+  # Full end-to-end re-confirm of the opensearch idempotency fix on a live
+  # deploy: deploy → slice-2 vector smoke probe (leaves index) → Fargate ingest
+  # completes past create_index → hybrid-query returns non-empty vector seeds
+  # → teardown.  Run when a deploy cycle is otherwise warranted.
+  {slug = "opensearch-create-index-idempotency-live-confirm", source = "docs/specs/opensearch-create-index-idempotency/"},
+
+  # AC9 live-eval: deploy on a clean account, confirm ingest + hybrid Function-
+  # URL query + both smoke probes succeed under allow_all_outbound=False +
+  # explicit per-SG egress; capture deployed SG-egress + IAM posture into
+  # docs/architecture/security.md; cdk destroy to zero billable resources.
+  {slug = "security-hardening-followups-live-eval", source = "docs/specs/security-hardening-followups/"},
+
+]
