@@ -86,6 +86,9 @@ queue   = [
   {slug = "spec-ingestion-extraction-cleanse", needs = ["shape:adr-0016-git-ingestion", "shape:adr-0012-owl-schema-only"]},
   # Provenance + citations spec — PROV-O model, Silver/Gold artifact metadata, MCP citation format
   {slug = "spec-provenance-citations",       needs = ["shape:adr-0012-owl-schema-only", "shape:spec-rdf-owl-ontology"]},
+  # SHACL shapes library — machine-readable data contract for RDF triple emission;
+  # pyshacl gate (inference="none") before Neptune LOAD; shapes colocated with OWL ontology; CI-safe (rdflib)
+  {slug = "spec-shacl-validation",           needs = ["shape:spec-rdf-owl-ontology"]},
 
   # Wave 5 — interface + observability decisions; depend on ADR-0014
   {slug = "adr-0015-otel-observability",     needs = ["shape:adr-0014-mcp-tool-server"]},
@@ -123,10 +126,17 @@ queue   = [
     "shape:spec-rdf-owl-ontology",
     "shape:spec-provenance-citations",
   ]},
+  # SHACL validation gate — pyshacl wrapper; fires between RDF triple emit and Neptune LOAD;
+  # on violation routes to quarantine graph with structured violation report; CI-safe (rdflib, no AWS)
+  {path = "packages/graphrag/shacl-validation",            needs = [
+    "work:packages/graphrag/neptune-sparql-store",
+    "shape:spec-shacl-validation",
+  ]},
   # Extraction + cleansing Fargate task: format router (pandoc/docling/markitdown/Textract),
-  # Silver artifact write, PII flagging, quarantine graph, Gold artifact (chunks + PROV-O).
+  # Silver artifact write, PII flagging, quarantine graph, SHACL gate, Gold artifact (chunks + PROV-O).
   {path = "packages/graphrag/ingestion-extraction-cleanse", needs = [
     "work:packages/graphrag/neptune-sparql-store",
+    "work:packages/graphrag/shacl-validation",
     "shape:spec-ingestion-extraction-cleanse",
     "shape:spec-provenance-citations",
   ]},
