@@ -73,8 +73,8 @@ resource "aws_ecs_task_definition" "ingestion" {
     image     = "${aws_ecr_repository.ingestion.repository_url}:latest"
     essential = true
     environment = [
-      { name = "NEPTUNE_ENDPOINT", value = "https://${aws_neptune_cluster.main.endpoint}:8182" },
-      { name = "OPENSEARCH_ENDPOINT", value = "https://${aws_opensearch_domain.graphrag_vectors.endpoint}" },
+      { name = "NEPTUNE_ENDPOINT", value = local.neptune_endpoint_url },
+      { name = "OPENSEARCH_ENDPOINT", value = local.opensearch_endpoint_url },
       { name = "CORPUS_BUCKET", value = aws_s3_bucket.corpus.id },
       { name = "SCHEMA_EXTRACTION", value = "false" },
     ]

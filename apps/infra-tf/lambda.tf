@@ -22,6 +22,11 @@ locals {
   # module dir (apps/infra-tf) -> apps/graphrag/dist/graphrag.zip. source_code_hash
   # validates presence + change detection, not contents.
   lambda_zip = "${path.module}/../graphrag/dist/graphrag.zip"
+
+  # Single-source endpoint URL construction — any port/scheme change is a one-line edit.
+  # Referenced from compute.tf (Fargate env), lambda.tf (Lambda env), and outputs.tf.
+  neptune_endpoint_url    = "https://${aws_neptune_cluster.main.endpoint}:8182"
+  opensearch_endpoint_url = "https://${aws_opensearch_domain.graphrag_vectors.endpoint}"
 }
 
 # ── Stack-managed log groups (CDK SmokeProbeLogs / VectorSmokeProbeLogs / QueryLambdaLogs).
@@ -94,7 +99,7 @@ resource "aws_lambda_function" "smoke_probe" {
 
   environment {
     variables = {
-      NEPTUNE_ENDPOINT = "https://${aws_neptune_cluster.main.endpoint}:8182"
+      NEPTUNE_ENDPOINT = local.neptune_endpoint_url
     }
   }
 
@@ -126,7 +131,7 @@ resource "aws_lambda_function" "vector_smoke_probe" {
 
   environment {
     variables = {
-      OPENSEARCH_ENDPOINT = "https://${aws_opensearch_domain.graphrag_vectors.endpoint}"
+      OPENSEARCH_ENDPOINT = local.opensearch_endpoint_url
     }
   }
 
@@ -143,6 +148,11 @@ resource "aws_lambda_function" "query_lambda" {
   role          = aws_iam_role.query_role.arn
   timeout       = 120
   memory_size   = 512
+  # Blast-radius cap: the Function URL is IAM-auth-gated, but a broad invoker role
+  # could exhaust account Lambda concurrency and drive spend beyond the $150 ACTUAL
+  # alarm ceiling. 10 concurrent executions is generous for demo query load.
+  # CDK parity: CDK sets no cap; this is defence-in-depth (backlog: terraform-query-lambda-concurrency-cap).
+  reserved_concurrent_executions = 10
 
   filename         = local.lambda_zip
   source_code_hash = filebase64sha256(local.lambda_zip)
@@ -159,8 +169,8 @@ resource "aws_lambda_function" "query_lambda" {
 
   environment {
     variables = {
-      NEPTUNE_ENDPOINT    = "https://${aws_neptune_cluster.main.endpoint}:8182"
-      OPENSEARCH_ENDPOINT = "https://${aws_opensearch_domain.graphrag_vectors.endpoint}"
+      NEPTUNE_ENDPOINT    = local.neptune_endpoint_url
+      OPENSEARCH_ENDPOINT = local.opensearch_endpoint_url
       # Shared with query_role's bedrock-synthesis grant (iam.tf local.synthesis_model_id)
       # so the granted inference-profile and the invoked model can never drift apart.
       SYNTHESIS_MODEL_ID = local.synthesis_model_id
