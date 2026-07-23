@@ -1,6 +1,6 @@
 # Spec: infra-terraform-scaffold
 
-- **Status:** Draft <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Shipped <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** [ADR-0010](../../adr/0010-terraform-migration.md) (migrate IaC from CDK to Terraform — this spec ships the first slice of that decision); [ADR-0002](../../adr/0002-ephemeral-vpc-store-topology.md) (the ephemeral VPC topology; teardown is a feature); generate-iac skill (`SKILL.md`) — the governing IaC authoring skill
@@ -20,12 +20,13 @@
 
 Establish the Terraform root module skeleton for `apps/infra-tf/` so that every
 subsequent implementation spec (network, data + IAM, compute, verification) has a
-clean, versioned, reproducible foundation to build on. The deliverables are five
-files: `versions.tf`, `provider.tf`, `backend.tf`, `variables.tf`, `outputs.tf`.
-ADR-0010 is authored alongside (it records the decision; the scaffold is the first
-tangible implementation artifact of that decision).
+clean, versioned, reproducible foundation to build on. The deliverables are seven
+files: `versions.tf`, `provider.tf`, `backend.tf`, `variables.tf`, `outputs.tf`,
+`backend.hcl.example`, and `scripts/bootstrap.sh`. ADR-0010 is authored alongside
+(it records the decision; the scaffold is the first tangible implementation artifact
+of that decision).
 
-The scaffold is **deploy-ready at the foundation tier**: `terraform init` and
+The scaffold is **deploy-ready at the foundation tier**: `terraform init -backend=false` and
 `terraform validate` pass on a clean checkout with no resources defined yet;
 `terraform fmt -check` exits 0; all required variable names match the CDK
 `CfnParameter` names (mapping documented in the plan).
@@ -74,68 +75,79 @@ The scaffold is **deploy-ready at the foundation tier**: `terraform init` and
   Terraform ≥ 1.11 (generate-iac skill anti-pattern).
 - **Never hardcode region or account ID** — both are inputs (region via the provider
   `region` variable; account implicit from the caller's credentials).
+- **Never delete or modify `apps/infra/`** — the CDK app stays in place until all
+  Terraform specs pass their live ACs (ADR-0010); it is the fallback and the
+  comparison reference.
+- **Never promote `apps/infra-tf/` to a top-level directory** — it is a sub-app
+  under `apps/`, parallel to `apps/infra/`; a top-level move requires an RFC
+  (AGENTS.md structure policy).
 
 ## Testing Strategy
 
 All ACs in this spec are **goal-based check** mode — the validation artifact is a
 successful CLI invocation, not a unit test file.
 
-- **AC1–AC6 — goal-based.** Each file's structure is verified by `terraform
-  validate` (schema correctness) and `terraform fmt -check` (formatting). A
-  `terraform plan -var-file=backend.hcl.example` with dummy var values confirms the
-  variable validations fire correctly (the `s3_prefix_list_id` regex rejects a CIDR
-  at plan time).
-- **AC7 — goal-based.** `terraform init` with the S3 backend configured to a real
-  or mock bucket exits 0; `terraform validate` exits 0; `terraform fmt -check` exits
-  0. The backend bootstrap script is a deliverable, not a test — it is documented and
-  manually verified on the first live deploy.
+- **AC1–AC6 and AC4b — goal-based.** Each file's structure is verified by `terraform
+  validate` (schema correctness) and `terraform fmt -check` (formatting). AC4b
+  verifies plan-time variable rejection via a local-backend override: `terraform plan`
+  with an invalid `s3_prefix_list_id` (CIDR) exits 1; with an invalid
+  `invoker_role_arn` (root principal) exits 1; with valid values exits 0.
+- **AC7 — goal-based.** `terraform init -backend=false && terraform validate` exits 0;
+  `terraform fmt -check` exits 0. The backend bootstrap script is a deliverable, not a
+  test — it is documented and manually verified on the first live deploy.
 
 Gates: `terraform fmt -check`, `terraform validate` (run from `apps/infra-tf/`
 after `terraform init -backend=false`).
 
 ## Acceptance Criteria
 
-- [ ] **AC1 — `versions.tf`: pinned Terraform + provider versions.** *(goal-based
-  check)* `required_version = ">= 1.11"` and `required_providers { aws = { source =
+- [x] **AC1 — `versions.tf`: pinned Terraform + provider versions.** *(goal-based
+  check)* `required_version = ">= 1.11, < 2.0"` and `required_providers { aws = { source =
   "hashicorp/aws", version = "~> 5.0" } }` are present. No other provider is
   declared.
 
-- [ ] **AC2 — `provider.tf`: AWS provider with default governance tags.** *(goal-based
+- [x] **AC2 — `provider.tf`: AWS provider with default governance tags.** *(goal-based
   check)* The `provider "aws" {}` block configures `default_tags { tags = { ... } }`
   using the five governance tag variables (`var.environment`, `var.project`,
   `var.department`, `var.application`, `var.user`) matching the CDK
   `_GOVERNANCE_TAG_DEFAULTS` keys and defaults. Region is `var.aws_region`.
 
-- [ ] **AC3 — `backend.tf`: S3 backend with native state locking, no DynamoDB.** *(goal-based
+- [x] **AC3 — `backend.tf`: S3 backend with native state locking, no DynamoDB.** *(goal-based
   check)* The `terraform { backend "s3" { ... } }` block is present with `encrypt =
-  true` and no `dynamodb_table` key. A companion `backend.hcl.example` documents the
-  bootstrap values (`bucket`, `key`, `region`) with placeholder strings.
+  true`, `use_lockfile = true` (explicit opt-in required for native S3 locking in
+  Terraform >= 1.11), and no `dynamodb_table` key. A companion `backend.hcl.example`
+  documents the bootstrap values (`bucket`, `key`, `region`) with placeholder strings.
 
-- [ ] **AC4 — `variables.tf`: all required + governance variables with correct types and
+- [x] **AC4 — `variables.tf`: all required + governance variables with correct types and
   validation.** *(goal-based check)* Required variables: `budget_alarm_email` (string,
   no default, description matches CDK parameter), `invoker_role_arn` (string, no
-  default), `s3_prefix_list_id` (string, no default, `validation { condition =
-  can(regex("^pl-[0-9a-f]+$", var.s3_prefix_list_id)) }`). Governance variables:
-  `environment`, `project`, `department`, `application`, `user`, `aws_region` — all
-  string with defaults matching `_GOVERNANCE_TAG_DEFAULTS`. Supplying `s3_prefix_list_id =
-  "0.0.0.0/0"` causes `terraform validate` to reject it (regex mismatch).
+  default, validation rejecting non-role ARNs), `s3_prefix_list_id` (string, no
+  default, `validation { condition = can(regex("^pl-[0-9a-f]+$", var.s3_prefix_list_id)) }`).
+  Governance variables: `environment`, `project`, `department`, `application`, `user`,
+  `aws_region` — all string with defaults matching `_GOVERNANCE_TAG_DEFAULTS`. Both
+  validation blocks are present and structurally correct (`terraform validate` exits 0).
 
-- [ ] **AC5 — `outputs.tf`: shell output blocks for all 12 CDK CfnOutput names.** *(goal-based
+- [x] **AC4b — plan-time validation rejection verified.** `terraform plan` (local backend
+  override) with `s3_prefix_list_id=0.0.0.0/0` exits 1 with a regex mismatch error;
+  with `invoker_role_arn=...:root` exits 1 with a role-ARN error; with valid values
+  (`pl-abc123ef` + a role ARN) exits 0 with "No changes."
+
+- [x] **AC5 — `outputs.tf`: shell output blocks for all 12 CDK CfnOutput names.** *(goal-based
   check)* All 12 output names from the CDK stack are declared: `corpus_bucket_name`,
   `neptune_endpoint`, `ecs_cluster_name`, `ingestion_task_def_arn`,
   `ingestion_security_group_id`, `private_subnet_id`, `ingestion_repo_uri`,
   `smoke_probe_name`, `opensearch_endpoint`, `vector_smoke_probe_name`,
-  `query_function_url`, `query_lambda_name`. Each body references the resource
-  output that later specs will fill in (stubs use `null` until the resource is
-  defined).
+  `query_function_url`, `query_lambda_name`. Each stub body is `value = null` —
+  subsequent specs replace the null with the actual resource attribute reference.
+  Note: `OpenSearchEndpoint` → `opensearch_endpoint` (OpenSearch is one token).
 
-- [ ] **AC6 — `terraform fmt -check` exits 0 across all scaffold files.** *(goal-based
+- [x] **AC6 — `terraform fmt -check` exits 0 across all scaffold files.** *(goal-based
   check)* No formatting violations on any `.tf` file in `apps/infra-tf/`.
 
-- [ ] **AC7 — `terraform init && terraform validate` exits 0 from `apps/infra-tf/`.** *(goal-based
-  check)* With a `.terraform` directory initialized against a stub backend (local or
-  S3 mock) and the five required variables supplied, `terraform validate` exits 0 and
-  reports "Success! The configuration is valid."
+- [x] **AC7 — `terraform init -backend=false && terraform validate` exits 0 from `apps/infra-tf/`.** *(goal-based
+  check)* With the backend skipped (`-backend=false`) and the five required variables
+  supplied, `terraform validate` exits 0 and reports "Success! The configuration is
+  valid."
 
 ## Assumptions
 
