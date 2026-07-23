@@ -517,10 +517,15 @@ sequenceDiagram
             F->>S: write Silver artifact (Markdown + cleansing report)
             Note over F,S: Gold layer
             F->>F: classify rdf:type, emit RDF triples + PROV-O triples
-            F->>BD: LLM API call for chunk embeddings
-            F->>S: write Gold artifact (chunks + vectors)
-            F->>NP: INSERT triples into partition graph + taxonomy index
-            F->>OS: upsert chunks with doc_uri, partition, pii_flagged
+            F->>F: SHACL validate RDF triples against shape library (pyshacl)
+            alt SHACL violation
+                F->>NP: write quarantine record with SHACL violation report
+            else SHACL valid
+                F->>BD: LLM API call for chunk embeddings
+                F->>S: write Gold artifact (chunks + vectors)
+                F->>NP: INSERT triples into partition graph + taxonomy index
+                F->>OS: upsert chunks with doc_uri, partition, pii_flagged
+            end
         end
     end
 
@@ -565,7 +570,7 @@ produces immutable S3 artifacts keyed by document URI + commit SHA.
 |---|---|---|---|
 | **Bronze** | Raw files in the source git repository | Git repo only — no S3 copy | Canonical source of truth |
 | **Silver** | Extracted Markdown + cleansing report per document | `silver/<repo>/<path>/<sha>.md` | Extraction gate; PII flagged here |
-| **Gold** | Text chunks + embedding vectors per document | `gold/<repo>/<path>/<sha>.chunks.json` | Feeds both Neptune and OpenSearch |
+| **Gold** | Text chunks + embedding vectors per document | `gold/<repo>/<path>/<sha>.chunks.json` | SHACL validation gate before Neptune LOAD; written only if shapes valid; feeds both Neptune and OpenSearch |
 | **Serving** | RDF triples (Neptune named graphs) + vector index (OpenSearch) | Neptune + OpenSearch | Live query path |
 
 **Silver is the extraction gate.** A document graduates from Silver to Gold only when:
@@ -636,7 +641,7 @@ The cleansing report is a JSON sidecar written to S3 alongside the Silver Markdo
 ```json
 {
   "doc_uri": "urn:doc:my-repo:sops/incident-response.md",
-  "sha": "abc123def",
+  "sha": "abc123",
   "extractor": "pandoc",
   "char_count_raw": 8420,
   "char_count_clean": 8100,
@@ -650,6 +655,61 @@ The cleansing report is a JSON sidecar written to S3 alongside the Silver Markdo
 }
 ```
 
+### SHACL validation gate
+
+After RDF triple emission (Gold layer), the ingestion task runs a SHACL validation pass
+before the Neptune SPARQL `INSERT DATA` statement. This is the third quality gate in the
+pipeline, following the Silver text quality gates (minimum content, structure) and PII
+detection.
+
+**Where it sits:** between `classify rdf:type, emit RDF triples + PROV-O triples` and the
+Neptune `INSERT DATA` call. The validator (`pyshacl`) runs in-process against the in-memory
+RDF graph — no network call, no AWS service.
+
+**One shape per document class, colocated with the OWL ontology:**
+
+```turtle
+biz:PolicyShape
+    a sh:NodeShape ;
+    sh:targetClass biz:Policy ;
+    sh:property [ sh:path schema:name ;       sh:minCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path biz:effectiveDate ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:date ] ;
+    sh:property [ sh:path biz:scope ;         sh:minCount 1 ] ;
+    sh:property [ sh:path biz:hasPII ;        sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:boolean ] ;
+    sh:property [ sh:path biz:gitCommitSHA ;  sh:minCount 1 ; sh:datatype xsd:string ] .
+
+biz:SOPShape
+    a sh:NodeShape ;
+    sh:targetClass biz:SOP ;
+    sh:property [ sh:path schema:name ;      sh:minCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path biz:inDomain ;     sh:minCount 1 ] ;
+    sh:property [ sh:path biz:hasPII ;       sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:boolean ] ;
+    sh:property [ sh:path biz:gitCommitSHA ; sh:minCount 1 ; sh:datatype xsd:string ] .
+
+biz:ChunkShape
+    a sh:NodeShape ;
+    sh:targetClass biz:Chunk ;
+    sh:property [ sh:path prov:wasDerivedFrom ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path biz:chunkIndex ;      sh:minCount 1 ; sh:datatype xsd:integer ] ;
+    sh:property [ sh:path biz:embeddingModel ;  sh:minCount 1 ; sh:datatype xsd:string ] .
+```
+
+**On failure:** the document is routed to `urn:graph:quarantine` with a
+`biz:quarantineReason` triple containing the structured SHACL violation report — which
+constraint failed, on which node, and the expected vs actual value. The Gold S3 artifact is
+not written; Neptune and OpenSearch are not updated. Recovery: fix the triple emission
+logic, re-trigger ingestion from the stored commit SHA.
+
+**In CI (no AWS needed):** pyshacl validates against rdflib in-memory — no Neptune
+endpoint, no credentials. The offline gate suite runs SHACL against the fixture corpus
+triples as part of the ingestion pipeline unit tests.
+
+The relationship to OWL: the OWL ontology defines the vocabulary (what classes and
+properties exist); the SHACL shapes define the data contract (what a valid triple emission
+must produce). Together they are the complete machine-readable schema for the knowledge
+graph. `inference="none"` is set on the pyshacl call — no OWL reasoning, consistent with
+ADR-0012.
+
 ### Provenance model (PROV-O)
 
 Every document and chunk carries W3C PROV-O provenance triples in the same named
@@ -662,13 +722,13 @@ into Neptune as part of the SPARQL LOAD step.
 <urn:doc:my-repo:sops/incident-response.md>
     a biz:SOP, prov:Entity ;
     schema:name "Incident Response SOP" ;
-    prov:wasGeneratedBy <urn:activity:ingest:my-repo:abc123def> ;
+    prov:wasGeneratedBy <urn:activity:ingest:my-repo:abc123> ;
     prov:generatedAtTime "2026-07-23T10:00:00Z"^^xsd:dateTime ;
     biz:gitRepo "my-repo" ;
     biz:gitPath "sops/incident-response.md" ;
-    biz:gitCommitSHA "abc123def" ;
+    biz:gitCommitSHA "abc123" ;
     biz:extractorUsed "pandoc" ;
-    biz:silverArtifact "s3://<bucket>/silver/my-repo/sops/incident-response.md/abc123def.md" ;
+    biz:silverArtifact "s3://<bucket>/silver/my-repo/sops/incident-response.md/abc123.md" ;
     biz:hasPII false .
 ```
 
@@ -714,7 +774,7 @@ the metadata in the response.
       "chunk_uri": "urn:chunk:my-repo:sops/incident-response.md:3",
       "domain": "Operations",
       "journey": "Incident Response",
-      "git_commit": "abc123def",
+      "git_commit": "abc123",
       "git_path": "sops/incident-response.md",
       "effective_date": null,
       "relevance": 0.94,
@@ -892,6 +952,7 @@ and vice versa. The filter composes with any visibility filter.
 | Format-specific extraction router | spec-ingestion-extraction-cleanse | pandoc/docling/markitdown/Textract per format; better table and heading fidelity than single extractor |
 | PII flag and surface (not redact) | spec-ingestion-extraction-cleanse | `biz:hasPII true`; document stays in natural partition; default query filter excludes PII-flagged docs; adopters add authz |
 | PROV-O provenance on chunks and documents | spec-provenance-citations | W3C PROV-O triples; git commit SHA; extractor used; Silver/Gold artifact URIs; resolved into MCP citations |
+| SHACL validation gate on RDF triple emission | spec-shacl-validation | pyshacl validates emitted triples before Neptune LOAD; shapes colocated with OWL ontology; violation → quarantine with structured report; CI-safe (rdflib, no AWS); `inference="none"` consistent with ADR-0012 |
 
 ---
 
