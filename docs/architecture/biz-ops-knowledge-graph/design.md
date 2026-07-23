@@ -204,36 +204,36 @@ written to the Silver-layer cleansing report alongside the document.
 ```mermaid
 flowchart TB
     subgraph Consumers["Consumers"]
-        HU["Human\n(AI IDE)"]
-        AG["AI Agent\n/ Workflow"]
+        HU["Human<br/>(AI IDE)"]
+        AG["AI Agent<br/>/ Workflow"]
     end
 
     subgraph Interface["Interface Layer"]
-        MCP["MCP Tool Server\nask · search · search_graph\nget_policies · query · summarize"]
+        MCP["MCP Tool Server<br/>ask · search · search_graph<br/>get_policies · query · summarize"]
     end
 
     subgraph Retrieval["Retrieval Layer"]
-        QA["Question Analyzer\nNER → typed URIs\nquery type · specificity"]
-        SR["Strategy Router\nrules-first · LLM fallback\nnormative-first principle"]
-        EX["Retrieval Executor\nvector · hybrid_graph · graph_expand\nstructured · global · normative"]
-        SY["Synthesizer\nBedrock Claude (Converse)\noff = search tools, on = ask/get_policies"]
+        QA["Question Analyzer<br/>NER → typed URIs<br/>query type · specificity"]
+        SR["Strategy Router<br/>rules-first · LLM fallback<br/>normative-first principle"]
+        EX["Retrieval Executor<br/>vector · hybrid_graph · graph_expand<br/>structured · global · normative"]
+        SY["Synthesizer<br/>LLM API call<br/>ask and get_policies only"]
     end
 
     subgraph Stores["Store Layer"]
-        OS["OpenSearch\nvector index (Lucene HNSW)\nkeyed by RDF URI + named_graph"]
-        NP["Neptune SPARQL\nnamed graphs\nurn:graph:normative\nurn:graph:descriptive\nurn:graph:taxonomy"]
-        BD["Bedrock\nTitan v2 embed\nClaude synthesize"]
+        OS["OpenSearch<br/>vector index (Lucene HNSW)<br/>keyed by RDF URI + named_graph"]
+        NP["Neptune SPARQL<br/>named graphs<br/>normative · descriptive · taxonomy"]
+        BD["LLM API<br/>embed · synthesise · route"]
     end
 
     subgraph Ingestion["Ingestion Layer"]
-        GI["Git Ingestion\ndelta diff · RDF emit\nnamed graph upsert/drop"]
+        GI["Git Ingestion<br/>delta diff · RDF emit<br/>partition graph upsert/drop"]
     end
 
     subgraph Observability["Observability"]
-        OT["OTEL Spans\nAWS ADOT → CloudWatch"]
+        OT["OTEL Spans<br/>AWS ADOT → CloudWatch"]
     end
 
-    HU -->|"natural language\n(via IDE LLM)"| MCP
+    HU -->|"natural language via IDE LLM"| MCP
     AG -->|"tool call"| MCP
     MCP --> QA
     QA --> SR
@@ -456,16 +456,16 @@ sequenceDiagram
 
     C->>M: ask("What SOPs apply to incident response?")
     M->>A: analyze(question)
-    A->>BD: embed(question)              [Titan v2]
-    A-->>R: {entities: [], type: factual, specificity: narrow}
+    A->>BD: embed(question)
+    A-->>R: entities=none, type=factual, specificity=narrow
     R-->>M: strategy=hybrid_graph
-    M->>OS: knn(vector, k=5, graph=descriptive)
-    OS-->>M: [{uri, score, rdf_type, text}]
-    M->>NP: SPARQL expand(chunk_uris, hops=1, FROM NAMED descriptive)
-    NP-->>M: [{subject, predicate, object}]
-    M->>BD: synthesize(chunks + graph_facts, question)   [Claude]
-    BD-->>M: {answer, citations}
-    M-->>C: {answer, citations, strategy:"hybrid_graph", trace:{...}}
+    M->>OS: knn(vector, k=5, partition=descriptive)
+    OS-->>M: chunk results with scores
+    M->>NP: graph expand(chunk URIs, hops=1, partition=descriptive)
+    NP-->>M: subgraph triples
+    M->>BD: synthesize(chunks, graph facts, question)
+    BD-->>M: answer with citations
+    M-->>C: answer, citations, strategy=hybrid_graph, trace
 ```
 
 **`get_policies(context, domain)` — normative exhaustive path:**
@@ -479,12 +479,12 @@ sequenceDiagram
     participant BD as Bedrock
 
     C->>M: get_policies("generating IaC", domain="security")
-    M->>NP: SPARQL SELECT * FROM NAMED normative\nWHERE { ?p a biz:Policy ; biz:scope :security ; biz:effectiveDate ?d . FILTER(?d <= today) }
-    NP-->>M: [{policy_uri, title, text, effectiveDate}] — ALL matching, no top-k
+    M->>NP: SELECT all policies in normative graph matching domain + date filter
+    NP-->>M: ALL matching policies (no top-k limit)
     M->>BD: embed(context)
-    M->>OS: threshold_filter(vector, threshold=0.7, graph=normative)
+    M->>OS: threshold filter(vector, threshold=0.7, partition=normative)
     OS-->>M: additional policies above similarity threshold
-    M-->>C: union(sparql_results, vector_results) [exhaustive, fail if unavailable]
+    M-->>C: union of SPARQL and vector results (exhaustive, fail if unavailable)
 ```
 
 ### Ingestion data flow
@@ -501,35 +501,34 @@ sequenceDiagram
 
     F->>G: git pull / clone
     F->>S: load last_commit_sha
-    F->>G: git diff <last_sha>..HEAD --name-status
-    G-->>F: [(A, sop/incident-response.md), (M, policy/sec-001.md), (D, old-sop.md)]
+    F->>G: git diff last_sha..HEAD --name-status
+    G-->>F: list of added, modified, and deleted files
 
     loop for each added/modified file [Silver gate]
-        F->>F: route to extractor by format\n(pandoc/docling/markitdown/Textract)
+        F->>F: route to extractor by format (pandoc/docling/markitdown/Textract)
         alt scanned PDF
             F->>TX: OCR extract
             TX-->>F: text blocks
         end
         F->>F: cleanse (strip headers, detect PII, quality gates)
         alt quality gate failed
-            F->>NP: INSERT INTO GRAPH quarantine { <urn:doc:...> biz:quarantineReason ... }
+            F->>NP: write quarantine record with reason
         else gate passed
             F->>S: write Silver artifact (Markdown + cleansing report)
-
-            note over F,S: Gold layer
-            F->>F: classify rdf:type → partition (normative|descriptive)\nemit RDF triples (Turtle) + PROV-O triples
-            F->>BD: LLM API call → chunk embeddings
+            Note over F,S: Gold layer
+            F->>F: classify rdf:type, emit RDF triples + PROV-O triples
+            F->>BD: LLM API call for chunk embeddings
             F->>S: write Gold artifact (chunks + vectors)
-            F->>NP: INSERT DATA { GRAPH <urn:graph:normative|descriptive> { <urn:doc:...> ... } }\nINSERT DATA { GRAPH <urn:graph:taxonomy> { <urn:doc:...> biz:inPartition <partition> } }
-            F->>OS: upsert chunks (doc_uri=urn:doc:{...},\nnamed_graph=urn:graph:normative|descriptive,\npii_flagged=true|false)
+            F->>NP: INSERT triples into partition graph + taxonomy index
+            F->>OS: upsert chunks with doc_uri, partition, pii_flagged
         end
     end
 
     loop for each deleted file
-        F->>NP: SELECT partition FROM taxonomy WHERE doc=<urn:doc:...>
-        NP-->>F: urn:graph:normative|descriptive
-        F->>NP: DELETE WHERE { GRAPH <partition> { <urn:doc:...> ?p ?o } }\nDELETE WHERE { GRAPH <partition> { ?chunk ?p ?o . ?chunk prov:wasDerivedFrom <urn:doc:...> } }\nDELETE WHERE { GRAPH taxonomy { <urn:doc:...> ?p ?o } }
-        F->>OS: delete_by_query(doc_uri=urn:doc:{...})
+        F->>NP: lookup partition from taxonomy index
+        NP-->>F: partition graph URI
+        F->>NP: DELETE doc triples and chunk triples from partition graph
+        F->>OS: delete by doc_uri
     end
 
     F->>S: store new commit_sha
@@ -738,56 +737,55 @@ the caller that the source document is flagged for elevated clearance.
 ```mermaid
 flowchart TB
     subgraph Consumers["External consumers"]
-        IDE["AI IDE\n(Claude Code · Cursor · Windsurf)\n+ local mcp_proxy subprocess"]
-        AGC["Bedrock AgentCore\nmanaged custom agents\n[connectivity design only — not in build plan]"]
-        AUTO["Automation / AI workflow\nAWS SDK · IAM role · SigV4"]
+        IDE["AI IDE<br/>(Claude Code · Cursor · Windsurf)<br/>+ local mcp_proxy subprocess"]
+        AGC["Bedrock AgentCore<br/>managed custom agents<br/>(connectivity design only)"]
+        AUTO["Automation / AI workflow<br/>AWS SDK · IAM role · SigV4"]
     end
 
     subgraph AWS["AWS account · one region · stack GraphragBizOps"]
-        APIGW["API Gateway HTTP API\nAPI key auth (usage plan)\nIDE / human ingress"]
-        FU["IAM-auth Function URL\nAuthType=AWS_IAM · SigV4\nautomation + AgentCore ingress"]
-
-        S3[("S3\ncommit SHA manifest\nSilver artifacts · Gold artifacts\nblock-public · encrypted")]
-        BUD["Budgets alarm\n$250/mo · 80% · email"]
-        EB["EventBridge Rule\ngit push webhook → Fargate trigger"]
+        APIGW["API Gateway HTTP API<br/>API key auth (usage plan)<br/>IDE / human ingress"]
+        FU["IAM-auth Function URL<br/>AuthType=AWS_IAM · SigV4<br/>automation + AgentCore ingress"]
+        BUD["Budgets alarm<br/>$250/mo · 80% · email"]
+        EB["EventBridge Rule<br/>git push webhook / scheduled"]
 
         subgraph VPC["VPC — private isolated subnets · 2 AZs · NO NAT / NO IGW"]
             direction TB
 
             subgraph Compute["Compute (scale-to-zero)"]
-                ING["Fargate ingestion task\nformat router · extract · cleanse\nRDF emit · embed · SPARQL LOAD\n2048 CPU / 8192 MiB"]
-                ML["MCP Lambda\nFastMCP + Mangum\nquery · routing · synthesis\n512 MB · 120 s · 10 concurrent · ADOT"]
-                SP["SPARQL smoke probe\nNeptune SPARQL round-trip"]
-                VP["Vector smoke probe\nOpenSearch embed→knn round-trip"]
+                ML["MCP Lambda<br/>FastMCP + Mangum<br/>query · routing · synthesis<br/>512 MB · 120 s · 10 concurrent · ADOT"]
+                ING["Fargate ingestion task<br/>format router · extract · cleanse<br/>RDF emit · embed · Neptune load<br/>2048 CPU / 8192 MiB"]
+                SP["SPARQL smoke probe<br/>Neptune round-trip"]
+                VP["Vector smoke probe<br/>OpenSearch embed-knn round-trip"]
             end
 
             subgraph Stores["Stores (standing cost)"]
-                NEP[("Neptune Serverless\nSPARQL / RDF engine · min 1 NCU\nnamed graphs:\nnormative · descriptive\ntaxonomy · ontology · quarantine")]
-                OS[("OpenSearch\nt3.small.search · Lucene HNSW\nnamed_graph filter\nencrypted")]
+                NEP[("Neptune Serverless<br/>SPARQL/RDF · min 1 NCU<br/>normative · descriptive<br/>taxonomy · ontology · quarantine")]
+                OS[("OpenSearch<br/>t3.small.search · Lucene HNSW<br/>named_graph filter · encrypted")]
+                S3[("S3<br/>commit SHA manifest<br/>Silver artifacts · Gold artifacts")]
             end
 
             subgraph Endpoints["VPC Endpoints (no NAT)"]
-                EPS["s3 (gw) · ecr.api · ecr.dkr\nlogs · sts · bedrock-runtime\notlp / xray · textract · comprehend"]
+                EPS["s3(gw) · ecr.api · ecr.dkr<br/>logs · sts · bedrock-runtime<br/>otlp · xray · textract · comprehend"]
             end
         end
 
         subgraph LLM["Amazon Bedrock (via VPC endpoint)"]
-            BD["LLM API\nembed · synthesise · route"]
+            BD["LLM API<br/>embed · synthesise · route"]
         end
 
         subgraph Obs["Observability"]
-            ADOT["ADOT layer → CloudWatch\nOTLP · Logs · X-Ray"]
+            ADOT["ADOT layer<br/>OTLP to CloudWatch Logs · X-Ray"]
         end
     end
 
-    Git["Git repository\n(source of truth · Bronze)"]
+    Git["Git repository<br/>(source of truth · Bronze)"]
 
     IDE -->|"x-api-key header"| APIGW
     AGC -->|"SigV4 · IAM role"| FU
     AUTO -->|"SigV4 · IAM role"| FU
 
-    APIGW --> ML
-    FU --> ML
+    APIGW -->|"proxies to"| ML
+    FU -->|"invokes"| ML
 
     Git -->|"webhook / scheduled"| EB
     EB --> ING
