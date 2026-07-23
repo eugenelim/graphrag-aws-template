@@ -34,8 +34,8 @@ the VPC CIDR (CDK's default for interface endpoints).
 - ADR-0002: no NAT, no internet path, PRIVATE_ISOLATED subnets only.
 - CDK `_COMPUTE_SG_EGRESS` table is the authoritative egress specification; the
   plan-assertion test in `infra-terraform-verification` enforces set equality.
-- `var.s3_prefix_list_id` must be the `prefix_list_id` argument in the S3 egress
-  rule — not a CIDR.
+- The S3 egress `prefix_list_id` is `data.aws_ec2_managed_prefix_list.s3.id`
+  (resolved from the account by name, not an operator-supplied var) — never a CIDR.
 - EC2 security group description charset: `^[A-Za-z0-9 ._\-:/()#,@\[\]+=&;{}!$*]*$`.
 
 ## Design (LLD)
@@ -106,10 +106,14 @@ resource "aws_vpc_security_group_egress_rule" "ingestion_to_s3" {
   ip_protocol       = "tcp"
   from_port         = 443
   to_port           = 443
-  prefix_list_id    = var.s3_prefix_list_id
+  prefix_list_id    = data.aws_ec2_managed_prefix_list.s3.id
   description       = "IngestionSg egress to s3 prefix list 443"
 }
 ```
+
+The prefix-list id comes from `data "aws_ec2_managed_prefix_list" "s3" { name =
+"com.amazonaws.${var.aws_region}.s3" }` — resolved from the account at plan time,
+not supplied by an operator (SEC-2 hardening; removed `var.s3_prefix_list_id`).
 
 ## Tasks
 
@@ -217,9 +221,9 @@ resource "aws_vpc_security_group_egress_rule" "ingestion_to_s3" {
   `terraform init -backend=false` (S3 backend not needed for a local plan; ADV-5 —
   `-backend=false` is an *init* flag, not a `plan` flag), then
   `terraform plan -out=tfplan -var="budget_alarm_email=x@example.com"
-  -var="invoker_role_arn=arn:aws:iam::123456789012:role/x"
-  -var="s3_prefix_list_id=pl-abc123ef"` (needs live AWS creds — the
-  `aws_availability_zones` data source is read at plan time). Run `terraform show
+  -var="invoker_role_arn=arn:aws:iam::123456789012:role/x"` (needs live AWS creds —
+  both the `aws_availability_zones` and `aws_ec2_managed_prefix_list.s3` data sources
+  are read at plan time). Run `terraform show
   -json tfplan` and assert, over `planned_values.root_module.resources`:
   - counts: `aws_vpc`=1, `aws_subnet`=2, `aws_route_table`=2,
     `aws_route_table_association`=2, `aws_vpc_endpoint`=6, `aws_nat_gateway`=0,
@@ -260,6 +264,10 @@ specs during plan.
 - 2026-07-22 — Plan authored for infra-terraform-network spec. Six tasks: VPC + subnets,
   VPC endpoints, 6 security groups (closed egress), exact egress rules per
   _COMPUTE_SG_EGRESS, network outputs, fmt + plan count verification.
+- 2026-07-22 — SEC-2 hardening (user-authorized, pulled into PR): S3 egress
+  `prefix_list_id` now `data.aws_ec2_managed_prefix_list.s3.id`; removed
+  `var.s3_prefix_list_id` from variables.tf. GATES re-run (fmt/validate/plan + all AC
+  assertions pass; data source resolves to pl-63a5400a in us-east-1).
 - 2026-07-22 — REVIEW fix (QE-1): all 11 SG `name` → `name_prefix` (removes the
   immutable-description replacement-collision trap; matches CDK's auto-generated SG
   names). QE-3 (lock VPC default SG) deferred into backlog `infra-terraform-scanner-ci`;

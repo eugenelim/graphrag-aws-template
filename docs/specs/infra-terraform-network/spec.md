@@ -57,9 +57,15 @@ explicit `aws_vpc_security_group_egress_rule` resources.
   - SmokeProbe: Neptune 8182, CloudWatchLogs 443, Sts 443.
   - VectorSmoke: OpenSearch 443, BedrockRuntime 443, CloudWatchLogs 443, Sts 443.
   - QueryLambda: Neptune 8182, OpenSearch 443, BedrockRuntime 443, CloudWatchLogs 443, Sts 443.
-- **S3 gateway endpoint egress via `var.s3_prefix_list_id`.** The CDK
-  `ec2.Peer.prefix_list(self._s3_prefix_list_id)` translates to an
-  `aws_vpc_security_group_egress_rule` with `prefix_list_id = var.s3_prefix_list_id`.
+- **S3 gateway endpoint egress via a data-source-resolved managed prefix list.**
+  The CDK `ec2.Peer.prefix_list(self._s3_prefix_list_id)` translates to an
+  `aws_vpc_security_group_egress_rule` whose `prefix_list_id` is resolved from
+  `data "aws_ec2_managed_prefix_list" "s3"` (name `com.amazonaws.<region>.s3`) —
+  **not** an operator-supplied variable. This closes SEC-2: no wrong/wide
+  customer-managed prefix list can be injected. It is the declarative equivalent
+  of the CDK `deploy.sh` `describe-managed-prefix-lists` resolution
+  (egress-equivalent, strictly safer; an intentional divergence from raw
+  CfnParameter parity, motivated by the closed-egress security property).
 - **Ingress rules for store SGs from compute SGs.** Neptune SG accepts 8182 from
   IngestionTask, SmokeProbe, and QueryLambda SGs. OpenSearch SG accepts 443 from
   IngestionTask, VectorSmoke, and QueryLambda SGs.
@@ -81,8 +87,9 @@ explicit `aws_vpc_security_group_egress_rule` resources.
   equivalent plan assertion.
 - **Never create a NAT gateway** — ADR-0002 hard rule; all egress via VPC endpoints.
 - **Never reference a CIDR for the S3 endpoint egress.** The S3 gateway endpoint
-  uses the AWS-managed prefix list, not a CIDR — a CIDR would be rejected by the
-  `var.s3_prefix_list_id` validation but is explicitly disallowed here too.
+  uses the AWS-managed prefix list (`data.aws_ec2_managed_prefix_list.s3.id`), not
+  a CIDR. Because the id is resolved from the account by name rather than supplied,
+  a wrong/wide value cannot be injected at all.
 
 ## Testing Strategy
 
@@ -202,23 +209,25 @@ plan JSON negative-CIDR check (no public ingress/egress).
 - Technical: the 5 interface endpoint service names are resolvable in the target
   region (`us-east-1` default, overridable via `var.aws_region`); Bedrock Runtime is
   `com.amazonaws.<region>.bedrock-runtime` (source: CDK `InterfaceVpcEndpointAwsService.BEDROCK_RUNTIME`).
-- Technical: the `var.s3_prefix_list_id` variable (validated `^pl-[0-9a-f]+$` in the
-  scaffold spec) resolves to the AWS-managed S3 gateway-endpoint prefix list for the
-  target region (source: CDK `deploy.sh` `describe-managed-prefix-lists` resolution).
+- Technical: the AWS-managed S3 gateway-endpoint prefix list `com.amazonaws.<region>.s3`
+  exists in the target region (it is created by default in every region) and is
+  resolvable by `data "aws_ec2_managed_prefix_list" "s3"` at plan time (verified:
+  resolves to `pl-63a5400a` in `us-east-1`).
 - Technical: the `infra-terraform-scaffold` spec is complete and `terraform init` succeeds
   before this spec's tasks begin (source: dependency ordering in workspace.toml backlog).
 - Process: the CDK `_COMPUTE_SG_EGRESS` table in `test_stack.py` is the authoritative
   per-SG egress specification; the Terraform implementation must match it set-exactly
   (source: `apps/infra/tests/test_stack.py` `test_compute_sgs_egress_equals_exact_call_set`).
-- Security (deliberate parity, `s3_prefix_list_id`): the S3 egress target is the
-  operator-supplied `var.s3_prefix_list_id` (pattern-validated `^pl-[0-9a-f]+$`),
-  mirroring the CDK `S3PrefixListId` CfnParameter exactly — `deploy.sh` resolves the
-  correct AWS-managed S3 list per-region via `describe-managed-prefix-lists`. The
-  regex validates *shape*, not membership: a format-valid customer-managed prefix list
-  could in principle carry a wider CIDR. This residual risk is accepted for CDK +
-  scaffold parity (the variable is a scaffold-spec contract; auto-resolving it from a
-  `data "aws_ec2_managed_prefix_list"` would remove that variable — an "Ask first"
-  cross-spec change). Hardening tracked as backlog `infra-terraform-s3-prefix-list-data-source`.
+- Security (SEC-2 RESOLVED — data-source resolution): the S3 egress target is
+  resolved from the account via `data "aws_ec2_managed_prefix_list" "s3"` (name
+  `com.amazonaws.<region>.s3`), **not** an operator-supplied value. This removed the
+  former `var.s3_prefix_list_id` (a scaffold-spec variable): a format-valid but
+  wrong/wide customer-managed prefix list can no longer be injected to widen the one
+  egress hole closed egress exists to control. Intentional divergence from raw CDK
+  `S3PrefixListId` CfnParameter parity — egress-equivalent (same AWS-managed S3 list
+  the CDK `deploy.sh` resolves) and strictly safer. Cross-spec impact: the scaffold
+  spec's `s3_prefix_list_id` variable + its CIDR-rejection AC are superseded (see
+  that spec's changelog); the verification spec's plan invocation drops the `-var`.
 - Security (scanner): no IaC policy-as-code scanner (Checkov/tfsec) is wired yet, so
   the per-provider secure-config depth rests on hand-written plan-JSON asserts here
   (`degraded: no scanner`). Acceptable for a plan-only spec; wiring a scanner into CI
@@ -230,6 +239,11 @@ plan JSON negative-CIDR check (no public ingress/egress).
 - 2026-07-22 — Spec authored. Network tier: VPC, subnets, VPC endpoints (6), security
   groups (6 with closed egress matching _COMPUTE_SG_EGRESS exactly). Goal-based ACs
   verified by terraform plan JSON. Depends on infra-terraform-scaffold.
+- 2026-07-22 — SEC-2 hardening pulled into this PR (was deferred). S3 egress
+  `prefix_list_id` now resolved via `data "aws_ec2_managed_prefix_list" "s3"` instead
+  of the operator-supplied `var.s3_prefix_list_id` (removed). Boundaries, Never-do, and
+  Assumptions updated; SEC-2 disposition flipped DEFER→RESOLVED. Cross-spec: scaffold
+  variable/AC superseded, verification plan `-var` dropped, backlog item removed.
 - 2026-07-22 — Pre-EXECUTE review amendments (work-loop full mode). AC1: route tables.
   AC4: negative-egress + total-count + only-compute-SGs-own-egress. AC5: inline-block
   coverage + VPC-CIDR ingress clarified. AC7: route-table + IGW-absent counts. Added

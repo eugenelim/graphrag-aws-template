@@ -66,6 +66,16 @@ locals {
   }
 }
 
+# The AWS-managed S3 gateway-endpoint prefix list for the region. Resolved from
+# the account at plan time (name com.amazonaws.<region>.s3), NOT supplied by an
+# operator — this closes the SEC-2 footgun where a format-valid but wrong/wide
+# customer-managed prefix list could widen the one egress hole closed egress
+# exists to control. It is the declarative equivalent of the CDK deploy.sh
+# `describe-managed-prefix-lists` resolution (egress-equivalent, strictly safer).
+data "aws_ec2_managed_prefix_list" "s3" {
+  name = "com.amazonaws.${var.aws_region}.s3"
+}
+
 # S3 gateway endpoint — route-table associated so the corpus read routes with no
 # NAT (bedrock-runtime and the container pull ride the interface endpoints below).
 resource "aws_vpc_endpoint" "s3_gateway" {

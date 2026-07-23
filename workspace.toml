@@ -146,12 +146,4 @@ open = [
   # Source: infra-terraform-network pre-EXECUTE security review SEC-3 + REVIEW QE-3.
   {slug = "infra-terraform-scanner-ci", source = "docs/specs/infra-terraform-network/"},
 
-  # Harden s3_prefix_list_id: replace the operator-supplied, shape-validated
-  # (^pl-[0-9a-f]+$) variable with a data "aws_ec2_managed_prefix_list" that
-  # resolves the AWS-managed com.amazonaws.<region>.s3 list, so a format-valid
-  # customer-managed list can't widen closed egress. Cross-spec: the variable is
-  # a scaffold-spec contract (mirrors the CDK S3PrefixListId CfnParameter), so
-  # this touches infra-terraform-scaffold too. Source: infra-terraform-network SEC-2.
-  {slug = "infra-terraform-s3-prefix-list-data-source", source = "docs/specs/infra-terraform-network/"},
-
 ]

@@ -196,7 +196,7 @@ resource "aws_vpc_security_group_egress_rule" "ingestion_to_s3" {
   ip_protocol       = "tcp"
   from_port         = 443
   to_port           = 443
-  prefix_list_id    = var.s3_prefix_list_id
+  prefix_list_id    = data.aws_ec2_managed_prefix_list.s3.id
   description       = "IngestionSg egress to s3 prefix list 443"
 }
 
