@@ -1,6 +1,6 @@
 # Spec: incremental-delta-reingest
 
-- **Status:** Shipped <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Archived <!-- S3 content-hash delta ingestion; superseded by ADR-0016 git commit-SHA delta + medallion (ini-002 / RFC-0004) -->
 - **Owner:** eugenelim
 - **Shape:** mixed
 - **Plan:** [`plan.md`](plan.md)
