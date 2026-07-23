@@ -1,0 +1,134 @@
+@prefix biz:    <https://graphrag-aws.demo/biz-ops/ontology#> .
+@prefix schema: <https://schema.org/> .
+@prefix skos:   <http://www.w3.org/2004/02/skos/core#> .
+@prefix owl:    <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs:   <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:    <http://www.w3.org/2001/XMLSchema#> .
+@prefix prov:   <http://www.w3.org/ns/prov#> .
+
+<https://graphrag-aws.demo/biz-ops/ontology>
+    a owl:Ontology ;
+    rdfs:label "Biz-Ops Knowledge Graph Ontology"@en ;
+    owl:versionInfo "0.1.0" .
+
+# ---------------------------------------------------------------------------
+# Document classes — DigitalDocument subtree
+# ---------------------------------------------------------------------------
+
+biz:Policy a owl:Class ;
+    rdfs:subClassOf schema:DigitalDocument ;
+    rdfs:label "Policy"@en ;
+    rdfs:comment "A compliance rule, regulation, or policy document." .
+
+biz:Standard a owl:Class ;
+    rdfs:subClassOf biz:Policy ;
+    rdfs:label "Standard"@en ;
+    rdfs:comment "A normative standard derived from a policy." .
+
+biz:Guideline a owl:Class ;
+    rdfs:subClassOf biz:Policy ;
+    rdfs:label "Guideline"@en ;
+    rdfs:comment "A recommended practice derived from a policy." .
+
+# ---------------------------------------------------------------------------
+# Document classes — CreativeWork subtree
+# ---------------------------------------------------------------------------
+
+biz:SOP a owl:Class ;
+    rdfs:subClassOf schema:CreativeWork ;
+    rdfs:label "Standard Operating Procedure"@en ;
+    rdfs:comment "A step-by-step operational procedure." .
+
+biz:JobAid a owl:Class ;
+    rdfs:subClassOf schema:CreativeWork ;
+    rdfs:label "Job Aid"@en ;
+    rdfs:comment "A quick-reference job aid or cheat-sheet." .
+
+biz:Transcript a owl:Class ;
+    rdfs:subClassOf schema:CreativeWork ;
+    rdfs:label "Transcript"@en ;
+    rdfs:comment "A transcript of a meeting, call, or session." .
+
+biz:Chunk a owl:Class ;
+    rdfs:subClassOf schema:CreativeWork ;
+    rdfs:label "Chunk"@en ;
+    rdfs:comment "A retrieval unit — a child fragment of a parent document." .
+
+# ---------------------------------------------------------------------------
+# Taxonomy classes
+# ---------------------------------------------------------------------------
+
+biz:BusinessDomain a owl:Class ;
+    rdfs:subClassOf skos:ConceptScheme ;
+    rdfs:label "Business Domain"@en ;
+    rdfs:comment "A business domain concept scheme (e.g. Finance, HR, Ops)." .
+
+biz:Journey a owl:Class ;
+    rdfs:subClassOf skos:Concept ;
+    rdfs:label "Journey"@en ;
+    rdfs:comment "A business journey concept (e.g. Onboarding, Incident Response)." .
+
+# ---------------------------------------------------------------------------
+# Properties — domain annotations (not SHACL-enforced)
+# ---------------------------------------------------------------------------
+
+biz:inDomain a owl:ObjectProperty ;
+    rdfs:range biz:BusinessDomain ;
+    rdfs:label "in domain"@en .
+
+biz:inJourney a owl:ObjectProperty ;
+    rdfs:range biz:Journey ;
+    rdfs:label "in journey"@en .
+
+biz:hasChunk a owl:ObjectProperty ;
+    rdfs:range biz:Chunk ;
+    rdfs:label "has chunk"@en .
+
+# ---------------------------------------------------------------------------
+# Properties — SHACL-enforced on policy-family shapes
+# ---------------------------------------------------------------------------
+
+biz:scope a owl:DatatypeProperty ;
+    rdfs:domain biz:Policy ;
+    rdfs:range xsd:string ;
+    rdfs:label "scope"@en .
+
+biz:effectiveDate a owl:DatatypeProperty ;
+    rdfs:domain biz:Policy ;
+    rdfs:range xsd:date ;
+    rdfs:label "effective date"@en .
+
+biz:hasPII a owl:DatatypeProperty ;
+    rdfs:domain biz:Policy ;
+    rdfs:range xsd:boolean ;
+    rdfs:label "has PII"@en .
+
+# ---------------------------------------------------------------------------
+# Properties — SHACL-enforced on content-document shapes
+# ---------------------------------------------------------------------------
+
+biz:gitCommitSHA a owl:DatatypeProperty ;
+    rdfs:range xsd:string ;
+    rdfs:label "git commit SHA"@en .
+
+# ---------------------------------------------------------------------------
+# Properties — SHACL-enforced on chunk shape
+# ---------------------------------------------------------------------------
+
+biz:chunkIndex a owl:DatatypeProperty ;
+    rdfs:domain biz:Chunk ;
+    rdfs:range xsd:integer ;
+    rdfs:label "chunk index"@en .
+
+biz:embeddingModel a owl:DatatypeProperty ;
+    rdfs:domain biz:Chunk ;
+    rdfs:range xsd:string ;
+    rdfs:label "embedding model"@en .
+
+# ---------------------------------------------------------------------------
+# Properties — optional annotation
+# ---------------------------------------------------------------------------
+
+biz:visibility a owl:DatatypeProperty ;
+    rdfs:range xsd:string ;
+    rdfs:label "visibility"@en .

@@ -1,0 +1,78 @@
+@prefix sh:     <http://www.w3.org/ns/shacl#> .
+@prefix biz:    <https://graphrag-aws.demo/biz-ops/ontology#> .
+@prefix schema: <https://schema.org/> .
+@prefix skos:   <http://www.w3.org/2004/02/skos/core#> .
+@prefix prov:   <http://www.w3.org/ns/prov#> .
+@prefix xsd:    <http://www.w3.org/2001/XMLSchema#> .
+
+# ---------------------------------------------------------------------------
+# Policy-family shapes (normative partition)
+# PolicyShape, StandardShape, GuidelineShape share the same 5 property
+# constraints per ADR-0012 §SHACL shapes.
+# ---------------------------------------------------------------------------
+
+biz:PolicyShape a sh:NodeShape ;
+    sh:targetClass biz:Policy ;
+    sh:property [ sh:path schema:name ;       sh:minCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path biz:effectiveDate ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:date ] ;
+    sh:property [ sh:path biz:scope ;         sh:minCount 1 ] ;
+    sh:property [ sh:path biz:hasPII ;        sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:boolean ] ;
+    sh:property [ sh:path biz:gitCommitSHA ;  sh:minCount 1 ; sh:datatype xsd:string ] .
+
+biz:StandardShape a sh:NodeShape ;
+    sh:targetClass biz:Standard ;
+    sh:property [ sh:path schema:name ;       sh:minCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path biz:effectiveDate ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:date ] ;
+    sh:property [ sh:path biz:scope ;         sh:minCount 1 ] ;
+    sh:property [ sh:path biz:hasPII ;        sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:boolean ] ;
+    sh:property [ sh:path biz:gitCommitSHA ;  sh:minCount 1 ; sh:datatype xsd:string ] .
+
+biz:GuidelineShape a sh:NodeShape ;
+    sh:targetClass biz:Guideline ;
+    sh:property [ sh:path schema:name ;       sh:minCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path biz:effectiveDate ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:date ] ;
+    sh:property [ sh:path biz:scope ;         sh:minCount 1 ] ;
+    sh:property [ sh:path biz:hasPII ;        sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:boolean ] ;
+    sh:property [ sh:path biz:gitCommitSHA ;  sh:minCount 1 ; sh:datatype xsd:string ] .
+
+# ---------------------------------------------------------------------------
+# Content-document shapes (descriptive partition)
+# SOPShape, JobAidShape, TranscriptShape: schema:name + biz:gitCommitSHA
+# ---------------------------------------------------------------------------
+
+biz:SOPShape a sh:NodeShape ;
+    sh:targetClass biz:SOP ;
+    sh:property [ sh:path schema:name ;      sh:minCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path biz:gitCommitSHA ; sh:minCount 1 ; sh:datatype xsd:string ] .
+
+biz:JobAidShape a sh:NodeShape ;
+    sh:targetClass biz:JobAid ;
+    sh:property [ sh:path schema:name ;      sh:minCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path biz:gitCommitSHA ; sh:minCount 1 ; sh:datatype xsd:string ] .
+
+biz:TranscriptShape a sh:NodeShape ;
+    sh:targetClass biz:Transcript ;
+    sh:property [ sh:path schema:name ;      sh:minCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path biz:gitCommitSHA ; sh:minCount 1 ; sh:datatype xsd:string ] .
+
+# ---------------------------------------------------------------------------
+# Chunk shape (per ADR-0012 §SHACL shapes)
+# ---------------------------------------------------------------------------
+
+biz:ChunkShape a sh:NodeShape ;
+    sh:targetClass biz:Chunk ;
+    sh:property [ sh:path prov:wasDerivedFrom ; sh:minCount 1 ; sh:maxCount 1 ] ;
+    sh:property [ sh:path biz:chunkIndex ;      sh:minCount 1 ; sh:datatype xsd:integer ] ;
+    sh:property [ sh:path biz:embeddingModel ;  sh:minCount 1 ; sh:datatype xsd:string ] .
+
+# ---------------------------------------------------------------------------
+# Taxonomy shapes
+# ---------------------------------------------------------------------------
+
+biz:BusinessDomainShape a sh:NodeShape ;
+    sh:targetClass biz:BusinessDomain ;
+    sh:property [ sh:path skos:prefLabel ; sh:minCount 1 ] .
+
+biz:JourneyShape a sh:NodeShape ;
+    sh:targetClass biz:Journey ;
+    sh:property [ sh:path skos:prefLabel ; sh:minCount 1 ] .
