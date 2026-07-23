@@ -1,6 +1,6 @@
 # Spec: opencypher-templates
 
-- **Status:** Shipped <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Archived <!-- openCypher/LPG era; superseded by ini-002 pivot to SPARQL/RDF (RFC-0004); SPARQL template patterns addressed in spec-multi-strategy-routing -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** [Charter — Pattern coverage table, *Cypher Templates* row](../../CHARTER.md#pattern-coverage-against-the-graphragcom-catalog) (the coverage contract this slice ships), [RFC-0001 feasibility note §2](../../rfc/0001-notes/aws-feasibility.md) (Neptune parameterized openCypher VERIFIED; a run-time read-only guard is the *text2cypher* guardrail, not this slice's — see [ADR-0004](../../adr/0004-text2cypher-read-only-guard.md), which guards with IAM scoping rather than the note's named read-replica), [ADR-0001](../../adr/0001-hybrid-orchestration-seed-and-expand.md) (reuses the synthesizer seam + the question entity-linking from the hybrid slice), [ADR-0002](../../adr/0002-ephemeral-vpc-store-topology.md) (rides the existing in-VPC query Lambda behind the IAM-auth Function URL; adds no billable resource), [ADR-0003](../../adr/0003-iac-tool-aws-cdk-python.md) (IaC is AWS CDK Python)

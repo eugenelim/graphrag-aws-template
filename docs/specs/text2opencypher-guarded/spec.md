@@ -1,6 +1,6 @@
 # Spec: text2opencypher-guarded
 
-- **Status:** Shipped <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Archived <!-- openCypher/LPG era; superseded by spec-text2sparql-guarded (ini-002 / RFC-0004) -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** [ADR-0004](../../adr/0004-text2cypher-read-only-guard.md) (the read-only guard choice this slice ships — layered defense with IAM read-only data-action scoping as the primary backstop, *not* a read-replica endpoint), [Charter — Pattern coverage table, *Text2Cypher* row](../../CHARTER.md#pattern-coverage-against-the-graphragcom-catalog) (the coverage contract this slice ships), [RFC-0001 feasibility note §2](../../rfc/0001-notes/aws-feasibility.md) (Neptune openCypher VERIFIED; the read-replica is *named* the text2cypher guardrail — ADR-0004 records why this single-node topology guards with IAM scoping instead), [ADR-0001](../../adr/0001-hybrid-orchestration-seed-and-expand.md) (reuses the `Synthesizer` seam), [ADR-0002](../../adr/0002-ephemeral-vpc-store-topology.md) (rides the existing in-VPC query Lambda behind the IAM-auth Function URL; adds no billable resource; the IAM grant is *narrowed*, never widened), [ADR-0003](../../adr/0003-iac-tool-aws-cdk-python.md) (IaC is AWS CDK Python)

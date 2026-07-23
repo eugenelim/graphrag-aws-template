@@ -1,6 +1,6 @@
 # ADR-0001: Hybrid retrieval is one *seed-and-expand* orchestration — not single-direction or parallel-merge
 
-- **Status:** Accepted
+- **Status:** Superseded by RFC-0004 <!-- openCypher seed-and-expand reversed by biz-ops KG pivot; replaced by named-graph partition + multi-strategy routing (ADR-0012/ADR-0013) -->
 - **Date:** 2026-06-23
 - **Decision-makers:** eugenelim
 - **Supersedes:** none
