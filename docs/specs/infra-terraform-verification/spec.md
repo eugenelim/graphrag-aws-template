@@ -70,7 +70,10 @@ stack — confirming end-to-end correctness.
   - Function URL `authorization_type = "AWS_IAM"` (never `NONE`).
   - Lambda permission `principal = var.invoker_role_arn` (never `*`).
   - ECR `force_delete = true`.
-  - 4 log groups with `retention_in_days = 7` and `force_destroy = true`.
+  - 4 `aws_cloudwatch_log_group` resources with `retention_in_days = 7`, each
+    stack-managed with no `skip_destroy` (the provider has no `force_destroy` on log
+    groups — `terraform destroy` deletes the group + events by default; corrected from
+    the original `force_destroy = true`, which fails `terraform validate` on provider 5.x).
   - Budget alarm: `limit_amount = "150"`, `threshold = 80`, `notification_type = "ACTUAL"`.
   - Governance tags propagated to VPC, S3, Neptune, ECS, ECR resources (5 tag keys).
 - **`trivy config apps/infra-tf/` exits 0 with no HIGH/CRITICAL findings.**

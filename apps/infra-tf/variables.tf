@@ -3,6 +3,14 @@
 variable "budget_alarm_email" {
   type        = string
   description = "Email address that receives the AWS Budgets cost alarm."
+
+  validation {
+    # Fail-fast on a malformed/empty address (symmetric with invoker_role_arn) rather than
+    # surfacing it only at apply time when aws_budgets_budget rejects the subscriber. Basic
+    # shape check (local@domain.tld), not full RFC 5322.
+    condition     = can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", var.budget_alarm_email))
+    error_message = "budget_alarm_email must be a valid email address of the form local@domain.tld."
+  }
 }
 
 variable "invoker_role_arn" {
@@ -10,7 +18,12 @@ variable "invoker_role_arn" {
   description = "IAM role ARN permitted to invoke the query Function URL (SigV4)."
 
   validation {
-    condition     = can(regex("^arn:aws:iam::[0-9]{12}:role/.+", var.invoker_role_arn))
+    # End-anchored, and the role-name/path body admits only the IAM-legal character set
+    # (alphanumeric + `+=,.@_-` and `/` for paths) — so a wildcard body like `role/*`,
+    # a `:root` ARN, or a non-role principal is rejected. A non-anchored `.+` body would
+    # have let `role/*` through despite the error message (defence-in-depth: the Lambda
+    # AddPermission API also rejects a wildcard principal at apply time).
+    condition     = can(regex("^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$", var.invoker_role_arn))
     error_message = "invoker_role_arn must be a role ARN of the form arn:aws:iam::<account-id>:role/<name>. Root, wildcard, and non-role principals are not permitted."
   }
 }

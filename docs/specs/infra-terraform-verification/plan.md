@@ -106,7 +106,7 @@ def _iam_inline_policies(tfplan):
 | `test_opensearch_access_policy_is_scoped_not_all_principals` | `access_policies` JSON has 3 named principals, no `Principal: "*"` |
 | `test_vector_actions_are_scoped_no_wildcard_resource` | bedrock:InvokeModel and es:ESHttp* both scoped; Titan v2 ARN present |
 | `test_ingestion_task_can_write_manifest_scoped_to_manifest_key` | s3:PutObject present, scoped to manifest.json / schema_extraction_trace.txt / silver/* |
-| `test_log_groups_are_stack_managed_and_destroyed` | 4 `aws_cloudwatch_log_group` with `force_destroy = true` |
+| `test_log_groups_are_stack_managed_and_destroyed` | 4 `aws_cloudwatch_log_group` with `retention_in_days = 7`, none with `skip_destroy = true` (provider has no `force_destroy` on log groups; `terraform destroy` deletes them + events by default) |
 | `test_store_sg_ingress_rules_exact` *(new — no CDK equivalent name)* | Neptune SG has exactly 3 ingress rules on 8182; OpenSearch SG has exactly 3 on 443; peer SGs match ingestion/smoke/query and ingestion/vector-smoke/query respectively |
 | `test_ingestion_and_smoke_roles_retain_neptune_rw` *(CDK: `test_ingestion_and_smoke_roles_retain_read_write`)* | IngestionTaskRole and SmokeProbeRole policies contain all 4 neptune-db actions (connect, Read, Write, Delete) |
 | `test_bedrock_synthesis_grant_scopes_profile_and_foundation_arns` *(CDK: `test_bedrock_claude_grant_scopes_profile_and_foundation_no_wildcard`)* | roles with synthesis grant have: inference-profile ARN (account+region-qualified) AND 3 regional foundation-model ARNs (`us-east-1/2` + `us-west-2`); no wildcard resource; `vector_probe_role` has no synthesis grant |

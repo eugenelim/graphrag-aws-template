@@ -17,6 +17,34 @@
 # Add items as: {slug = "my-deferred-item"}
 # Run `workspace-status` to see all open backlog items.
 
+["ini-001"]
+name      = "Terraform Migration"
+milestone = "M1 · CDK → Terraform parity (5-tier build + verification)"
+status    = "active"
+
+# The CDK→Terraform migration (ADR-0010): a 5-tier build (scaffold → network →
+# data+IAM → compute → verification) that reproduces the CDK stack in apps/infra-tf/.
+# Tiers 1–4 are shipped; tier 5 (verification) is the last queued item and owns the
+# single full-stack live cycle (apply → smoke → destroy). Migration-specific deferred
+# follow-ups (IaC scanner/cost gate, the live cycle, per-Lambda hardening) live in the
+# repo-level [backlog] below because they are deferral-register anchors referenced by
+# spec `(deferred: <slug>)` markers.
+["ini-001".work]
+# Shipped tiers — bare strings (needs/other fields dropped at ship, per the queue schema).
+shipped = [
+  "docs/specs/infra-terraform-scaffold/",
+  "docs/specs/infra-terraform-network/",
+  "docs/specs/infra-terraform-data-and-iam/",
+  "docs/specs/infra-terraform-compute/",
+]
+active = []
+queue = [
+  # Tier 5 — verification: pytest plan-assertion suite (≥23 tests), probe.sh
+  # (readiness poll + 3 Lambda invocations), fixture plan.json. Unblocked now that
+  # the compute tier is shipped; owns the live full-stack apply → smoke → destroy cycle.
+  {path = "docs/specs/infra-terraform-verification/", needs = "work:docs/specs/infra-terraform-compute/"},
+]
+
 [backlog]
 open = [
 
@@ -110,40 +138,54 @@ open = [
   # docs/architecture/security.md; cdk destroy to zero billable resources.
   {slug = "security-hardening-followups-live-eval", source = "docs/specs/security-hardening-followups/"},
 
-  # ── Terraform migration (CDK → Terraform; 5-tier build + verification) ─────
+  # ── Terraform migration (CDK → Terraform) ─────────────────────────────────
+  # The 5 build tiers (scaffold, network, data+IAM, compute, verification) moved to
+  # the ["ini-001"] "Terraform Migration" initiative above. The migration-specific
+  # deferred follow-ups stay here because they are deferral-register anchors that spec
+  # `(deferred: <slug>)` markers resolve against (lint-spec-status.py invariant iv).
 
-  # Tier 1 — scaffold: versions.tf, provider.tf (default_tags), backend.tf
-  # (S3, use_lockfile=true, no DynamoDB), variables.tf (3 required + 6 governance), outputs.tf
-  # shell (12 stubs), bootstrap.sh. Unblocked — no dependencies.
-  {slug = "infra-terraform-scaffold", source = "docs/specs/infra-terraform-scaffold/"},
-
-  # Tier 2 — network: VPC, 2 private subnets, 6 VPC endpoints, 6 compute SGs
-  # with closed egress matching _COMPUTE_SG_EGRESS exactly.
-  {slug = "infra-terraform-network", source = "docs/specs/infra-terraform-network/", needs = "backlog:infra-terraform-scaffold"},
-
-  # Tier 3 — data + IAM: s3.tf, neptune.tf, opensearch.tf, iam.tf (3 roles,
-  # all inline policies, ADR-0004 QueryRole read-only Neptune grant).
-  {slug = "infra-terraform-data-and-iam", source = "docs/specs/infra-terraform-data-and-iam/", needs = "backlog:infra-terraform-network"},
-
-  # Tier 4 — compute: ECS/ECR, Fargate task def, 3 Lambda functions, Function
-  # URL (AWS_IAM), Lambda permission (named principal), Budget alarm,
-  # 4 log groups, SmokeProbe IAM role.
-  {slug = "infra-terraform-compute", source = "docs/specs/infra-terraform-compute/", needs = "backlog:infra-terraform-data-and-iam"},
-
-  # Tier 5 — verification: pytest plan-assertion suite (≥23 tests), probe.sh
-  # (readiness poll + 3 Lambda invocations), fixture plan.json.
-  {slug = "infra-terraform-verification", source = "docs/specs/infra-terraform-verification/", needs = "backlog:infra-terraform-compute"},
-
-  # ── Terraform migration follow-ups (deferred from infra-terraform-network) ──
-
-  # Wire an IaC policy-as-code scanner (Checkov or tfsec) into CI against
-  # apps/infra-tf/ and name it as a gate — closes the `degraded: no scanner`
-  # gap (per-provider secure-config depth). Own it in the verification tier's
-  # CI wiring. When it lands it will flag the VPC default security group
-  # (unmanaged, allow-all-intra-group) — lock it down then via
-  # aws_default_security_group with empty ingress/egress, consistently across
-  # all tiers (no ENI attaches to it today, so it is not a live exposure).
-  # Source: infra-terraform-network pre-EXECUTE security review SEC-3 + REVIEW QE-3.
+  # Wire IaC CI gates against apps/infra-tf/ and name them as gates: (1) a
+  # policy-as-code scanner (Checkov or tfsec) — closes the `degraded: no scanner`
+  # gap (per-provider secure-config depth); (2) a plan-time cost gate (Infracost or
+  # equivalent) — the aws_budgets_budget is only a runtime ACTUAL-spend alarm, not a
+  # pre-apply ceiling, so a resource-size regression is caught only after spend accrues
+  # (compute REVIEW QE-2 `degraded: no cost gate`). Own both in the verification tier's
+  # CI wiring. When the scanner lands it will flag the VPC default security group
+  # (unmanaged, allow-all-intra-group) — lock it down then via aws_default_security_group
+  # with empty ingress/egress across all tiers (no ENI attaches to it today, so it is not
+  # a live exposure). Source: infra-terraform-network security SEC-3 + REVIEW QE-3;
+  # infra-terraform-compute REVIEW QE-2 (cost gate).
   {slug = "infra-terraform-scanner-ci", source = "docs/specs/infra-terraform-network/"},
+
+  # Live end-to-end for the compute tier (infra-terraform-compute AC10): full-stack
+  # `terraform apply` → SmokeProbe + VectorSmokeProbe + QueryLambda(Function URL, SigV4)
+  # invocations succeed → `terraform destroy` leaves no billable resource (ECR, log
+  # groups, Neptune, OpenSearch). Deferred to the verification tier, which owns the
+  # readiness-wait probe.sh and re-applies the whole stack — running a second apply/
+  # destroy in the compute tier would duplicate an expensive (~30 min) cycle. NOTE: the
+  # teardown step MUST budget for a VPC-Lambda hyperplane-ENI drain wait + orphan sweep
+  # before asserting clean destroy — Lambda releases ENIs asynchronously and a stalled
+  # ENI blocks SG/subnet deletion (this env has hit teardown stalls; compute REVIEW QE-3).
+  # Also satisfies infra-terraform-network AC10 (live reachability — endpoints reachable
+  # from an in-VPC Lambda, closed-egress SGs, S3 gateway-endpoint route), which is confirmed
+  # as a side effect of this cycle's smoke probe + corpus read.
+  # Unblock: infra-terraform-verification's probe.sh lands. Source: infra-terraform-compute
+  # AC10 + pre-EXECUTE adversarial finding 6 + REVIEW QE-3; infra-terraform-network AC10.
+  {slug = "terraform-compute-live-cycle", source = "docs/specs/infra-terraform-compute/ AC10"},
+
+  # Cap query_lambda concurrency (reserved_concurrent_executions) as a blast-radius/cost
+  # ceiling. The Function URL is IAM-auth-gated to var.invoker_role_arn (not anon), so this
+  # is defence-in-depth: a broad/compromised invoker role could otherwise exhaust account
+  # Lambda concurrency (starving the smoke probes) and drive spend the $150/80% ACTUAL
+  # budget only alarms on after the fact. Out of CDK-parity scope (CDK sets no cap), so
+  # deferred. apps/infra-tf/lambda.tf query_lambda. Source: infra-terraform-compute REVIEW SEC-1.
+  {slug = "terraform-query-lambda-concurrency-cap", source = "docs/specs/infra-terraform-compute/"},
+
+  # DRY the endpoint-URL construction in apps/infra-tf: `https://<neptune>:8182` and
+  # `https://<opensearch>` are re-spelled across compute.tf, lambda.tf (3x), and outputs.tf.
+  # Extract local.neptune_endpoint_url / local.opensearch_endpoint_url and reference them so
+  # a port/scheme change is a single-site edit. Low blast radius (single source attribute,
+  # can't silently mismatch). Source: infra-terraform-compute REVIEW QE-4 (Nit).
+  {slug = "terraform-endpoint-url-locals-dedup", source = "docs/specs/infra-terraform-compute/"},
 
 ]

@@ -1,7 +1,7 @@
 # Plan: infra-terraform-compute
 
 - **Spec:** [`spec.md`](spec.md)
-- **Status:** Drafting <!-- Drafting | Executing | Done -->
+- **Status:** Done <!-- Drafting | Executing | Done -->
 
 > **Plan contract:** implementation strategy for the compute tier. May change as
 > implementation proceeds; note substantial changes in the changelog.
@@ -19,15 +19,18 @@ Authoring order:
 2. `lambda.tf`: 4 log groups (smoke, vector-smoke, query), SmokeProbe role, 3 Lambda
    functions, Function URL, Lambda permission.
 3. `budget.tf`: Budget alarm (independent of all other resources).
-4. `outputs.tf` completion: fill remaining 9 output stubs from compute resources.
+4. `outputs.tf` completion: fill remaining 7 `null` output stubs from compute resources
+   (`ingestion_security_group_id` + `private_subnet_id` were already wired by the network tier).
 5. Verification pass: `terraform fmt -check`, plan JSON security checks.
 
 ## Constraints
 
 - ADR-0004: `query_role` Neptune grant stays read-only; this spec does not modify it.
 - CDK `empty_on_delete=True` → `force_delete = true` on `aws_ecr_repository`.
-- CDK `RemovalPolicy.DESTROY` on log groups → `force_destroy = true` on
-  `aws_cloudwatch_log_group`.
+- CDK `RemovalPolicy.DESTROY` on log groups → an `aws_cloudwatch_log_group` resource with
+  `retention_in_days = 7` and no `prevent_destroy`/`skip_destroy`. `terraform destroy`
+  deletes the group + its events by default; the provider has **no** `force_destroy`
+  argument on `aws_cloudwatch_log_group` (contract-acquisition, provider 5.x).
 - Lambda code is sourced from `apps/graphrag/dist/graphrag.zip` (pre-built by CI);
   a placeholder zip (`touch apps/graphrag/dist/graphrag.zip`) is required for plan
   to succeed locally. The Terraform source hash validates the file presence, not
@@ -85,25 +88,36 @@ is overridable at `run-task` time).
 ### SmokeProbe IAM role
 
 ```hcl
+# name_prefix (not a fixed name) matches the iam.tf convention (all 3 roles use
+# name_prefix) and avoids an EntityAlreadyExists collision on the teardown-first
+# apply/destroy/re-apply cycle (AC10). Trust policy uses inline jsonencode — the
+# same shape iam.tf:170-178 uses for vector_probe_role/query_role (there is no
+# data.aws_iam_policy_document.lambda_assume in this module).
 resource "aws_iam_role" "smoke_probe_role" {
-  name               = "graphrag-smoke-probe-role"
-  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
+  name_prefix = "graphrag-smoke-probe-"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
 }
 resource "aws_iam_role_policy_attachment" "smoke_probe_vpc" {
   role       = aws_iam_role.smoke_probe_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
 }
+# Reuse the module-global full-RW policy already defined in iam.tf (local.neptune_rw_policy,
+# scoped to local.neptune_cluster_arn) rather than re-inlining the ARN + 4-action list —
+# a single source of truth keeps the smoke-probe grant in lockstep with the centralized
+# definition and its ADR-0004 read-only sibling. The RW set (connect + Read + Write +
+# Delete) is CDK parity (graphrag_stack.py:661 uses the full _neptune_data_access): the
+# probe inserts a test node, retrieves it, and deletes it (cleanup).
 resource "aws_iam_role_policy" "smoke_probe_neptune" {
   name   = "smoke-probe-neptune-full-rw"
   role   = aws_iam_role.smoke_probe_role.id
-  policy = jsonencode({
-    Statement = [{
-      Effect   = "Allow"
-      Action   = ["neptune-db:connect", "neptune-db:ReadDataViaQuery",
-                  "neptune-db:WriteDataViaQuery", "neptune-db:DeleteDataViaQuery"]
-      Resource = "arn:aws:neptune-db:${var.aws_region}:${data.aws_caller_identity.current.account_id}:${aws_neptune_cluster.main.cluster_resource_id}/*"
-    }]
-  })
+  policy = local.neptune_rw_policy
 }
 ```
 
@@ -121,9 +135,23 @@ that would survive `terraform destroy`. All 3 Lambda functions must use this pat
 
 ## Tasks
 
+### T0: Placeholder Lambda zip (precondition for any `terraform plan`)
+
+**Depends on:** none
+**Touches:** `apps/graphrag/dist/graphrag.zip` (gitignored build artifact — not committed)
+**Tests:** goal-based — `apps/graphrag/dist/graphrag.zip` exists so `filebase64sha256(...)`
+  resolves; `terraform plan` does not fail with a file-not-found on the Lambda source.
+**Approach:** Create `apps/graphrag/dist/` and a non-empty placeholder `graphrag.zip`.
+  The Terraform `source_code_hash` validates the file's presence, not its contents; the
+  real package is built by CI (out of scope). The path is gitignored, so this never lands
+  in the PR — it is a local-plan precondition only.
+**Done when:** the zip exists; `terraform plan` reaches the resource graph.
+
+---
+
 ### T1: Write `compute.tf` — ECS cluster, ECR repo, ECS task execution role, Fargate task def
 
-**Depends on:** none (scaffold + network + data+IAM complete)
+**Depends on:** T0 (placeholder zip present for plan)
 **Touches:** `apps/infra-tf/compute.tf`
 **Tests:** goal-based — plan shows 1 `aws_ecs_cluster`, 1 `aws_ecr_repository`
   (`force_delete = true`), 1 `aws_iam_role.ecs_task_execution_role`, 1 `aws_iam_role_policy_attachment`,
@@ -143,8 +171,9 @@ that would survive `terraform destroy`. All 3 Lambda functions must use this pat
 **Depends on:** T1
 **Touches:** `apps/infra-tf/lambda.tf`
 **Tests:** goal-based — plan shows 3 additional `aws_cloudwatch_log_group` resources
-  (plus ingestion from T1 = 4 total); all with `retention_in_days = 7` and
-  `force_destroy = true`; `aws_iam_role.smoke_probe_role` present with Neptune
+  (plus ingestion from T1 = 4 total); all with `retention_in_days = 7` and no
+  `skip_destroy` (provider has no `force_destroy` on log groups);
+  `aws_iam_role.smoke_probe_role` present with Neptune
   full-RW inline policy; `terraform validate` exits 0.
 **Approach:** Write 3 `aws_cloudwatch_log_group` (smoke probe, vector smoke probe,
   query Lambda). Write `aws_iam_role.smoke_probe_role` + 1 attachment +
@@ -200,12 +229,13 @@ that would survive `terraform destroy`. All 3 Lambda functions must use this pat
 **Touches:** `apps/infra-tf/budget.tf`
 **Tests:** goal-based — plan shows 1 `aws_budgets_budget` with `limit_amount = "150"`,
   `budget_type = "COST"`, `time_unit = "MONTHLY"`; notification has `threshold = 80`
-  and `notification_type = "ACTUAL"`; subscriber has `subscription_type = "EMAIL"`;
-  `terraform validate` exits 0.
-**Approach:** Write `aws_budgets_budget.monthly`. Verify `aws_budgets_budget`
-  argument names (esp. `notification.threshold`, `notification.threshold_type`,
-  `subscriber`) against provider schema — the argument structure changed between
-  provider 4.x and 5.x (contract-acquisition gate).
+  and `notification_type = "ACTUAL"`; `subscriber_email_addresses = [var.budget_alarm_email]`
+  on the notification block; `terraform validate` exits 0.
+**Approach:** Write `aws_budgets_budget.monthly`. Per the contract-acquisition gate
+  (provider 5.100.0): the `notification` block carries `comparison_operator`,
+  `notification_type`, `threshold` (number), `threshold_type`, and
+  `subscriber_email_addresses` (a set of strings) — there is NO nested
+  `subscriber { subscription_type, address }` block (that is the CFN/CDK shape).
 **Done when:** Budget resource in plan; all 5 CDK-matching fields present.
 
 ---
@@ -216,11 +246,11 @@ that would survive `terraform destroy`. All 3 Lambda functions must use this pat
 **Touches:** `apps/infra-tf/outputs.tf`
 **Tests:** goal-based — `terraform validate` exits 0; `grep -c 'null' apps/infra-tf/outputs.tf`
   returns 0 (no remaining null stubs).
-**Approach:** Fill in the remaining 9 output stubs:
+**Approach:** Fill in the remaining 7 `null` output stubs (`ingestion_security_group_id`
+  and `private_subnet_id` were already wired to live attributes by the network tier —
+  they are not stubs and are left untouched):
   - `ecs_cluster_name = aws_ecs_cluster.main.name`
   - `ingestion_task_def_arn = aws_ecs_task_definition.ingestion.arn`
-  - `ingestion_security_group_id = aws_security_group.ingestion_task_sg.id`
-  - `private_subnet_id = aws_subnet.private[0].id` *(already filled in network tier)*
   - `ingestion_repo_uri = aws_ecr_repository.ingestion.repository_url`
   - `smoke_probe_name = aws_lambda_function.smoke_probe.function_name`
   - `vector_smoke_probe_name = aws_lambda_function.vector_smoke_probe.function_name`
@@ -239,7 +269,10 @@ that would survive `terraform destroy`. All 3 Lambda functions must use this pat
   (2) Lambda permission `principal = var.invoker_role_arn` value (not `*`);
   (3) `aws_lambda_function_url` count = 1;
   (4) SmokeProbe role has all 4 Neptune actions;
-  (5) QueryRole Neptune actions do NOT include Write/Delete (ADR-0004 invariant preserved).
+  (5) QueryRole Neptune actions do NOT include Write/Delete (ADR-0004 invariant preserved);
+  (6) AC11 negative check — `terraform validate` (or `plan`) with
+  `-var 'invoker_role_arn=arn:aws:iam::123456789012:role/*'` exits **non-zero**, and again
+  with a `:root` ARN exits non-zero (the tightened regex rejects wildcard/root/non-role).
 **Approach:** Run `terraform fmt -recursive apps/infra-tf/`. Run
   `terraform plan -out=tfplan`. Run `terraform show -json tfplan` and parse JSON.
   Five targeted assertions. The ADR-0004 assertion (no Write/Delete on QueryRole)
@@ -249,17 +282,20 @@ that would survive `terraform destroy`. All 3 Lambda functions must use this pat
 
 ## Rollout
 
-This is the final build spec; the live acceptance test is AC10. After `terraform apply`:
-1. Build the ingestion container image and push to the ECR repo.
-2. Invoke SmokeProbe: `aws lambda invoke --function-name <SmokeProbeName> /tmp/out.json`
-3. Invoke VectorSmokeProbe: same pattern.
-4. Invoke QueryLambda via Function URL.
-5. `terraform destroy` — confirm clean removal.
-
-Neptune clusters and OpenSearch domains take 5–30 minutes to become available.
-Smoke probe invocations should wait for the cluster/domain status to be AVAILABLE
-before being invoked. The `infra-terraform-verification` spec's `probe.sh` handles
-the readiness wait.
+This is the final build spec. Its offline gates (AC1–AC9) terminate the build via
+`terraform fmt`/`validate`/`plan`-JSON. The live acceptance (AC10) is **deferred to the
+`infra-terraform-verification` tier** (backlog `terraform-compute-live-cycle`): that spec
+owns the readiness-wait `probe.sh` and re-applies the full stack, so running a second
+live apply/destroy here would be redundant and expensive. The live sequence (run there):
+1. `terraform apply` — provisions network + data + compute (Neptune/OpenSearch take
+   5–30 min to reach AVAILABLE).
+2. Build the ingestion container image and push to the ECR repo.
+3. Invoke SmokeProbe: `aws lambda invoke --function-name <SmokeProbeName> /tmp/out.json`
+   (after `probe.sh` confirms the cluster/domain is AVAILABLE).
+4. Invoke VectorSmokeProbe: same pattern.
+5. Invoke QueryLambda via the IAM-auth Function URL (SigV4).
+6. `terraform destroy` — confirm clean removal (no ECR repo, log groups, Neptune, or
+   OpenSearch remain).
 
 ## Risks
 
@@ -285,3 +321,17 @@ the readiness wait.
   ECS/ECR/execution role/task def, 3 log groups + SmokeProbe role, 3 Lambda functions,
   Function URL + permission, Budget alarm, outputs completion, fmt + security verification.
   Compute tier depends on data+IAM for role ARNs and data store endpoints.
+- 2026-07-23 — Pre-EXECUTE review amendments (adversarial + secure-design, spec-stage):
+  T5 budget test/approach rewritten to the provider-5.x `subscriber_email_addresses`
+  shape (was the CFN nested `subscriber` block — would have driven a provider-rejected
+  write); SmokeProbe IAM sketch fixed to `name_prefix` (avoids EntityAlreadyExists on the
+  teardown-first re-apply cycle), inline `jsonencode` trust policy (no nonexistent
+  `data.aws_iam_policy_document.lambda_assume`), and `policy = local.neptune_rw_policy`
+  (reuse the module-global grant, not a re-inlined copy that can drift from its ADR-0004
+  read-only sibling); added T0 (placeholder-zip precondition) that T1 depends on; T6/
+  authoring-order output count corrected 9→7 (`ingestion_security_group_id` +
+  `private_subnet_id` already wired by the network tier); Rollout + AC10 narrowed and
+  deferred to the verification tier (backlog `terraform-compute-live-cycle`). Spec side:
+  new AC11 (invoker_role_arn regex end-anchored + wildcard-excluding — the actual guard
+  hardened in variables.tf), AC6 delete-grant justified (insert→retrieve→cleanup), AC1
+  ECR mutable-`:latest` rationale, and an accepted IaC-scanner gap note.
