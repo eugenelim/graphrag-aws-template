@@ -110,4 +110,28 @@ open = [
   # docs/architecture/security.md; cdk destroy to zero billable resources.
   {slug = "security-hardening-followups-live-eval", source = "docs/specs/security-hardening-followups/"},
 
+  # ── Terraform migration (CDK → Terraform; 5-tier build + verification) ─────
+
+  # Tier 1 — scaffold: versions.tf, provider.tf (default_tags), backend.tf
+  # (S3, no DynamoDB), variables.tf (3 required + 6 governance), outputs.tf
+  # shell (12 stubs), bootstrap.sh. Unblocked — no dependencies.
+  {slug = "infra-terraform-scaffold", source = "docs/specs/infra-terraform-scaffold/"},
+
+  # Tier 2 — network: VPC, 2 private subnets, 6 VPC endpoints, 6 compute SGs
+  # with closed egress matching _COMPUTE_SG_EGRESS exactly.
+  {slug = "infra-terraform-network", source = "docs/specs/infra-terraform-network/", needs = "backlog:infra-terraform-scaffold"},
+
+  # Tier 3 — data + IAM: s3.tf, neptune.tf, opensearch.tf, iam.tf (3 roles,
+  # all inline policies, ADR-0004 QueryRole read-only Neptune grant).
+  {slug = "infra-terraform-data-and-iam", source = "docs/specs/infra-terraform-data-and-iam/", needs = "backlog:infra-terraform-network"},
+
+  # Tier 4 — compute: ECS/ECR, Fargate task def, 3 Lambda functions, Function
+  # URL (AWS_IAM), Lambda permission (named principal), Budget alarm,
+  # 4 log groups, SmokeProbe IAM role.
+  {slug = "infra-terraform-compute", source = "docs/specs/infra-terraform-compute/", needs = "backlog:infra-terraform-data-and-iam"},
+
+  # Tier 5 — verification: pytest plan-assertion suite (≥23 tests), probe.sh
+  # (readiness poll + 3 Lambda invocations), fixture plan.json.
+  {slug = "infra-terraform-verification", source = "docs/specs/infra-terraform-verification/", needs = "backlog:infra-terraform-compute"},
+
 ]
