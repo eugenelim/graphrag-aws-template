@@ -1,7 +1,7 @@
 # Plan: infra-terraform-data-and-iam
 
 - **Spec:** [`spec.md`](spec.md)
-- **Status:** Drafting <!-- Drafting | Executing | Done -->
+- **Status:** Done <!-- Drafting | Executing | Done -->
 
 > **Plan contract:** implementation strategy for the data + IAM tier. May change
 > as implementation proceeds; note substantial changes in the changelog.
@@ -117,14 +117,19 @@ Never merged into one statement with `/*` or a wildcard suffix — the
 **Touches:** `apps/infra-tf/neptune.tf`
 **Tests:** goal-based — plan shows 1 `aws_neptune_subnet_group` + 1
   `aws_neptune_cluster_parameter_group` + 1 `aws_neptune_cluster` + 1
-  `aws_neptune_cluster_instance`; cluster has `iam_database_authentication_enabled = true`
-  and `storage_encrypted = true`; parameter group has `neptune_query_timeout = "20000"`;
+  `aws_neptune_cluster_instance`; cluster has `iam_database_authentication_enabled = true`,
+  `storage_encrypted = true`, and
+  `neptune_cluster_parameter_group_name = aws_neptune_cluster_parameter_group.main.name`
+  (the cluster must reference the timeout param group, else the ADR-0004 backstop is
+  inert); parameter group has `neptune_query_timeout = "20000"`;
   `auto_minor_version_upgrade = false` on the instance.
 **Approach:** Write 4 Neptune resources in dependency order (subnet group →
-  parameter group → cluster → instance). Cluster uses `serverless_v2_scaling_configuration`.
-  Verify `aws_neptune_cluster` argument names against live provider schema before writing
-  (contract-acquisition gate). Set `skip_final_snapshot = true` (teardown-first).
-**Done when:** 4 Neptune resources in plan with correct arguments; `terraform validate` exits 0.
+  parameter group → cluster → instance). Cluster uses `serverless_v2_scaling_configuration`
+  and sets `neptune_cluster_parameter_group_name` to the param group's name (verified
+  provider arg names against the v5.100 schema — contract-acquisition gate). Set
+  `skip_final_snapshot = true` (teardown-first).
+**Done when:** 4 Neptune resources in plan with correct arguments, cluster references the
+  parameter group by name; `terraform validate` exits 0.
 
 ---
 
@@ -133,27 +138,36 @@ Never merged into one statement with `/*` or a wildcard suffix — the
 **Depends on:** T1 (role ARNs needed in access policy)
 **Touches:** `apps/infra-tf/opensearch.tf`
 **Tests:** goal-based — plan shows 1 `aws_opensearch_domain`; `access_policies`
-  JSON contains the 3 role ARNs and domain ARN; no `"Principal": "*"` string in the
-  access policy JSON; `terraform validate` exits 0.
+  JSON contains **exactly 2** role ARNs (ingestion_task + vector_probe) and the domain
+  ARN; no `"Principal": "*"` and no account-root in the access policy JSON;
+  `terraform validate` exits 0.
 **Approach:** Write `aws_opensearch_domain.graphrag_vectors`. The `access_policies`
-  attribute uses `jsonencode()` to build the policy inline, referencing
-  `aws_iam_role.ingestion_task_role.arn`, `aws_iam_role.vector_probe_role.arn`,
-  `aws_iam_role.query_role.arn`. VPC options: one private subnet ID +
+  attribute uses `jsonencode()` to build the policy inline, referencing **only**
+  `aws_iam_role.ingestion_task_role.arn` and `aws_iam_role.vector_probe_role.arn`
+  (matching the CDK — QueryRole is NOT in the resource policy; it reaches OpenSearch via
+  its identity grant in T5). VPC options: one private subnet ID +
   `aws_security_group.opensearch_sg.id`. Verify `aws_opensearch_domain` argument
   names against live provider schema (contract-acquisition gate) — the `vpc_options`,
   `cluster_config`, `ebs_options` argument names have changed across provider versions.
-**Done when:** Domain in plan with correct config; access policy has 3 named principals.
+**Done when:** Domain in plan with correct config; access policy has exactly 2 named
+  principals (ingestion_task + vector_probe), never a third.
 
 ---
 
-### T5: Write `iam.tf` — all inline policies (references Neptune + OpenSearch ARNs)
+### T5: Write `iam.tf` — all inline policies (references Neptune ARN; OpenSearch ARN is a constructed string)
 
-**Depends on:** T3, T4 (need cluster resource ID + domain ARN)
+**Depends on:** T3 (real reference — the Neptune `cluster_resource_id`). T4 is
+  authoring-order only, NOT a Terraform dependency: the OpenSearch ARN used in the
+  inline policies is a constructed string from the fixed domain name
+  (`arn:aws:es:<region>:<account>:domain/graphrag-vectors/*`), never
+  `aws_opensearch_domain.graphrag_vectors.arn`.
 **Touches:** `apps/infra-tf/iam.tf`
 **Tests:** goal-based — plan shows correct `aws_iam_role_policy` count (ingestion_task: 8
-  policies, vector_probe: 2, query_role: 4); verify read-only Neptune grant on QueryRole:
-  `grep -c 'WriteDataViaQuery' <(terraform show -json tfplan)` returns 0 in
-  query_role policy context; `terraform validate` exits 0.
+  policies, vector_probe: 2, query_role: 4); verify read-only Neptune grant on QueryRole
+  **role-scoped and allow-union-aware**: the union of neptune-db actions across *every*
+  policy attached to `query_role` is exactly `{connect, ReadDataViaQuery}` (a whole-plan
+  grep is wrong — IngestionTaskRole legitimately keeps Write/Delete);
+  `terraform validate` exits 0.
 **Approach:** Write `aws_iam_role_policy` resources (or one combined policy per role
   using `aws_iam_role_policy`). Use `data "aws_caller_identity" "current" {}` and
   locals for ARN construction. Key policies:
@@ -192,7 +206,7 @@ Never merged into one statement with `/*` or a wildcard suffix — the
 **Approach:** Run `terraform fmt -recursive apps/infra-tf/`. Run plan. Parse plan JSON
   to verify the load-bearing IAM invariants: (1) no wildcard resource on data-plane
   actions; (2) QueryRole Neptune actions = `{connect, ReadDataViaQuery}` only;
-  (3) OpenSearch access policy: 3 named principals, no AllPrincipals.
+  (3) OpenSearch access policy: exactly 2 named principals, no AllPrincipals, no account-root.
 **Done when:** fmt exits 0; all 3 IAM invariants confirmed in plan JSON.
 
 ## Rollout
@@ -204,6 +218,22 @@ graph. The first live apply cycle happens in `infra-terraform-compute`.
 Neptune clusters take 5–15 minutes to become available after `apply`; OpenSearch
 domains take 10–30 minutes. The smoke probe validation (in `infra-terraform-compute`)
 accounts for these warm-up delays.
+
+**Teardown-stall convergence (fixed `domain_name`).** The OpenSearch `domain_name` is
+pinned to `graphrag-vectors` (mandated for the self-reference-free ARN), so — unlike the
+`name_prefix`/`bucket_prefix` resources — a re-apply cannot dodge a name collision. If a
+`terraform destroy` is interrupted mid-delete (the documented teardown-stall failure
+mode: the client dies during the 10–30 min OpenSearch delete window), the next `apply`
+hits `ResourceAlreadyExistsException` on the fixed name — a non-convergent collision. The
+live apply cycle (tier-4) must **poll domain deletion to completion** (or run a pre-apply
+existence check) before re-applying, so a stalled teardown converges rather than collides.
+
+**Rollback path.** This tier ships plan-phase only (AC9); the first live `apply` and its
+recovery path are owned by `infra-terraform-compute` (tier-4) `## Rollout` — the
+known-good rollback is `terraform destroy` of the combined graph (all resources here set
+`skip_final_snapshot`/`force_destroy` and no `prevent_destroy`, so destroy is clean) or a
+re-apply of the prior tagged config. Named here so the recovery path is not silently
+dropped between tiers.
 
 ## Risks
 
@@ -220,6 +250,21 @@ accounts for these warm-up delays.
   until apply. The IAM policy ARN using it will show `(known after apply)` in the
   plan — this is expected behavior; the plan-assertion test must account for this
   (test the action list rather than the full ARN).
+- **Plan-time-unknown ARNs defeat `planned_values` positive assertions — tier-5 must
+  read the `configuration` block.** Because the roles use `name_prefix` and the bucket
+  uses `bucket_prefix`, `aws_iam_role.*.arn` and `aws_s3_bucket.corpus.arn` are
+  known-after-apply. `jsonencode()` over any unknown input collapses the *whole* policy
+  string to `(known after apply)` in `terraform plan -json` `planned_values`. This
+  affects **three** load-bearing positive assertions: AC4 (OpenSearch `access_policies`
+  names the 2 role ARNs), AC7 (S3 PutObject key/prefix suffixes `manifest.json` /
+  `schema_extraction_trace.txt` / `silver/*`), and the AC6 Neptune ARN scope. The
+  `infra-terraform-verification` (tier-5) suite must assert these against the plan's
+  **`configuration.root_module.resources[*].expressions`** (the unresolved reference
+  expressions + literal jsonencode templates), NOT `planned_values` — reading
+  `planned_values` yields an unknown and a naive assertion silently skips (a skipped
+  security assertion is theatre). Keeping `name_prefix`/`bucket_prefix` (vs fixed names
+  that would render in `planned_values`) is deliberate: fixed names worsen the
+  teardown-stall re-apply collision surface (see Rollout).
 
 ## Changelog
 
@@ -227,3 +272,8 @@ accounts for these warm-up delays.
   IAM roles, S3, Neptune, OpenSearch, IAM inline policies, outputs, fmt + security
   verification. Authoring order accounts for Terraform dependency resolution
   (roles first → OpenSearch → Neptune → IAM policies).
+- 2026-07-23 — Pre-EXECUTE review amendments: T3 adds the
+  `neptune_cluster_parameter_group_name` cluster wiring (ADR-0004 backstop); T4
+  corrected to 2 access-policy principals (CDK fidelity); T5 `Depends on` corrected to
+  T3 only (T4 is authoring-order — the domain ARN is a constructed string) and the
+  read-only assertion reworded to role-scoped/allow-union-aware.
