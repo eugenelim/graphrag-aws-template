@@ -5,7 +5,8 @@ Uses planned_values.root_module.resources (works for both fresh and applied-stat
 The committed fixture (tests/fixtures/plan.json) is generated from applied state
 so all computed attributes (Neptune ARN, S3 bucket name, role ARNs) are resolved.
 
-CDK test → Terraform plan assertion mapping is documented in docs/specs/infra-terraform-verification/plan.md.
+CDK test → Terraform plan assertion mapping is documented in
+docs/specs/infra-terraform-verification/plan.md.
 """
 from __future__ import annotations
 
@@ -336,7 +337,10 @@ def test_no_iam_statement_grants_app_actions_on_wildcard_resource(tfplan):
     # On a fresh plan, Neptune and S3 policies are null (ARNs computed); Bedrock/OpenSearch
     # policies ARE readable. Guard on statement-level presence rather than any-policy existence.
     has_neptune_or_s3_stmts = any(
-        any(a.startswith("neptune-db:") or a.startswith("s3:") for a in _as_list(stmt.get("Action", [])))
+        any(
+            a.startswith("neptune-db:") or a.startswith("s3:")
+            for a in _as_list(stmt.get("Action", []))
+        )
         for stmt in _all_iam_statements(tfplan)
     )
     if has_neptune_or_s3_stmts:
@@ -479,7 +483,8 @@ def test_opensearch_access_policy_is_scoped_not_all_principals(tfplan):
     principal = stmts[0].get("Principal", {})
     aws_principals = principal.get("AWS", []) if isinstance(principal, dict) else []
     assert len(aws_principals) == 2, (
-        f"expected 2 resource-policy principals (ingestion + vector-probe), found {len(aws_principals)}"
+        "expected 2 resource-policy principals (ingestion + vector-probe),"
+        f" found {len(aws_principals)}"
     )
 
 
@@ -606,7 +611,11 @@ def test_query_lambda_sg_reaches_neptune_and_opensearch(tfplan):
 def test_query_lambda_concurrency_cap(tfplan):
     """Backlog: terraform-query-lambda-concurrency-cap — blast-radius cost ceiling."""
     fns = _pv_by_type(tfplan, "aws_lambda_function")
-    query = [f for f in fns if "query_lambda" in f["name"] or "query-lambda" in f["values"].get("function_name", "")]
+    query = [
+        f for f in fns
+        if "query_lambda" in f["name"]
+        or "query-lambda" in f["values"].get("function_name", "")
+    ]
     assert len(query) == 1, "expected exactly one query Lambda"
     cap = query[0]["values"].get("reserved_concurrent_executions")
     assert cap is not None and cap > 0, (
