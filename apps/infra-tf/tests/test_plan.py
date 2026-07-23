@@ -5,8 +5,10 @@ Uses planned_values.root_module.resources (works for both fresh and applied-stat
 The committed fixture (tests/fixtures/plan.json) is generated from applied state
 so all computed attributes (Neptune ARN, S3 bucket name, role ARNs) are resolved.
 
-CDK test → Terraform plan assertion mapping is documented in docs/specs/infra-terraform-verification/plan.md.
+CDK test → Terraform plan assertion mapping is documented in
+docs/specs/infra-terraform-verification/plan.md.
 """
+
 from __future__ import annotations
 
 import json
@@ -17,11 +19,7 @@ import re
 
 def _pv_by_type(tfplan, rtype):
     """Resources of a given type from planned_values."""
-    return [
-        r
-        for r in tfplan["planned_values"]["root_module"]["resources"]
-        if r["type"] == rtype
-    ]
+    return [r for r in tfplan["planned_values"]["root_module"]["resources"] if r["type"] == rtype]
 
 
 def _pv_by_address(tfplan, address):
@@ -336,7 +334,10 @@ def test_no_iam_statement_grants_app_actions_on_wildcard_resource(tfplan):
     # On a fresh plan, Neptune and S3 policies are null (ARNs computed); Bedrock/OpenSearch
     # policies ARE readable. Guard on statement-level presence rather than any-policy existence.
     has_neptune_or_s3_stmts = any(
-        any(a.startswith("neptune-db:") or a.startswith("s3:") for a in _as_list(stmt.get("Action", [])))
+        any(
+            a.startswith("neptune-db:") or a.startswith("s3:")
+            for a in _as_list(stmt.get("Action", []))
+        )
         for stmt in _all_iam_statements(tfplan)
     )
     if has_neptune_or_s3_stmts:
@@ -369,7 +370,8 @@ def test_query_role_neptune_grant_is_read_only(tfplan):
     """CDK: test_query_lambda_neptune_grant_is_read_only (ADR-0004 backstop)."""
     # Find all aws_iam_role_policy resources attached to query_role
     query_policies = [
-        r for r in _pv_by_type(tfplan, "aws_iam_role_policy")
+        r
+        for r in _pv_by_type(tfplan, "aws_iam_role_policy")
         if r["name"].startswith("query_neptune")
     ]
     assert len(query_policies) == 1, (
@@ -383,7 +385,8 @@ def test_query_role_neptune_grant_is_read_only(tfplan):
         )
         # Confirm no Write/Delete policy exists for query role
         write_policies = [
-            r for r in _pv_by_type(tfplan, "aws_iam_role_policy")
+            r
+            for r in _pv_by_type(tfplan, "aws_iam_role_policy")
             if r["name"].startswith("query_") and "rw" in r["name"].lower()
         ]
         assert not write_policies, f"query role must not hold a Write policy: {write_policies}"
@@ -401,11 +404,13 @@ def test_store_sg_ingress_rules_exact(tfplan):
     Neptune SG accepts port 8182 from exactly 3 sources; OpenSearch SG accepts 443 from exactly 3.
     """
     neptune_ingress = [
-        r for r in _pv_by_type(tfplan, "aws_vpc_security_group_ingress_rule")
+        r
+        for r in _pv_by_type(tfplan, "aws_vpc_security_group_ingress_rule")
         if "neptune_from" in r["name"]
     ]
     opensearch_ingress = [
-        r for r in _pv_by_type(tfplan, "aws_vpc_security_group_ingress_rule")
+        r
+        for r in _pv_by_type(tfplan, "aws_vpc_security_group_ingress_rule")
         if "opensearch_from" in r["name"]
     ]
     assert len(neptune_ingress) == 3, (
@@ -420,12 +425,12 @@ def test_store_sg_ingress_rules_exact(tfplan):
         assert r["values"].get("from_port") == 443
     # Verify expected source names (no public CIDR — all are referenced_security_group_id)
     neptune_names = {r["name"] for r in neptune_ingress}
-    assert neptune_names == {
-        "neptune_from_ingestion", "neptune_from_smoke", "neptune_from_query"
-    }
+    assert neptune_names == {"neptune_from_ingestion", "neptune_from_smoke", "neptune_from_query"}
     opensearch_names = {r["name"] for r in opensearch_ingress}
     assert opensearch_names == {
-        "opensearch_from_ingestion", "opensearch_from_vector_smoke", "opensearch_from_query"
+        "opensearch_from_ingestion",
+        "opensearch_from_vector_smoke",
+        "opensearch_from_query",
     }
 
 
@@ -479,7 +484,8 @@ def test_opensearch_access_policy_is_scoped_not_all_principals(tfplan):
     principal = stmts[0].get("Principal", {})
     aws_principals = principal.get("AWS", []) if isinstance(principal, dict) else []
     assert len(aws_principals) == 2, (
-        f"expected 2 resource-policy principals (ingestion + vector-probe), found {len(aws_principals)}"
+        "expected 2 resource-policy principals (ingestion + vector-probe),"
+        f" found {len(aws_principals)}"
     )
 
 
@@ -564,10 +570,7 @@ def test_function_url_is_iam_auth(tfplan):
 def test_function_url_invoke_permission_scoped_to_named_principal(tfplan):
     """CDK: test_function_url_invoke_permission_scoped_to_named_principal"""
     perms = _pv_by_type(tfplan, "aws_lambda_permission")
-    url_perms = [
-        p for p in perms
-        if p["values"].get("function_url_auth_type") == "AWS_IAM"
-    ]
+    url_perms = [p for p in perms if p["values"].get("function_url_auth_type") == "AWS_IAM"]
     assert url_perms, "expected an aws_lambda_permission with function_url_auth_type=AWS_IAM"
     for p in url_perms:
         principal = p["values"].get("principal")
@@ -582,7 +585,8 @@ def test_budget_alarm_has_threshold_and_subscriber(tfplan):
     budgets = _pv_by_type(tfplan, "aws_budgets_budget")
     assert len(budgets) == 1
     v = budgets[0]["values"]
-    assert v.get("limit_amount") == "150"
+    # limit_amount is "150" in fresh plans and "150.0" in applied-state plans (AWS API).
+    assert float(v.get("limit_amount", 0)) == 150.0
     assert v.get("budget_type") == "COST"
     notifications = v.get("notification", [])
     assert notifications, "budget must have at least one notification"
@@ -605,7 +609,11 @@ def test_query_lambda_sg_reaches_neptune_and_opensearch(tfplan):
 def test_query_lambda_concurrency_cap(tfplan):
     """Backlog: terraform-query-lambda-concurrency-cap — blast-radius cost ceiling."""
     fns = _pv_by_type(tfplan, "aws_lambda_function")
-    query = [f for f in fns if "query_lambda" in f["name"] or "query-lambda" in f["values"].get("function_name", "")]
+    query = [
+        f
+        for f in fns
+        if "query_lambda" in f["name"] or "query-lambda" in f["values"].get("function_name", "")
+    ]
     assert len(query) == 1, "expected exactly one query Lambda"
     cap = query[0]["values"].get("reserved_concurrent_executions")
     assert cap is not None and cap > 0, (
