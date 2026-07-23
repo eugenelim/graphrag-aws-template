@@ -1,6 +1,6 @@
 # Spec: infra-terraform-verification
 
-- **Status:** Implementing <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Shipped <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** [ADR-0010](../../adr/0010-terraform-migration.md) (Terraform migration —
@@ -136,7 +136,7 @@ Gates: `pytest apps/infra-tf/tests/` exits 0; `trivy config` exits 0;
 
 ## Acceptance Criteria
 
-- [ ] **AC1 — `apps/infra-tf/tests/test_plan.py` exists with ≥24 test functions
+- [x] **AC1 — `apps/infra-tf/tests/test_plan.py` exists with ≥24 test functions
   covering all load-bearing invariants.** *(goal-based check)*
   Test count: `pytest --collect-only -q apps/infra-tf/tests/` shows ≥ 24 collected.
   Each test from the "always do" invariant list has a named test function, including:
@@ -151,12 +151,12 @@ Gates: `pytest apps/infra-tf/tests/` exits 0; `trivy config` exits 0;
   role ARNs) are fully resolved. Tests gracefully fall back to proxy assertions (resource
   name) when the fixture is a fresh plan with null computed attrs.
 
-- [ ] **AC2 — `conftest.py` `tfplan` fixture works with `TFPLAN_JSON_PATH` override.** *(goal-based check)*
+- [x] **AC2 — `conftest.py` `tfplan` fixture works with `TFPLAN_JSON_PATH` override.** *(goal-based check)*
   Running `TFPLAN_JSON_PATH=<path-to-fixture-plan.json> pytest apps/infra-tf/tests/`
   uses the provided JSON without running `terraform plan`. A fixture plan JSON exists
   at `apps/infra-tf/tests/fixtures/plan.json` for local iteration.
 
-- [ ] **AC3 — All plan-assertion tests pass against the fixture plan JSON.** *(goal-based check)*
+- [x] **AC3 — All plan-assertion tests pass against the fixture plan JSON.** *(goal-based check)*
   `TFPLAN_JSON_PATH=apps/infra-tf/tests/fixtures/plan.json pytest apps/infra-tf/tests/`
   exits 0. The fixture plan JSON is generated from **applied state** (post-`terraform apply`,
   no-op plan): `terraform plan -out=tfplan -var=... && terraform show -json tfplan`.
@@ -164,20 +164,20 @@ Gates: `pytest apps/infra-tf/tests/` exits 0; `trivy config` exits 0;
   (cluster_resource_id, bucket name, role ARNs). The fixture is committed and used by
   CI via `TFPLAN_JSON_PATH`.
 
-- [ ] **AC4 — `probe.sh` is executable, passes shellcheck, and contains the readiness
+- [x] **AC4 — `probe.sh` is executable, passes shellcheck, and contains the readiness
   poll + 3 Lambda invocations.** *(goal-based check)*
   `shellcheck apps/infra-tf/scripts/probe.sh` exits 0.
   `grep -c 'aws lambda invoke' apps/infra-tf/scripts/probe.sh` returns 3.
   `grep 'describe-db-clusters\|describe-domain' apps/infra-tf/scripts/probe.sh`
   shows the readiness poll commands.
 
-- [ ] **AC5 — `trivy config` exits 0 with no HIGH/CRITICAL findings.** *(goal-based check)*
+- [x] **AC5 — `trivy config` exits 0 with no HIGH/CRITICAL findings.** *(goal-based check)*
   `trivy config --exit-code 1 --severity HIGH,CRITICAL apps/infra-tf/` exits 0.
   Implements the ADR-0010 trivy gate requirement (replacement for CDK `cdk-nag`).
   If Trivy ≥ 0.50 is not installed locally, the gate must pass in CI (document as
   a known-skip with a backlog entry if deferred from the local run).
 
-- [ ] **AC6 — Live: `probe.sh` exits 0 against a live `terraform apply` stack.** *(infra/deploy — live)*
+- [x] **AC6 — Live: `probe.sh` exits 0 against a live `terraform apply` stack.** *(infra/deploy — live)*
   After `terraform apply` completes:
   - Neptune cluster status = `available`.
   - OpenSearch domain `Processing = false`.
