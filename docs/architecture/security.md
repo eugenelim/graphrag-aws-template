@@ -1,3 +1,10 @@
+> **Partially superseded — ini-002 in progress.**
+> The trust boundaries, IAM roles, and VPC topology below reflect the openCypher/CDK-era
+> stack. The current architecture is defined in
+> [`biz-ops-knowledge-graph/design.md`](biz-ops-knowledge-graph/design.md) (IAM roles table,
+> VPC topology diagram, MCP endpoint trust boundary). This doc will be rewritten for
+> SPARQL/MCP/OTEL boundaries once ini-002 implementation lands.
+
 # Security posture
 
 > The consolidated security view for the demo stack. Living doc; updated as

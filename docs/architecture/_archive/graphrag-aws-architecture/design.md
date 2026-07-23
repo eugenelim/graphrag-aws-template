@@ -1,3 +1,9 @@
+> **ARCHIVED — superseded by ini-002.**
+> This document describes the Kubernetes demo corpus design (openCypher Neptune,
+> CDK stack, seed-and-expand hybrid). It is retained for historical reference and
+> scheduled for deletion once ini-002 implementation is complete.
+> Current architecture: [`../biz-ops-knowledge-graph/design.md`](../biz-ops-knowledge-graph/design.md)
+
 # GraphRAG-on-AWS demo — hybrid orchestration & ephemeral store topology
 
 **Author(s):** (drafted with architect-design)
