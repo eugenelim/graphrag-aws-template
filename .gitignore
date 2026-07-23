@@ -66,3 +66,6 @@ node_modules/
 
 # Conductor scratch + per-workspace probe scaffolding.
 .context/
+
+# work-loop plan-verification scratch (local backend, never committed)
+apps/infra-tf/backend_override.tf

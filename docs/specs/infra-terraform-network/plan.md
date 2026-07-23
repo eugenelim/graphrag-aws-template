@@ -1,7 +1,7 @@
 # Plan: infra-terraform-network
 
 - **Spec:** [`spec.md`](spec.md)
-- **Status:** Drafting <!-- Drafting | Executing | Done -->
+- **Status:** Done <!-- Drafting | Executing | Done -->
 
 > **Plan contract:** implementation strategy for the network tier. May change as
 > implementation proceeds; note substantial changes in the changelog.
@@ -34,8 +34,8 @@ the VPC CIDR (CDK's default for interface endpoints).
 - ADR-0002: no NAT, no internet path, PRIVATE_ISOLATED subnets only.
 - CDK `_COMPUTE_SG_EGRESS` table is the authoritative egress specification; the
   plan-assertion test in `infra-terraform-verification` enforces set equality.
-- `var.s3_prefix_list_id` must be the `prefix_list_id` argument in the S3 egress
-  rule — not a CIDR.
+- The S3 egress `prefix_list_id` is `data.aws_ec2_managed_prefix_list.s3.id`
+  (resolved from the account by name, not an operator-supplied var) — never a CIDR.
 - EC2 security group description charset: `^[A-Za-z0-9 ._\-:/()#,@\[\]+=&;{}!$*]*$`.
 
 ## Design (LLD)
@@ -78,6 +78,26 @@ compute SG pointing at the endpoint's security group. In Terraform:
 The simpler pattern (matches CDK behavior): give each interface endpoint its own SG
 that accepts 443 from the VPC CIDR; compute SGs egress to each endpoint SG by ID.
 
+**Deliberate translation choice (pre-EXECUTE review ADV-7/SEC-6).** CDK's
+`sg.connections.allow_to(endpoint, 443)` renders as a *per-compute-SG* ingress rule on
+each endpoint SG. The Terraform translation instead gives each endpoint SG a single
+`443-from-VPC-CIDR` ingress rule (mirroring CDK's `open=True` interface-endpoint
+default). This is fewer rules and is functionally equivalent for the closed posture:
+the **effective outbound gate is the compute SGs' closed egress** (AC4) — the endpoint
+SG ingress only bounds who *inside the VPC* may reach the endpoint, and the VPC is
+private-isolated with no public path. Recorded here so it reads as an intentional
+choice, not an omission of the "byte-for-byte" claim.
+
+### Private-subnet route tables + S3 gateway association
+
+CDK's `add_gateway_endpoint` auto-associates the PRIVATE_ISOLATED subnets' route
+tables. Terraform does not auto-create per-subnet route tables, so this is explicit:
+`aws_route_table.private` (`count = 2`, no IGW/NAT route — local only) +
+`aws_route_table_association.private` (`count = 2`), and the S3 gateway
+`aws_vpc_endpoint` sets `route_table_ids = aws_route_table.private[*].id`. Without this
+the gateway endpoint plans clean but installs no S3 prefix-list route, so the no-NAT
+corpus read would hang at apply/live (pre-EXECUTE review Blocker ADV-1).
+
 ### S3 gateway endpoint egress
 
 ```hcl
@@ -86,25 +106,36 @@ resource "aws_vpc_security_group_egress_rule" "ingestion_to_s3" {
   ip_protocol       = "tcp"
   from_port         = 443
   to_port           = 443
-  prefix_list_id    = var.s3_prefix_list_id
+  prefix_list_id    = data.aws_ec2_managed_prefix_list.s3.id
   description       = "IngestionSg egress to s3 prefix list 443"
 }
 ```
 
+The prefix-list id comes from `data "aws_ec2_managed_prefix_list" "s3" { name =
+"com.amazonaws.${var.aws_region}.s3" }` — resolved from the account at plan time,
+not supplied by an operator (SEC-2 hardening; removed `var.s3_prefix_list_id`).
+
 ## Tasks
 
-### T1: Write `network.tf` — VPC + subnets
+### T1: Write `network.tf` — VPC + subnets + route tables
 
 **Depends on:** none (scaffold spec complete)
 **Touches:** `apps/infra-tf/network.tf`
 **Tests:** goal-based — `terraform validate` exits 0; plan shows 1 VPC + 2 subnets +
-  0 nat gateways + 0 internet gateways; subnet CIDRs are in `10.0.0.0/16`.
+  2 route tables + 2 associations + 0 nat gateways + 0 internet gateways; subnet
+  CIDRs are in `10.0.0.0/16`.
 **Approach:** Write `aws_vpc.main` (CIDR `10.0.0.0/16`, `enable_dns_hostnames = true`,
-  `enable_dns_support = true`), `data "aws_availability_zones"`, 2 `aws_subnet`
-  resources (CIDRs `10.0.1.0/24` and `10.0.2.0/24`, distinct AZs,
-  `map_public_ip_on_launch = false`). No `aws_internet_gateway`, no `aws_nat_gateway`.
-**Done when:** `terraform plan -json | python -c "import json,sys; p=json.load(sys.stdin);
-  rc = p['resource_changes']; print(sum(1 for r in rc if r['type']=='aws_vpc'))"` prints 1.
+  `enable_dns_support = true`), `data "aws_availability_zones"` (filtered
+  `state = "available"`), 2 `aws_subnet` resources via `count = 2`
+  (`cidrsubnet(aws_vpc.main.cidr_block, 8, count.index)` → `10.0.0.0/24`,
+  `10.0.1.0/24` to match CDK's allocator, distinct AZs from
+  `data.aws_availability_zones.available.names[count.index]`,
+  `map_public_ip_on_launch = false`). Add `aws_route_table.private` (`count = 2`,
+  no IGW/NAT route — local only) + `aws_route_table_association.private` (`count = 2`)
+  so the S3 gateway endpoint (T2) has route tables to associate (pre-EXECUTE review
+  Blocker ADV-1). No `aws_internet_gateway`, no `aws_nat_gateway`.
+**Done when:** plan JSON has `aws_vpc`=1, `aws_subnet`=2, `aws_route_table`=2,
+  `aws_route_table_association`=2, `aws_nat_gateway`=0, `aws_internet_gateway`=0.
 
 ---
 
@@ -114,12 +145,16 @@ resource "aws_vpc_security_group_egress_rule" "ingestion_to_s3" {
 **Touches:** `apps/infra-tf/network.tf`
 **Tests:** goal-based — plan shows 6 `aws_vpc_endpoint` resources; `terraform validate`
   exits 0.
-**Approach:** Write 1 `aws_vpc_endpoint` (Gateway, S3) + 5 `aws_vpc_endpoint`
-  (Interface) with `private_dns_enabled = true`. Service name for each:
-  `"com.amazonaws.${var.aws_region}.${service}"` where service is `s3` (gateway),
-  `ecr.api`, `ecr.dkr`, `logs`, `sts`, `bedrock-runtime`. Each interface endpoint
-  references the private subnet IDs and an endpoint security group (created in T3).
-**Done when:** 6 VPC endpoint resources in the plan; `bedrock-runtime` endpoint present.
+**Approach:** Write 1 `aws_vpc_endpoint` (Gateway, S3, `route_table_ids =
+  aws_route_table.private[*].id` — AC9/ADV-1) + 5 `aws_vpc_endpoint` (Interface,
+  `for_each` over `local.interface_endpoints`) with `private_dns_enabled = true`.
+  Service name for each: `"com.amazonaws.${var.aws_region}.${service}"` where service
+  is `s3` (gateway), `ecr.api`, `ecr.dkr`, `logs`, `sts`, `bedrock-runtime`. Each
+  interface endpoint references the private subnet IDs and its own endpoint security
+  group (defined adjacent, per T3). Endpoint SGs + their 443-from-VPC-CIDR ingress
+  rules live in `network.tf` next to the endpoints.
+**Done when:** 6 VPC endpoint resources in the plan; `bedrock-runtime` endpoint present;
+  S3 gateway endpoint has `route_table_ids` set.
 
 ---
 
@@ -176,21 +211,31 @@ resource "aws_vpc_security_group_egress_rule" "ingestion_to_s3" {
 
 ---
 
-### T6: Run `terraform fmt -check` + plan-count verification
+### T6: Run `terraform fmt -check` + plan-count + negative-CIDR verification
 
 **Depends on:** T4, T5
 **Touches:** none (verification only)
-**Tests:** goal-based — `terraform fmt -check` exits 0; plan JSON resource counts
-  match the spec ACs.
-**Approach:** Run `terraform fmt -recursive apps/infra-tf/`. Run `terraform plan -out=tfplan
-  -var="budget_alarm_email=x" -var="invoker_role_arn=arn:aws:iam::123:role/x"
-  -var="s3_prefix_list_id=pl-abc123ef"` (with `-backend=false`). Run `terraform show
-  -json tfplan` and count resource types. Assert counts: VPC=1, subnet=2, endpoint=6,
-  aws_security_group=11 (6 compute/store + 5 endpoint), plus the 6 named compute/store
-  SG logical names all present. Also verify the store-ingress rules: Neptune SG has 3
-  ingress rules, OpenSearch SG has 3 ingress rules.
-**Done when:** fmt exits 0; VPC+subnet+endpoint counts match; 6 named compute/store SGs
-  present; ingress rule counts correct.
+**Tests:** goal-based — `terraform fmt -check` exits 0; plan JSON resource counts +
+  negative-CIDR checks match the spec ACs.
+**Approach:** Run `terraform fmt -recursive apps/infra-tf/` then `terraform fmt -check`.
+  `terraform init -backend=false` (S3 backend not needed for a local plan; ADV-5 —
+  `-backend=false` is an *init* flag, not a `plan` flag), then
+  `terraform plan -out=tfplan -var="budget_alarm_email=x@example.com"
+  -var="invoker_role_arn=arn:aws:iam::123456789012:role/x"` (needs live AWS creds —
+  both the `aws_availability_zones` and `aws_ec2_managed_prefix_list.s3` data sources
+  are read at plan time). Run `terraform show
+  -json tfplan` and assert, over `planned_values.root_module.resources`:
+  - counts: `aws_vpc`=1, `aws_subnet`=2, `aws_route_table`=2,
+    `aws_route_table_association`=2, `aws_vpc_endpoint`=6, `aws_nat_gateway`=0,
+    `aws_internet_gateway`=0, `aws_security_group`=11, egress rules=20, ingress rules=11;
+  - the 6 named compute/store SGs all present; store-ingress: Neptune SG 3 rules,
+    OpenSearch SG 3 rules; 5 endpoint-SG ingress rules on 443 (AC8);
+  - **negative (AC4/AC5):** no `aws_vpc_security_group_egress_rule` or
+    `_ingress_rule` has `cidr_ipv4 = "0.0.0.0/0"` / `cidr_ipv6 = "::/0"`; no
+    `aws_security_group` declares an inline `ingress`/`egress` rule; every egress rule
+    resolves to a `referenced_security_group_id` or `prefix_list_id`.
+**Done when:** fmt exits 0; all counts match; 6 named compute/store SGs present; ingress
+  counts correct; negative-CIDR checks pass (no public ingress/egress, no inline rule blocks).
 
 ## Rollout
 
@@ -208,12 +253,28 @@ specs during plan.
 - **Interface endpoint service name format:** service names differ by region for some
   services (e.g., `bedrock-runtime` vs `bedrock`). Mitigation: verify against the AWS
   provider documentation for the target region during implementation.
-- **`prefix_list_id` argument availability:** the `aws_vpc_security_group_egress_rule`
-  resource's `prefix_list_id` argument must be verified against the live AWS provider
-  schema before use (generate-iac EXECUTE contract-grounding gate).
+- **`prefix_list_id` argument availability:** ✓ verified against the live AWS provider
+  schema (aws 5.100.0) via `terraform providers schema -json` at the EXECUTE
+  contract-grounding gate — `aws_vpc_security_group_egress_rule` exposes
+  `prefix_list_id` and `referenced_security_group_id` alongside `cidr_ipv4`,
+  `from_port`, `to_port`, `ip_protocol` (req), `security_group_id` (req), `description`.
 
 ## Changelog
 
 - 2026-07-22 — Plan authored for infra-terraform-network spec. Six tasks: VPC + subnets,
   VPC endpoints, 6 security groups (closed egress), exact egress rules per
   _COMPUTE_SG_EGRESS, network outputs, fmt + plan count verification.
+- 2026-07-22 — SEC-2 hardening (user-authorized, pulled into PR): S3 egress
+  `prefix_list_id` now `data.aws_ec2_managed_prefix_list.s3.id`; removed
+  `var.s3_prefix_list_id` from variables.tf. GATES re-run (fmt/validate/plan + all AC
+  assertions pass; data source resolves to pl-63a5400a in us-east-1).
+- 2026-07-22 — REVIEW fix (QE-1): all 11 SG `name` → `name_prefix` (removes the
+  immutable-description replacement-collision trap; matches CDK's auto-generated SG
+  names). QE-3 (lock VPC default SG) deferred into backlog `infra-terraform-scanner-ci`;
+  QE-2 (count/AZ coupling) accepted per Risks. Spec ACs 1-9 checked, AC10 deferred.
+- 2026-07-22 — Pre-EXECUTE review amendments. T1: added route tables + associations,
+  CDK-faithful subnet CIDRs (10.0.0.0/24, 10.0.1.0/24). T2: S3 gateway endpoint
+  `route_table_ids`, interface endpoints via `for_each`. T6: fixed `-backend=false`
+  (init not plan), added negative-CIDR + inline-block + count checks. Design: recorded
+  endpoint-SG VPC-CIDR ingress as deliberate CDK-parity choice; added route-table
+  subsection. Risk: `prefix_list_id` verified against provider schema oracle.

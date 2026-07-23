@@ -23,12 +23,12 @@ output "ingestion_task_def_arn" {
 
 output "ingestion_security_group_id" {
   description = "Security group ID attached to the Fargate ingestion task."
-  value       = null
+  value       = aws_security_group.ingestion_task_sg.id
 }
 
 output "private_subnet_id" {
   description = "ID of the first private subnet (used by Fargate and Lambda)."
-  value       = null
+  value       = aws_subnet.private[0].id
 }
 
 output "ingestion_repo_uri" {

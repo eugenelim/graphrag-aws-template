@@ -15,15 +15,11 @@ variable "invoker_role_arn" {
   }
 }
 
-variable "s3_prefix_list_id" {
-  type        = string
-  description = "AWS-managed S3 gateway-endpoint prefix list id (com.amazonaws.<region>.s3) the in-VPC compute SGs allow 443 egress to. No default (region-specific); deploy.sh resolves it per-region."
-
-  validation {
-    condition     = can(regex("^pl-[0-9a-f]+$", var.s3_prefix_list_id))
-    error_message = "s3_prefix_list_id must match the AWS prefix list format ^pl-[0-9a-f]+ (e.g. pl-63a5400a). A CIDR or free-form value is not valid."
-  }
-}
+# NOTE: the former `s3_prefix_list_id` variable was removed by the
+# infra-terraform-network tier (SEC-2 hardening). The AWS-managed S3
+# gateway-endpoint prefix list is now resolved declaratively from the account via
+# `data "aws_ec2_managed_prefix_list" "s3"` in network.tf, so no operator-supplied
+# (and potentially wrong/wide) prefix-list id can widen the closed-egress posture.
 
 # ── AWS provider variable ──────────────────────────────────────────────────────
 

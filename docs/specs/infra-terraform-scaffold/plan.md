@@ -18,7 +18,10 @@ CDK's `_GOVERNANCE_TAG_DEFAULTS` dict translates to optional variables applied v
 legitimizes this work). The `bootstrap.sh` helper handles the one-time S3 backend
 creation that CDK did not require.
 
-The riskiest part is the variable validation for `s3_prefix_list_id`: the CDK
+The riskiest part is the variable validation for `s3_prefix_list_id`
+(**superseded 2026-07-22 by `infra-terraform-network` SEC-2**: this variable was
+removed; the S3 managed prefix list is now resolved via a data source, so the
+validation described below no longer exists): the CDK
 `AllowedPattern` is a CloudFormation-layer check; the Terraform equivalent is a
 `validation` block with `can(regex(...))`. Both reject a CIDR or free-form value at
 their respective validation layers.
@@ -42,7 +45,7 @@ their respective validation layers.
 |---|---|---|---|
 | `budget_alarm_email` | `BudgetAlarmEmail` | `string` | (required) |
 | `invoker_role_arn` | `InvokerRoleArn` | `string` | (required) |
-| `s3_prefix_list_id` | `S3PrefixListId` | `string` | (required, validated) |
+| `s3_prefix_list_id` | `S3PrefixListId` | `string` | (superseded: infra-terraform-network SEC-2 — removed; now a data source) |
 | `aws_region` | (implicit in CDK env) | `string` | `"us-east-1"` |
 | `environment` | CDK context `environment` | `string` | `"demo"` |
 | `project` | CDK context `project` | `string` | `"graphrag-aws-template"` |
@@ -147,8 +150,9 @@ apps/infra-tf/
 **Approach:** Write `provider "aws" { region = var.aws_region default_tags { tags = {
   Environment = var.environment ... } } }`. Stub the six provider-referenced variables
   (`aws_region`, `environment`, `project`, `department`, `application`, `user`) in
-  `variables.tf` with defaults; the three required vars (`budget_alarm_email`,
-  `invoker_role_arn`, `s3_prefix_list_id`) are added in T5.
+  `variables.tf` with defaults; the two required vars (`budget_alarm_email`,
+  `invoker_role_arn`) are added in T5 (a third, `s3_prefix_list_id`, was added here
+  then superseded 2026-07-22 by `infra-terraform-network` SEC-2 — see the T5 note).
 **Done when:** `terraform validate` exits 0 with the provider block referencing the stub vars.
 
 ---
@@ -181,8 +185,11 @@ apps/infra-tf/
   - `invoker_role_arn`: string, no default.
   - `s3_prefix_list_id`: string, no default, `validation { condition =
     can(regex("^pl-[0-9a-f]+$", var.s3_prefix_list_id)) error_message = "..." }`.
+    *(Superseded 2026-07-22 by `infra-terraform-network` SEC-2: this variable was
+    removed; the S3 managed prefix list is now resolved via a data source.)*
   - Governance + provider vars: string with defaults from `_GOVERNANCE_TAG_DEFAULTS`.
 **Done when:** Validation passes on a valid prefix-list id; validation fails on a CIDR.
+  (The `s3_prefix_list_id` clause is superseded — see the note above.)
 
 ---
 
