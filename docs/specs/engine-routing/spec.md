@@ -1,6 +1,6 @@
 # Spec: engine-routing
 
-- **Status:** Shipped
+- **Status:** Archived <!-- local-vs-global mode="auto" routing; superseded by ADR-0013 multi-strategy server-side routing (ini-002 / RFC-0004) -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** ADR-0008, ADR-0001, ADR-0005, ADR-0004

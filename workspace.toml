@@ -100,12 +100,13 @@ queue   = [
 ["ini-002".work]
 # Implementation tasks. No task starts until its named shape deps are agreed.
 # Wave ordering mirrors the shape queue; items within a wave run in parallel.
-shipped = []
+shipped = [
+  "docs/archive-k8s-specific-specs",
+]
 active  = []
 queue   = [
-  # Wave 1 — infrastructure + archival; unblocked once relevant shape items agreed
+  # Wave 1 — infrastructure; unblocked once relevant shape items agreed
   {path = "infra-tf/neptune-sparql-engine",           needs = ["shape:adr-0011-neptune-sparql"]},
-  {path = "docs/archive-k8s-specific-specs",          needs = ["shape:rfc-0004-biz-ops-kg-pivot"]},
 
   # Wave 2 — parallel: SPARQL store migration + mock MCP server (independent)
   # neptune-sparql-store gates all live retrieval work.
