@@ -51,6 +51,16 @@ apps/infra/scripts/config.local.env
 apps/infra/cdk.out/
 cdk.out/
 
+# Terraform (apps/infra-tf/) — provider cache and real backend config are local-only.
+# .terraform.lock.hcl IS committed (provider version pins).
+apps/infra-tf/.terraform/
+apps/infra-tf/backend.hcl
+apps/infra-tf/*.tfvars
+apps/infra-tf/*.tfstate
+apps/infra-tf/*.tfstate.*
+*.tfstate
+*.tfstate.*
+
 # Node (cdk CLI).
 node_modules/
 

@@ -1,6 +1,6 @@
 # ADR-0003: Infrastructure-as-code tool is AWS CDK (Python)
 
-- **Status:** Accepted
+- **Status:** Superseded by ADR-0010
 - **Date:** 2026-06-23
 - **Decision-makers:** eugenelim
 - **Supersedes:** none
