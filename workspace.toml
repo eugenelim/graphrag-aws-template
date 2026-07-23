@@ -113,7 +113,7 @@ open = [
   # ── Terraform migration (CDK → Terraform; 5-tier build + verification) ─────
 
   # Tier 1 — scaffold: versions.tf, provider.tf (default_tags), backend.tf
-  # (S3, no DynamoDB), variables.tf (3 required + 6 governance), outputs.tf
+  # (S3, use_lockfile=true, no DynamoDB), variables.tf (3 required + 6 governance), outputs.tf
   # shell (12 stubs), bootstrap.sh. Unblocked — no dependencies.
   {slug = "infra-terraform-scaffold", source = "docs/specs/infra-terraform-scaffold/"},
 

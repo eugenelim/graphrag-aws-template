@@ -1,0 +1,12 @@
+# backend.hcl.example — copy to backend.hcl and fill in real values.
+# Never commit backend.hcl (it is gitignored); this example carries only placeholders.
+#
+# Usage:
+#   terraform init -backend-config=backend.hcl
+#
+# The S3 bucket must be created before running terraform init.
+# See scripts/bootstrap.sh for the one-time bucket creation step.
+
+bucket = "your-terraform-state-bucket"
+key    = "graphrag-aws-template/terraform.tfstate"
+region = "us-east-1"
