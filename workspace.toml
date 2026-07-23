@@ -68,21 +68,22 @@ shipped = [
   "spec-rdf-owl-ontology",
   "adr-0013-multi-strategy-routing",
   "adr-0016-git-ingestion",
+  # Wave 4 — authored 2026-07-23
+  "adr-0014-mcp-tool-server",
+  "spec-multi-strategy-routing",
+  "spec-normative-partition",
+  "spec-git-ingestion",
+  "spec-ingestion-extraction-cleanse",
 ]
 active  = []
 queue   = [
   # Wave 1 — pivot rationale; no dependencies (RFC-0004 Accepted 2026-07-23)
   # Wave 2 — ADR-0011 + ADR-0012 written and committed (cbac0e1); moved to shipped 2026-07-23
   # Wave 3 — ADR-0013 + ADR-0016 written 2026-07-23; moved to shipped
+  # Wave 4 — ADR-0014 + 4 feature specs written 2026-07-23; moved to shipped
 
-  # Wave 4 — feature specs; depend on wave 3 decisions
-  {slug = "adr-0014-mcp-tool-server",        needs = ["shape:adr-0013-multi-strategy-routing"]},
-  {slug = "spec-multi-strategy-routing",     needs = ["shape:adr-0013-multi-strategy-routing"]},
-  {slug = "spec-normative-partition",        needs = ["shape:adr-0012-owl-schema-only", "shape:adr-0013-multi-strategy-routing"]},
+  # Wave 4 (remaining) — not yet authored
   {slug = "spec-text2sparql-guarded",        needs = ["shape:adr-0011-neptune-sparql", "shape:adr-0012-owl-schema-only"]},
-  {slug = "spec-git-ingestion",              needs = ["shape:adr-0016-git-ingestion"]},
-  # Extraction + cleansing spec — format router, quality gates, PII flag+restrict, quarantine graph
-  {slug = "spec-ingestion-extraction-cleanse", needs = ["shape:adr-0016-git-ingestion", "shape:adr-0012-owl-schema-only"]},
   # Provenance + citations spec — PROV-O model, Silver/Gold artifact metadata, MCP citation format
   {slug = "spec-provenance-citations",       needs = ["shape:adr-0012-owl-schema-only", "shape:spec-rdf-owl-ontology"]},
   # SHACL shapes library — machine-readable data contract for RDF triple emission;
