@@ -1,6 +1,6 @@
 # ADR-0004: Read-only guard for LLM-authored openCypher: IAM data-action scoping over a read-replica endpoint
 
-- **Status:** Accepted <!-- Proposed | Accepted | Rejected | Deprecated | Superseded by ADR-NNNN -->
+- **Status:** Superseded by [ADR-0011](0011-neptune-sparql-rdf-engine-and-text2sparql-guard.md) <!-- openCypher anchoring superseded; read-only control carried forward under SPARQL grammar -->
 - **Date:** 2026-06-25
 - **Decision-makers:** eugenelim
 - **Supersedes:** none
