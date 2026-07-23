@@ -11,7 +11,7 @@ output "corpus_bucket_name" {
 
 output "neptune_endpoint" {
   description = "HTTPS endpoint for the Neptune cluster (port 8182)."
-  value       = "https://${aws_neptune_cluster.main.endpoint}:8182"
+  value       = local.neptune_endpoint_url
 }
 
 output "ecs_cluster_name" {
@@ -46,7 +46,7 @@ output "smoke_probe_name" {
 
 output "opensearch_endpoint" {
   description = "HTTPS endpoint for the OpenSearch domain."
-  value       = "https://${aws_opensearch_domain.graphrag_vectors.endpoint}"
+  value       = local.opensearch_endpoint_url
 }
 
 output "vector_smoke_probe_name" {
