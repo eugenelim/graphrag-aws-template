@@ -9,12 +9,15 @@
 | [0001](0001-hybrid-orchestration-seed-and-expand.md) | Hybrid retrieval is one *seed-and-expand* orchestration, not single-direction or parallel-merge | Accepted |
 | [0002](0002-ephemeral-vpc-store-topology.md) | The demo stack is an ephemeral, teardown-first VPC topology | Accepted |
 | [0003](0003-iac-tool-aws-cdk-python.md) | Infrastructure-as-code tool is AWS CDK (Python) | Accepted |
-| [0004](0004-text2cypher-read-only-guard.md) | Read-only guard for LLM-authored openCypher: IAM data-action scoping over a read-replica endpoint | Accepted |
+| [0004](0004-text2cypher-read-only-guard.md) | Read-only guard for LLM-authored openCypher: IAM data-action scoping over a read-replica endpoint | Superseded by ADR-0011 |
 | [0005](0005-community-detection-in-fargate-louvain.md) | Community detection runs in the Fargate ingest task (Louvain via networkx), not a standing Neptune Analytics service | Accepted |
 | [0006](0006-schema-guided-llm-extraction-guard.md) | Schema-guided LLM extraction is guarded by a closed schema + entity-grounding, runs at ingest, and is distinguishable in the graph | Accepted |
 | [0007](0007-silver-cache-content-and-config-addressed.md) | Silver cache addressing — content-and-config over content-only | Accepted |
 | [0008](0008-automatic-engine-routing-local-vs-global.md) | Automatic Local-vs-Global engine routing is a `mode="auto"` selector (deterministic + Bedrock twin), not a new retrieval engine | Accepted |
 | [0009](0009-access-control-synthetic-labels-not-real-authz.md) | Access-control depth — synthetic visibility labels over real authorization | Accepted |
+| [0010](0010-terraform-migration.md) | Migrate infrastructure from AWS CDK (Python) to Terraform (HCL) | Accepted |
+| [0011](0011-neptune-sparql-rdf-engine-and-text2sparql-guard.md) | Neptune SPARQL/RDF over openCypher/LPG: named-graph primitive and Text2SPARQL read-only guard | Accepted |
+| [0012](0012-owl-schema-only-and-named-graph-partition.md) | OWL schema-only + named-graph partition: typed RDF corpus with asymmetric retrieval semantics | Accepted |
 
 ## Adding a new ADR
 
