@@ -1,0 +1,23 @@
+# Trivy IaC suppression register for apps/infra-tf/.
+# Each entry must include: the rule ID, a rationale, and a tracking note.
+# Re-evaluate at each major infrastructure revision.
+
+# ECR mutable tags (AWS-0031)
+# Rationale: the ingestion repo uses :latest for CI re-push; IMMUTABLE tags would
+# require a tag-per-build scheme that is out of scope for this template. The gap is
+# mitigated by scan_on_push=true (AWS-0030 is resolved) and VPC-only pull access.
+AVD-AWS-0031
+
+# Neptune encryption at rest — no CMK (AWS-0128)
+# Rationale: Neptune uses AWS-managed encryption (not CMK). A CMK would add KMS key
+# charges (~$1/month base + API calls) and key-rotation operational overhead that is
+# disproportionate to this single-node serverless template. Data in transit is TLS-only
+# (IAM auth enforced). Revisit if this template is used in a regulated environment.
+AVD-AWS-0128
+
+# S3 corpus bucket — AES256 not CMK (AWS-0132)
+# Rationale: SSE-S3 (AES256) is used rather than SSE-KMS. Adding a CMK incurs KMS
+# charges and introduces key-policy operational risk for a public sample template.
+# The bucket already enforces TLS-only access (aws_s3_bucket_policy.corpus_tls) and
+# blocks all public access. Revisit if this template stores regulated data.
+AVD-AWS-0132

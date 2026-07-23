@@ -19,11 +19,14 @@ resource "aws_ecs_cluster" "main" {
 
 # empty_on_delete=True (CDK) -> force_delete=true: destroy removes the repo + all images.
 # Tag is deliberately mutable (:latest, re-pushed by CI); image_tag_mutability=IMMUTABLE is
-# intentionally NOT set (would break the re-push workflow) — supply-chain hardening is the
-# scanner-owned follow-up infra-terraform-scanner-ci (spec AC1 note).
+# intentionally NOT set (would break the re-push workflow) — suppressed in .trivyignore.
 resource "aws_ecr_repository" "ingestion" {
   name         = "graphrag-ingestion"
   force_delete = true
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
 }
 
 # In CDK the Fargate execution role is auto-generated; in Terraform it is explicit.
