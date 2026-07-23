@@ -43,6 +43,11 @@ The scaffold is **deploy-ready at the foundation tier**: `terraform init -backen
   (string), `invoker_role_arn` (string), `s3_prefix_list_id` (string, validated by
   regex `^pl-[0-9a-f]+$`). The regex on `s3_prefix_list_id` is load-bearing (mirrors
   the CDK `AllowedPattern`; rejects a CIDR or free-form value at plan time).
+  **Superseded (2026-07-22):** `s3_prefix_list_id` was removed by
+  [`infra-terraform-network`](../infra-terraform-network/spec.md) (SEC-2 hardening) —
+  the AWS-managed S3 prefix list is now resolved via
+  `data "aws_ec2_managed_prefix_list" "s3"`, so there is no operator-supplied
+  prefix-list id to validate. Two required variables remain.
 - **Declare all five governance tag variables with defaults matching
   `_GOVERNANCE_TAG_DEFAULTS`.** `environment = "demo"`, `project =
   "graphrag-aws-template"`, `department = "unspecified"`, `application =
@@ -90,8 +95,9 @@ successful CLI invocation, not a unit test file.
 - **AC1–AC6 and AC4b — goal-based.** Each file's structure is verified by `terraform
   validate` (schema correctness) and `terraform fmt -check` (formatting). AC4b
   verifies plan-time variable rejection via a local-backend override: `terraform plan`
-  with an invalid `s3_prefix_list_id` (CIDR) exits 1; with an invalid
-  `invoker_role_arn` (root principal) exits 1; with valid values exits 0.
+  with an invalid `invoker_role_arn` (root principal) exits 1; with valid values exits
+  0. *(The `s3_prefix_list_id` (CIDR) rejection this originally also verified was
+  superseded 2026-07-22 by `infra-terraform-network` SEC-2 — variable removed.)*
 - **AC7 — goal-based.** `terraform init -backend=false && terraform validate` exits 0;
   `terraform fmt -check` exits 0. The backend bootstrap script is a deliverable, not a
   test — it is documented and manually verified on the first live deploy.
@@ -121,16 +127,22 @@ after `terraform init -backend=false`).
 - [x] **AC4 — `variables.tf`: all required + governance variables with correct types and
   validation.** *(goal-based check)* Required variables: `budget_alarm_email` (string,
   no default, description matches CDK parameter), `invoker_role_arn` (string, no
-  default, validation rejecting non-role ARNs), `s3_prefix_list_id` (string, no
-  default, `validation { condition = can(regex("^pl-[0-9a-f]+$", var.s3_prefix_list_id)) }`).
-  Governance variables: `environment`, `project`, `department`, `application`, `user`,
-  `aws_region` — all string with defaults matching `_GOVERNANCE_TAG_DEFAULTS`. Both
-  validation blocks are present and structurally correct (`terraform validate` exits 0).
+  default, validation rejecting non-role ARNs). Governance variables: `environment`,
+  `project`, `department`, `application`, `user`, `aws_region` — all string with
+  defaults matching `_GOVERNANCE_TAG_DEFAULTS`. The validation block is present and
+  structurally correct (`terraform validate` exits 0).
+  *(Superseded 2026-07-22 by `infra-terraform-network` SEC-2: the third required
+  variable `s3_prefix_list_id` (string, `^pl-[0-9a-f]+$` validation) that this AC
+  originally asserted was removed — the S3 managed prefix list is now resolved via
+  `data "aws_ec2_managed_prefix_list" "s3"`, so there is no operator-supplied id to
+  declare or validate.)*
 
 - [x] **AC4b — plan-time validation rejection verified.** `terraform plan` (local backend
-  override) with `s3_prefix_list_id=0.0.0.0/0` exits 1 with a regex mismatch error;
-  with `invoker_role_arn=...:root` exits 1 with a role-ARN error; with valid values
-  (`pl-abc123ef` + a role ARN) exits 0 with "No changes."
+  override) with `invoker_role_arn=...:root` exits 1 with a role-ARN error; with valid
+  values exits 0 with "No changes."
+  *(Superseded 2026-07-22 by `infra-terraform-network` SEC-2: the `s3_prefix_list_id=0.0.0.0/0`
+  regex-mismatch rejection this AC originally verified no longer applies — the variable
+  was removed; the S3 prefix list is now resolved from the account, not supplied.)*
 
 - [x] **AC5 — `outputs.tf`: shell output blocks for all 12 CDK CfnOutput names.** *(goal-based
   check)* All 12 output names from the CDK stack are declared: `corpus_bucket_name`,
@@ -176,3 +188,8 @@ after `terraform init -backend=false`).
   (ADR-0010): versions.tf, provider.tf, backend.tf, variables.tf, outputs.tf shell.
   Goal-based ACs; validation by `terraform init && validate && fmt -check`. Five
   subsequent specs build on this foundation.
+- 2026-07-22 — `s3_prefix_list_id` variable + its `^pl-[0-9a-f]+$` validation AC
+  superseded by `infra-terraform-network` (SEC-2 hardening): the AWS-managed S3 prefix
+  list is now resolved via `data "aws_ec2_managed_prefix_list" "s3"` rather than an
+  operator-supplied var. Two required variables remain (`budget_alarm_email`,
+  `invoker_role_arn`).

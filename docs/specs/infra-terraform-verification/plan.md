@@ -58,8 +58,9 @@ def tfplan(tmp_path_factory):
         ["terraform", "plan", "-out", str(plan_file),
          "-backend=false",
          "-var=budget_alarm_email=test@example.com",
-         "-var=invoker_role_arn=arn:aws:iam::123456789012:role/invoker",
-         "-var=s3_prefix_list_id=pl-abc123ef"],
+         "-var=invoker_role_arn=arn:aws:iam::123456789012:role/invoker"],
+         # s3_prefix_list_id removed: infra-terraform-network resolves the S3
+         # managed prefix list via a data source, not an operator var (SEC-2).
         cwd=infra_dir, check=True
     )
     result = subprocess.run(
@@ -211,10 +212,11 @@ echo "ALL PROBES PASSED"
 **Touches:** `apps/infra-tf/tests/fixtures/plan.json`
 **Tests:** goal-based — `TFPLAN_JSON_PATH=apps/infra-tf/tests/fixtures/plan.json
   pytest apps/infra-tf/tests/` exits 0; all tests pass.
-**Approach:** Run `terraform plan -out=tfplan -backend=false
+**Approach:** Run `terraform plan -out=tfplan
   -var=budget_alarm_email=test@example.com
-  -var=invoker_role_arn=arn:aws:iam::123456789012:role/invoker
-  -var=s3_prefix_list_id=pl-abc123ef` from `apps/infra-tf/`. Run
+  -var=invoker_role_arn=arn:aws:iam::123456789012:role/invoker` from `apps/infra-tf/`
+  (no `s3_prefix_list_id` — infra-terraform-network resolves the S3 managed prefix
+  list via a data source, SEC-2). Run
   `terraform show -json tfplan > apps/infra-tf/tests/fixtures/plan.json`. Commit
   the fixture JSON. Run the full test suite against it; fix any failures.
 **Done when:** pytest exits 0 with the fixture JSON; all ≥23 tests pass.
