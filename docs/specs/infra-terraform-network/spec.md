@@ -1,6 +1,6 @@
 # Spec: infra-terraform-network
 
-- **Status:** Draft <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Shipped <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** [ADR-0010](../../adr/0010-terraform-migration.md) (migrate to Terraform); [ADR-0002](../../adr/0002-ephemeral-vpc-store-topology.md) (no-NAT, PRIVATE_ISOLATED, VPC-endpoint-only egress, teardown-first); spec [`infra-terraform-scaffold`](../infra-terraform-scaffold/spec.md) (foundation this spec builds on); `apps/infra/stacks/graphrag_stack.py` `_vpc()` + `_allow_egress()` + `_COMPUTE_SG_EGRESS` (source of truth for the exact topology being translated)
@@ -14,7 +14,9 @@
 > closed-egress rules — translated from `apps/infra/stacks/graphrag_stack.py`
 > to `apps/infra-tf/network.tf` + `apps/infra-tf/security_groups.tf`. The ADR-0002
 > topology (no NAT, 2 private isolated subnets, 6 VPC endpoints, closed egress on
-> every compute SG) is preserved byte-for-byte.
+> every compute SG) is preserved as a **topology- and egress-equivalent** translation
+> (two deliberate endpoint-SG translation choices are documented in the plan's Design
+> section — VPC-CIDR endpoint ingress and `egress = []` on endpoint SGs).
 
 ## Objective
 
@@ -84,69 +86,114 @@ explicit `aws_vpc_security_group_egress_rule` resources.
 
 ## Testing Strategy
 
-- **AC1–AC5 — goal-based check.** Verified by `terraform plan -json` output showing
-  the correct resource types and counts. The plan-assertion test suite (spec
-  `infra-terraform-verification`) provides the full assertion coverage; this spec's
-  own gate is `terraform validate` + `terraform fmt -check` + a count check on the
-  plan JSON.
-- **AC6 — infra/deploy (plan phase).** `terraform plan -out=tfplan && terraform show
-  -json tfplan` shows: 1 VPC, 2 subnets, 0 NAT gateways, 1 internet gateway absent,
-  6 VPC endpoints, 6 security groups, correct egress rule counts.
-- **AC7 — infra/deploy (live).** *(Deferred to `infra-terraform-verification` live AC
+This spec is **plan-only** — no `terraform apply`, no live smoke, no teardown. The
+infra/deploy GATES layers exercised here are **static preflight** (`fmt`/`validate`)
+and **plan/preview** (plan-JSON assertions); apply/smoke/rollback are deferred (AC10).
+
+- **Offline tier (no AWS credentials).** `terraform fmt -check` and `terraform
+  validate` — these evaluate syntax, types, and references without contacting AWS.
+- **Credentials-required tier.** The plan-JSON count/set assertions (AC1–AC9) consume
+  `terraform plan -json`, and the `data "aws_availability_zones"` source is read
+  against the live API during plan; this tier therefore requires AWS credentials +
+  region + STS. `terraform init -backend=false` first (S3 backend not needed for a
+  local plan), then `terraform plan -out=tfplan`, then `terraform show -json tfplan`.
+- **AC1–AC9 — goal-based check.** Verified by the plan JSON showing the correct
+  resource types, counts, and egress/ingress sets. The plan-assertion test suite
+  (spec `infra-terraform-verification`) provides the full assertion coverage; this
+  spec's own gate is `terraform validate` + `terraform fmt -check` + the plan-JSON
+  count/negative checks below.
+- **AC10 — infra/deploy (live).** *(Deferred to `infra-terraform-verification` live AC
   or to a combined live cycle with `infra-terraform-compute`.)* VPC endpoints
   are accessible from an in-VPC Lambda; closed-egress SGs are confirmed by the smoke
-  probe passing.
+  probe passing; the S3 gateway-endpoint route is confirmed by the corpus read.
 
-Gates: `terraform fmt -check`, `terraform validate`, plan JSON resource count check.
+Gates: `terraform fmt -check`, `terraform validate`, plan JSON resource count check,
+plan JSON negative-CIDR check (no public ingress/egress).
 
 ## Acceptance Criteria
 
-- [ ] **AC1 — VPC: 2 private isolated subnets, no NAT, no IGW.** *(goal-based check)*
+- [x] **AC1 — VPC: 2 private isolated subnets, no NAT, no IGW.** *(goal-based check)*
   `aws_vpc` resource with 1 instance. Two `aws_subnet` resources in distinct AZs,
   `map_public_ip_on_launch = false`. No `aws_nat_gateway`, no `aws_internet_gateway`.
-  Subnet CIDRs are `/24` (matching CDK's `cidr_mask=24`).
+  Subnet CIDRs are `/24` within `10.0.0.0/16` (matching CDK's `cidr_mask=24`
+  allocation: `10.0.0.0/24`, `10.0.1.0/24`). Each subnet has an `aws_route_table` +
+  `aws_route_table_association` (private-isolated: local routes only, no
+  IGW/NAT route).
 
-- [ ] **AC2 — 6 VPC endpoints: 1 gateway S3, 5 interface.** *(goal-based check)*
+- [x] **AC2 — 6 VPC endpoints: 1 gateway S3, 5 interface.** *(goal-based check)*
   `aws_vpc_endpoint` resource count = 6. One with `vpc_endpoint_type = "Gateway"` for
   S3. Five with `vpc_endpoint_type = "Interface"`: ECR API (`ecr.api`), ECR Docker
   (`ecr.dkr`), CloudWatch Logs (`logs`), STS (`sts`), Bedrock Runtime
   (`bedrock-runtime`). Each interface endpoint is associated with the private subnets
   and the correct security group for inbound 443.
 
-- [ ] **AC3 — 6 security groups, all `egress = []` by default.** *(goal-based check)*
+- [x] **AC3 — 6 security groups, all `egress = []` by default.** *(goal-based check)*
   `aws_security_group` resources: `neptune_sg`, `opensearch_sg`,
   `ingestion_task_sg`, `smoke_probe_sg`, `vector_smoke_sg`, `query_lambda_sg`. Each
   has no inline `egress` block (or `egress = []` explicitly) — no
   `0.0.0.0/0`/`-1` allow-all rule. Descriptions use EC2-valid ASCII charset.
 
-- [ ] **AC4 — Closed-egress rules match exact `_COMPUTE_SG_EGRESS` table.** *(goal-based
+- [x] **AC4 — Closed-egress rules match exact `_COMPUTE_SG_EGRESS` table.** *(goal-based
   check)* `aws_vpc_security_group_egress_rule` resources match the CDK per-SG egress
   table exactly (set equality, not subset):
   - `ingestion_task_sg`: 8 rules (Neptune 8182, OpenSearch 443, Bedrock 443, EcrApi 443, EcrDocker 443, Logs 443, Sts 443, S3 prefix-list 443).
   - `smoke_probe_sg`: 3 rules (Neptune 8182, Logs 443, Sts 443).
   - `vector_smoke_sg`: 4 rules (OpenSearch 443, Bedrock 443, Logs 443, Sts 443).
   - `query_lambda_sg`: 5 rules (Neptune 8182, OpenSearch 443, Bedrock 443, Logs 443, Sts 443).
+  **Negative + total (self-contained, this spec's own gate):** total
+  `aws_vpc_security_group_egress_rule` count = **20** (8+3+4+5); egress rules are
+  owned **only** by the 4 compute SGs (the 2 store SGs and 5 endpoint SGs own
+  **zero** egress rules); **no** egress rule has `cidr_ipv4 = "0.0.0.0/0"` or
+  `cidr_ipv6 = "::/0"`; every egress rule targets a `referenced_security_group_id`
+  or a `prefix_list_id` — **never a raw CIDR** (the S3 rule is the sole
+  prefix-list target).
 
-- [ ] **AC5 — No public ingress on any security group.** *(goal-based check)*
+- [x] **AC5 — No public ingress on any security group.** *(goal-based check)*
   No `aws_vpc_security_group_ingress_rule` resource has `cidr_ipv4 = "0.0.0.0/0"` or
-  `cidr_ipv6 = "::/0"`. All ingress rules reference security group IDs (peer SG rules:
-  Neptune from compute SGs on 8182; OpenSearch from compute SGs on 443; VPC endpoint
-  SGs accept 443 from the VPC CIDR).
+  `cidr_ipv6 = "::/0"`. Peer SG ingress rules reference security group IDs (Neptune
+  from compute SGs on 8182; OpenSearch from compute SGs on 443); the only CIDR ingress
+  is the VPC endpoint SGs accepting 443 from the **VPC CIDR** (`aws_vpc.main.cidr_block`,
+  a private `/16` — never a public CIDR). The implementation declares **no inline
+  `ingress`/`egress` blocks** on any `aws_security_group` (all rules are separate
+  `aws_vpc_security_group_*_rule` resources, and each SG sets `egress = []`
+  explicitly); the check therefore also holds for the inline-block form.
 
-- [ ] **AC6 — Store-SG ingress rules: exact peer-SG set for Neptune and OpenSearch.** *(goal-based check)*
+- [x] **AC6 — Store-SG ingress rules: exact peer-SG set for Neptune and OpenSearch.** *(goal-based check)*
   `aws_vpc_security_group_ingress_rule` resources for store SGs match exactly:
   - Neptune SG accepts port 8182 from: `ingestion_task_sg`, `smoke_probe_sg`, `query_lambda_sg` (3 rules).
   - OpenSearch SG accepts port 443 from: `ingestion_task_sg`, `vector_smoke_sg`, `query_lambda_sg` (3 rules).
   No other ingress rule references Neptune or OpenSearch SGs. (Source: CDK
   `neptune_sg.add_ingress_rule(task_sg, ...)` / `opensearch_sg.add_ingress_rule(sg, ...)` calls.)
 
-- [ ] **AC7 — `terraform plan` shows correct resource counts for the named compute/store resources.** *(goal-based
+- [x] **AC7 — `terraform plan` shows correct resource counts for the named compute/store resources.** *(goal-based
   check)* `terraform plan -json` output confirms:
   `aws_vpc` = 1, `aws_subnet` = 2, `aws_nat_gateway` = 0 (absent from plan),
-  `aws_vpc_endpoint` = 6. The 6 named compute/store security groups (`neptune_sg`,
-  `opensearch_sg`, `ingestion_task_sg`, `smoke_probe_sg`, `vector_smoke_sg`,
-  `query_lambda_sg`) all appear in the plan; endpoint SGs (one per interface endpoint,
-  5 additional) bring the total `aws_security_group` count to 11.
+  `aws_internet_gateway` = 0 (absent), `aws_vpc_endpoint` = 6, `aws_route_table` = 2,
+  `aws_route_table_association` = 2. The 6 named compute/store security groups
+  (`neptune_sg`, `opensearch_sg`, `ingestion_task_sg`, `smoke_probe_sg`,
+  `vector_smoke_sg`, `query_lambda_sg`) all appear in the plan; endpoint SGs (one per
+  interface endpoint, 5 additional) bring the total `aws_security_group` count to 11.
+
+- [x] **AC8 — Interface-endpoint SGs: exactly 443-from-VPC-CIDR ingress.** *(goal-based
+  check)* Each of the 5 interface-endpoint SGs has exactly one
+  `aws_vpc_security_group_ingress_rule` on TCP 443 with `cidr_ipv4 =
+  aws_vpc.main.cidr_block` (5 rules total). This is the deliberate translation of
+  CDK's `open=True` interface-endpoint default (see plan Design); the effective
+  outbound gate remains the compute SGs' closed egress. Store-SG ingress (AC6, 6
+  rules) + endpoint-SG ingress (5 rules) = **11** `aws_vpc_security_group_ingress_rule`
+  resources total; none has a public CIDR (AC5).
+
+- [x] **AC9 — S3 gateway endpoint is route-table associated.** *(goal-based check)*
+  The S3 gateway `aws_vpc_endpoint` sets `route_table_ids` to the two private-subnet
+  route tables (`aws_route_table.private[*].id`), so the AWS-managed S3 prefix-list
+  route is installed and the in-VPC corpus read actually routes (no-NAT S3 path,
+  ADR-0002). Without this the endpoint plans clean but never routes.
+
+- [ ] **AC10 — Live reachability.** *(infra/deploy — live)* (deferred: infra-terraform-verification)
+  Deferred to the `infra-terraform-verification` live AC or a combined live cycle with
+  `infra-terraform-compute`. VPC endpoints are reachable from an in-VPC Lambda;
+  closed-egress SGs are confirmed by the smoke probe passing; the S3 gateway-endpoint
+  route is confirmed by the corpus read succeeding with no NAT path.
 
 ## Assumptions
 
@@ -163,9 +210,29 @@ Gates: `terraform fmt -check`, `terraform validate`, plan JSON resource count ch
 - Process: the CDK `_COMPUTE_SG_EGRESS` table in `test_stack.py` is the authoritative
   per-SG egress specification; the Terraform implementation must match it set-exactly
   (source: `apps/infra/tests/test_stack.py` `test_compute_sgs_egress_equals_exact_call_set`).
+- Security (deliberate parity, `s3_prefix_list_id`): the S3 egress target is the
+  operator-supplied `var.s3_prefix_list_id` (pattern-validated `^pl-[0-9a-f]+$`),
+  mirroring the CDK `S3PrefixListId` CfnParameter exactly — `deploy.sh` resolves the
+  correct AWS-managed S3 list per-region via `describe-managed-prefix-lists`. The
+  regex validates *shape*, not membership: a format-valid customer-managed prefix list
+  could in principle carry a wider CIDR. This residual risk is accepted for CDK +
+  scaffold parity (the variable is a scaffold-spec contract; auto-resolving it from a
+  `data "aws_ec2_managed_prefix_list"` would remove that variable — an "Ask first"
+  cross-spec change). Hardening tracked as backlog `infra-terraform-s3-prefix-list-data-source`.
+- Security (scanner): no IaC policy-as-code scanner (Checkov/tfsec) is wired yet, so
+  the per-provider secure-config depth rests on hand-written plan-JSON asserts here
+  (`degraded: no scanner`). Acceptable for a plan-only spec; wiring a scanner into CI
+  against `apps/infra-tf/` is owned by the sibling `infra-terraform-verification` spec
+  (backlog `infra-terraform-scanner-ci`).
 
 ## Changelog
 
 - 2026-07-22 — Spec authored. Network tier: VPC, subnets, VPC endpoints (6), security
   groups (6 with closed egress matching _COMPUTE_SG_EGRESS exactly). Goal-based ACs
   verified by terraform plan JSON. Depends on infra-terraform-scaffold.
+- 2026-07-22 — Pre-EXECUTE review amendments (work-loop full mode). AC1: route tables.
+  AC4: negative-egress + total-count + only-compute-SGs-own-egress. AC5: inline-block
+  coverage + VPC-CIDR ingress clarified. AC7: route-table + IGW-absent counts. Added
+  AC8 (endpoint-SG ingress), AC9 (S3 gateway route-table association), AC10 (renamed
+  live AC). Testing Strategy split into offline/creds tiers. Assumptions: s3_prefix_list
+  parity rationale + scanner deferral. Dispositions: `notes/pre-execute-review-dispositions.md`.

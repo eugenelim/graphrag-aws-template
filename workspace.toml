@@ -134,4 +134,24 @@ open = [
   # (readiness poll + 3 Lambda invocations), fixture plan.json.
   {slug = "infra-terraform-verification", source = "docs/specs/infra-terraform-verification/", needs = "backlog:infra-terraform-compute"},
 
+  # ── Terraform migration follow-ups (deferred from infra-terraform-network) ──
+
+  # Wire an IaC policy-as-code scanner (Checkov or tfsec) into CI against
+  # apps/infra-tf/ and name it as a gate — closes the `degraded: no scanner`
+  # gap (per-provider secure-config depth). Own it in the verification tier's
+  # CI wiring. When it lands it will flag the VPC default security group
+  # (unmanaged, allow-all-intra-group) — lock it down then via
+  # aws_default_security_group with empty ingress/egress, consistently across
+  # all tiers (no ENI attaches to it today, so it is not a live exposure).
+  # Source: infra-terraform-network pre-EXECUTE security review SEC-3 + REVIEW QE-3.
+  {slug = "infra-terraform-scanner-ci", source = "docs/specs/infra-terraform-network/"},
+
+  # Harden s3_prefix_list_id: replace the operator-supplied, shape-validated
+  # (^pl-[0-9a-f]+$) variable with a data "aws_ec2_managed_prefix_list" that
+  # resolves the AWS-managed com.amazonaws.<region>.s3 list, so a format-valid
+  # customer-managed list can't widen closed egress. Cross-spec: the variable is
+  # a scaffold-spec contract (mirrors the CDK S3PrefixListId CfnParameter), so
+  # this touches infra-terraform-scaffold too. Source: infra-terraform-network SEC-2.
+  {slug = "infra-terraform-s3-prefix-list-data-source", source = "docs/specs/infra-terraform-network/"},
+
 ]
