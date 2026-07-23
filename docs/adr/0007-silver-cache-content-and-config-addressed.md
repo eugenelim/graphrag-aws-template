@@ -1,6 +1,6 @@
 # ADR-0007: Silver cache addressing — content-and-config over content-only
 
-- **Status:** Accepted
+- **Status:** Superseded by ADR-0016
 - **Date:** 2026-06-28
 - **Decision-makers:** eugenelim
 - **Supersedes:** none
