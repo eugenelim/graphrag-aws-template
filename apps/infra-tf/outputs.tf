@@ -1,14 +1,17 @@
-# Output shells — stubs with value = null until subsequent specs provision the
-# resources. Names are snake_case translations of the CDK CfnOutput names.
+# Output values — snake_case translations of the CDK CfnOutput names. The data-tier
+# outputs (corpus_bucket_name, neptune_endpoint, opensearch_endpoint) are wired to live
+# resource attributes by the data + IAM tier (infra-terraform-data-and-iam); the
+# remaining compute-tier outputs stay value = null stubs until infra-terraform-compute
+# provisions their resources.
 
 output "corpus_bucket_name" {
   description = "Name of the S3 corpus bucket."
-  value       = null
+  value       = aws_s3_bucket.corpus.id
 }
 
 output "neptune_endpoint" {
   description = "HTTPS endpoint for the Neptune cluster (port 8182)."
-  value       = null
+  value       = "https://${aws_neptune_cluster.main.endpoint}:8182"
 }
 
 output "ecs_cluster_name" {
@@ -43,7 +46,7 @@ output "smoke_probe_name" {
 
 output "opensearch_endpoint" {
   description = "HTTPS endpoint for the OpenSearch domain."
-  value       = null
+  value       = "https://${aws_opensearch_domain.graphrag_vectors.endpoint}"
 }
 
 output "vector_smoke_probe_name" {
