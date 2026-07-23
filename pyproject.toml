@@ -32,6 +32,8 @@ infra = [
 # can run detection offline.
 ingest = [
     "networkx>=3.0",
+    "rdflib>=6.3",
+    "pyshacl>=0.25,<0.27",
 ]
 dev = [
     # setuptools floor pinned above the PYSEC-2026-3447 fix (83.0.0); forces pip to upgrade
@@ -58,7 +60,7 @@ graphrag = "graphrag.cli:main"
 where = ["packages/graphrag/src"]
 
 [tool.setuptools.package-data]
-graphrag = ["aliases.yaml", "labels.yaml", "py.typed", "showcase/queries.yaml"]
+graphrag = ["aliases.yaml", "labels.yaml", "py.typed", "showcase/queries.yaml", "ontology/*.ttl"]
 
 [tool.pytest.ini_options]
 testpaths = ["packages/graphrag/tests", "apps/ingestion/tests", "apps/infra/tests"]
@@ -102,4 +104,8 @@ ignore_missing_imports = true
 module = ["numpy", "numpy.*"]
 follow_imports = "skip"
 follow_imports_for_stubs = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["rdflib", "rdflib.*", "pyshacl", "pyshacl.*"]
 ignore_missing_imports = true

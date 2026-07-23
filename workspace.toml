@@ -61,17 +61,18 @@ status    = "shaping"
 ["ini-002".shape]
 # Design artifacts (ADRs, RFCs, specs) that must be agreed before implementation.
 # Wave ordering: each wave unblocks the next; items within a wave run in parallel.
-shipped = ["rfc-0004-biz-ops-kg-pivot"]
+shipped = [
+  "rfc-0004-biz-ops-kg-pivot",
+  "adr-0011-neptune-sparql",
+  "adr-0012-owl-schema-only",
+  "spec-rdf-owl-ontology",
+]
 active  = []
 queue   = [
   # Wave 1 — pivot rationale; no dependencies (RFC-0004 Accepted 2026-07-23)
-
-  # Wave 2 — core technology decisions; both depend on RFC-0004
-  {slug = "adr-0011-neptune-sparql",         needs = ["shape:rfc-0004-biz-ops-kg-pivot"]},
-  {slug = "adr-0012-owl-schema-only",        needs = ["shape:rfc-0004-biz-ops-kg-pivot"]},
+  # Wave 2 — ADR-0011 + ADR-0012 written and committed (cbac0e1); moved to shipped 2026-07-23
 
   # Wave 3 — data model, routing, ingestion decisions; depend on ADR-0011/0012
-  {slug = "spec-rdf-owl-ontology",           needs = ["shape:adr-0012-owl-schema-only"]},
   {slug = "adr-0013-multi-strategy-routing", needs = ["shape:adr-0011-neptune-sparql", "shape:adr-0012-owl-schema-only"]},
   {slug = "adr-0016-git-ingestion",          needs = ["shape:adr-0011-neptune-sparql", "shape:adr-0012-owl-schema-only"]},
 
