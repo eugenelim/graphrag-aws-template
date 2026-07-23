@@ -1,7 +1,7 @@
 # Plan: infra-terraform-verification
 
 - **Spec:** [`spec.md`](spec.md)
-- **Status:** Drafting <!-- Drafting | Executing | Done -->
+- **Status:** Executing <!-- Drafting | Executing | Done -->
 
 > **Plan contract:** implementation strategy for the Terraform verification tier.
 > May change as implementation proceeds; note substantial changes in the changelog.
@@ -22,13 +22,19 @@ Authoring order follows test-file-before-assertions:
 
 ## Constraints
 
-- The test suite must parse `terraform show -json tfplan`'s `resource_changes[*]`
-  structure, not the `planned_values` structure. `resource_changes[*].change.after`
-  is the post-apply state; `resource_changes[*].type` is the resource type.
-- IAM policy JSON lives in `resource_changes[*].change.after.policy` (for
-  `aws_iam_role_policy`) or nested in `access_policies` (for `aws_opensearch_domain`).
-  These are JSON-encoded strings that must be parsed with `json.loads()` before
-  assertion.
+- The test suite uses `planned_values.root_module.resources` (not `resource_changes`)
+  as the primary data source. `planned_values` provides resource values for both fresh
+  plans and applied-state (no-op) plans. For a fresh plan, computed attributes
+  (`neptune_cluster_arn`, `aws_s3_bucket.corpus.arn`, role ARNs) are null; for an
+  applied-state plan, all attributes are fully resolved.
+- The committed fixture (`tests/fixtures/plan.json`) is generated from **applied state**
+  (post-`terraform apply`, no-op plan), so all attribute values are fully resolved.
+  Tests fall back to proxy assertions (resource name) when attribute is null, to support
+  both fresh-plan and applied-state fixture execution.
+- IAM policy JSON lives in `planned_values.root_module.resources[*].values.policy` (for
+  `aws_iam_role_policy`) and `planned_values.root_module.resources[*].values.access_policies`
+  (for `aws_opensearch_domain`). These are JSON-encoded strings; parse with `json.loads()`.
+  If null (fresh plan), fall back to proxy (resource name).
 - The `_COMPUTE_SG_EGRESS` table from `apps/infra/tests/test_stack.py` is the
   authoritative egress-set specification; the Terraform plan uses
   `aws_vpc_security_group_egress_rule` resources (separate resources, not inline
@@ -43,43 +49,77 @@ Authoring order follows test-file-before-assertions:
 ### `conftest.py` fixture design
 
 ```python
-import json, os, subprocess, tempfile
+import json
+import os
+import subprocess
+import zipfile
+from pathlib import Path
+
 import pytest
+
 
 @pytest.fixture(scope="session")
 def tfplan(tmp_path_factory):
     override = os.environ.get("TFPLAN_JSON_PATH")
     if override:
         return json.loads(Path(override).read_text())
-    # Run terraform plan in the infra-tf directory
+    # Generate plan live — note: computed attributes (Neptune ARN, S3 bucket name,
+    # role ARNs) are null in fresh plans; use committed fixture for full coverage.
+    terraform_bin = os.environ.get("TERRAFORM_BIN", "terraform")
     infra_dir = Path(__file__).parent.parent
     plan_file = tmp_path_factory.mktemp("tfplan") / "plan.tfplan"
-    subprocess.run(
-        ["terraform", "plan", "-out", str(plan_file),
-         "-backend=false",
-         "-var=budget_alarm_email=test@example.com",
-         "-var=invoker_role_arn=arn:aws:iam::123456789012:role/invoker"],
-         # s3_prefix_list_id removed: infra-terraform-network resolves the S3
-         # managed prefix list via a data source, not an operator var (SEC-2).
-        cwd=infra_dir, check=True
-    )
+
+    # Create stub zip if Lambda package is absent (plan-only testing).
+    lambda_zip = infra_dir / "../graphrag/dist/graphrag.zip"
+    stub_created = False
+    if not lambda_zip.exists():
+        lambda_zip.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(lambda_zip, "w") as zf:
+            zf.writestr("stub.txt", "stub")
+        stub_created = True
+
+    try:
+        # init required before plan; -backend=false avoids S3 state bucket dependency.
+        subprocess.run(
+            [terraform_bin, "init", "-backend=false", "-input=false"],
+            cwd=infra_dir, check=True,
+        )
+        subprocess.run(
+            [terraform_bin, "plan", "-out", str(plan_file), "-input=false",
+             "-var=budget_alarm_email=test@example.com",
+             "-var=invoker_role_arn=arn:aws:iam::123456789012:role/invoker"],
+            cwd=infra_dir, check=True,
+        )
+    finally:
+        if stub_created:
+            lambda_zip.unlink(missing_ok=True)
+
     result = subprocess.run(
-        ["terraform", "show", "-json", str(plan_file)],
-        cwd=infra_dir, capture_output=True, text=True, check=True
+        [terraform_bin, "show", "-json", str(plan_file)],
+        cwd=infra_dir, capture_output=True, text=True, check=True,
     )
     return json.loads(result.stdout)
 ```
 
-### Helper pattern for resource_changes
+### Helper pattern for planned_values
 
 ```python
-def _rc_by_type(tfplan, rtype):
-    return [rc for rc in tfplan["resource_changes"]
-            if rc["type"] == rtype and rc["change"]["actions"] != ["no-op"]]
+def _pv_by_type(tfplan, rtype):
+    """Resources of a given type from planned_values (works for both fresh and applied-state plans)."""
+    return [r for r in tfplan["planned_values"]["root_module"]["resources"]
+            if r["type"] == rtype]
 
 def _iam_inline_policies(tfplan):
-    return [json.loads(rc["change"]["after"]["policy"])
-            for rc in _rc_by_type(tfplan, "aws_iam_role_policy")]
+    """Parsed inline policy dicts; falls back to empty list for null (fresh-plan) policies."""
+    result = []
+    for r in _pv_by_type(tfplan, "aws_iam_role_policy"):
+        policy_str = r["values"].get("policy")
+        if policy_str:
+            result.append(json.loads(policy_str))
+    return result
+
+def _as_list(v):
+    return v if isinstance(v, list) else [v]
 ```
 
 ### CDK test → Terraform plan assertion mapping
