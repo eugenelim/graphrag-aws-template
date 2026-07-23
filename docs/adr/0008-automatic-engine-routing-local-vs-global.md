@@ -1,6 +1,6 @@
 # ADR-0008: Automatic Local-vs-Global engine routing is a `mode="auto"` selector (deterministic + Bedrock twin), not a new retrieval engine
 
-- **Status:** Accepted <!-- Proposed | Accepted | Rejected | Deprecated | Superseded by ADR-NNNN -->
+- **Status:** Superseded by RFC-0004 <!-- local-vs-global mode="auto" selector reversed by biz-ops KG pivot alongside ADR-0001; new routing decision in ADR-0013 -->
 - **Date:** 2026-06-28
 - **Decision-makers:** eugenelim
 - **Supersedes:** none
