@@ -164,12 +164,11 @@ The document URI (`urn:doc:{repo}:{path}`) is the stable RDF subject key across 
 stores. It is never used as a graph name.
 
 > **Git remote egress:** the Fargate ingestion task must reach the git remote
-> (`git clone` / `git pull`). Two options: (a) a NAT gateway on the ingestion
-> subnet only (separate routing table, other subnets remain no-NAT); or (b) a
-> CodePipeline source stage that mirrors the repo to S3, and the Fargate task
-> reads from S3 — preferred, as it keeps the ingestion task fully VPC-private.
-> This design is stated as a deployment-time choice; the recommended default is
-> the CodePipeline/S3 mirror path.
+> (`git clone` / `git pull`). The **sole sanctioned path** is a CodePipeline
+> source stage that mirrors the repo to S3, with the Fargate task reading from
+> S3 — keeping the ingestion task fully VPC-private. A NAT gateway on the
+> ingestion subnet is **out of bounds** (RFC-0004 § Security posture): it would
+> reopen the no-NAT egress posture ADR-0002's carried-forward controls depend on.
 
 ### PII handling — flag and surface, not redact
 
@@ -881,7 +880,7 @@ flowchart TB
 | **S3 bucket** | Block-public · encrypted · TLS-only | Commit SHA manifest · Silver artifacts (extracted Markdown + cleansing reports) · Gold artifacts (chunks + embedding vectors) |
 | **ADOT Lambda layer** | AWS Distro for OpenTelemetry | OTLP span export to CloudWatch — attached to MCP Lambda |
 | **VPC endpoints** | s3(gw) · ecr.api · ecr.dkr · logs · sts · bedrock-runtime · otlp · textract · comprehend | All egress stays inside VPC — no NAT, no IGW. `textract` and `comprehend` required for scanned PDF OCR and optional PII detection. |
-| **Budgets alarm** | $250/mo · 80% threshold · email | Set above the computed standing-cost floor: Neptune min NCU (~$110/mo) + OpenSearch t3.small (~$26/mo) + interface VPC endpoints (~$90/mo) ≈ $226/mo before any traffic. |
+| **Budgets alarm** | Limit set above the standing floor · email | ⚠️ The computed standing-cost floor — Neptune min NCU (~$110/mo) + OpenSearch t3.small (~$26/mo) + interface VPC endpoints (~$90/mo) ≈ $226/mo before any traffic — **exceeds 80% of a $250 alarm ($200)**, so a $250/80% alarm fires at idle on day one. The infra follow-on sets the Budgets limit above the standing floor so the alert fires on traffic, not at idle (tracked: RFC-0004 follow-up). |
 
 ### IAM roles (least privilege — no wildcard Resource)
 

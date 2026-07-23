@@ -61,10 +61,10 @@ status    = "shaping"
 ["ini-002".shape]
 # Design artifacts (ADRs, RFCs, specs) that must be agreed before implementation.
 # Wave ordering: each wave unblocks the next; items within a wave run in parallel.
-shipped = []
-active  = ["rfc-0004-biz-ops-kg-pivot"]
+shipped = ["rfc-0004-biz-ops-kg-pivot"]
+active  = []
 queue   = [
-  # Wave 1 — pivot rationale; no dependencies (intent framed; RFC authoring in progress)
+  # Wave 1 — pivot rationale; no dependencies (RFC-0004 Accepted 2026-07-23)
 
   # Wave 2 — core technology decisions; both depend on RFC-0004
   {slug = "adr-0011-neptune-sparql",         needs = ["shape:rfc-0004-biz-ops-kg-pivot"]},
@@ -300,5 +300,37 @@ open = [
   # infra-terraform-scanner-ci (#52), terraform-compute-live-cycle (live cycle run),
   # terraform-query-lambda-concurrency-cap (#50), terraform-endpoint-url-locals-dedup (#50),
   # infra-secret-scan-ci (detect-secrets + shellcheck CI gate).
+
+  # ── ini-002 / RFC-0004 biz-ops KG pivot follow-ups (surfaced at RFC review) ──
+
+  # Record the formal supersession of ADR-0005 (Louvain community detection) and
+  # ADR-0007 (silver cache) in the follow-on ADR that replaces each mechanism —
+  # ADR-0016/Gold layer supersedes 0007; summarize+multi-strategy routing
+  # supersedes 0005's mechanism. RFC-0004 deliberately does NOT claim this
+  # supersession (not in workspace.toml supersedes-list); the follow-on ADR owns
+  # the "Superseded by ADR-NNNN" record per CONVENTIONS §2. Fix: add the ADR
+  # header field + a supersedes work item when 0015/0016 land.
+  {slug = "adr-0005-0007-supersession-record", source = "docs/rfc/0004-biz-ops-kg-pivot.md"},
+
+  # Verify the Neptune SPARQL IAM data-action matrix: confirm SPARQL Update forms
+  # (esp. DROP GRAPH) are gated by WriteDataViaQuery/DeleteDataViaQuery so the
+  # mcp_lambda_role read-only grant (ReadDataViaQuery only) actually blocks a
+  # generated/injected partition-destroying mutation. Blocker-1 assumption from
+  # the RFC security review; verify against AWS docs during ADR-0011/text2sparql.
+  {slug = "neptune-sparql-dropgraph-iam-action-verify", source = "docs/rfc/0004-biz-ops-kg-pivot.md"},
+
+  # Budgets alarm footgun: the biz-ops standing floor (~$226/mo = Neptune min
+  # 1 NCU ~$110 + OpenSearch ~$26 + interface VPC endpoints ~$90) EXCEEDS 80% of
+  # the $250/mo alarm ($200), so the alarm fires at idle on day one. Raise the
+  # Budgets threshold above the standing floor (or lower the floor) in the infra
+  # follow-on. Fix in spec-git-ingestion / infra-tf. design.md:810,884.
+  {slug = "biz-ops-budgets-threshold-above-standing-floor", source = "docs/rfc/0004-biz-ops-kg-pivot.md"},
+
+  # Restate the scoped-principal Function URL invoke grant for the new AgentCore
+  # principal in design.md Mode 3: the invoke grant must stay scoped to
+  # enumerated principal ARNs (automation role + AgentCore execution role),
+  # never Principal:*. Carried-forward control from security.md:40; currently
+  # only AuthType=AWS_IAM is restated. design.md:332,398-403,880.
+  {slug = "biz-ops-functionurl-scoped-principal-restate", source = "docs/rfc/0004-biz-ops-kg-pivot.md"},
 
 ]
