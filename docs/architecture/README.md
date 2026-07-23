@@ -2,21 +2,15 @@
 
 The authoritative architecture record for this repository. One footprint — start here.
 
-## Primary reference
+## Reading order
 
-**[`biz-ops-knowledge-graph/design.md`](biz-ops-knowledge-graph/design.md)**
-— the current architecture in three views: conceptual, logical, and physical.
-Covers the OWL ontology, Neptune SPARQL named graphs, MCP tool server, server-side
-routing, OTEL observability, and git-based ingestion. **Read this first.**
-
-## Supplementary operational docs
-
-| Doc | What it covers | Status |
-|---|---|---|
-| [`overview.md`](overview.md) | Monorepo layout — apps, packages, tools, docs | Current (updated for ini-002) |
-| [`security.md`](security.md) | Trust boundaries and IAM posture per slice | Partially current — being updated for ini-002 SPARQL/MCP boundaries |
-| [`deployment-and-verification.md`](deployment-and-verification.md) | Deploy, verify, teardown mechanics | Partially current — Terraform tiers are accurate; smoke probes being updated for SPARQL |
-| [`develop-and-test-offline.md`](develop-and-test-offline.md) | Offline-first dev posture; no-AWS test patterns | Partially current — offline SPARQL store (rdflib) replaces offline Neptune in ini-002 |
+| # | Doc | What it covers | Status |
+|---|---|---|---|
+| 1 | **[`biz-ops-knowledge-graph/design.md`](biz-ops-knowledge-graph/design.md)** | Full platform architecture — conceptual, logical, and physical views. OWL ontology, Neptune SPARQL named graphs, MCP tool server, medallion ingestion, extraction pipeline, PROV-O provenance, OTEL, client connection modes. | Current — ini-002 |
+| 2 | [`security.md`](security.md) | Trust boundaries, IAM roles, and network posture | Partially current — being updated for ini-002 SPARQL/MCP boundaries |
+| 3 | [`deployment-and-verification.md`](deployment-and-verification.md) | Deploy, verify, and teardown mechanics | Partially current — Terraform tiers accurate; smoke probes being updated for SPARQL |
+| 4 | [`develop-and-test-offline.md`](develop-and-test-offline.md) | Offline-first dev posture; working without a live AWS stack | Partially current — rdflib SPARQL store replaces offline Neptune in ini-002 |
+| 5 | [`overview.md`](overview.md) | Monorepo layout — apps, packages, tools, docs directories | Current |
 
 ## Archive
 
