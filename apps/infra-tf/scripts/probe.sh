@@ -82,10 +82,10 @@ aws lambda invoke \
   --log-type Tail \
   /tmp/probe_smoke_out.json \
   --query 'FunctionError' --output text > /tmp/probe_smoke_err.txt
-if grep -q '"success"' /tmp/probe_smoke_out.json; then
+if grep -q '"ok": true' /tmp/probe_smoke_out.json; then
   echo "  SmokeProbe: PASS"
 else
-  echo "FAIL: SmokeProbe did not return 'success'" >&2
+  echo "FAIL: SmokeProbe did not return ok=true" >&2
   echo "Response: $(cat /tmp/probe_smoke_out.json)" >&2
   exit 1
 fi
@@ -97,10 +97,10 @@ aws lambda invoke \
   --log-type Tail \
   /tmp/probe_vector_out.json \
   --query 'FunctionError' --output text > /tmp/probe_vector_err.txt
-if grep -q '"success"' /tmp/probe_vector_out.json; then
+if grep -q '"ok": true' /tmp/probe_vector_out.json; then
   echo "  VectorSmokeProbe: PASS"
 else
-  echo "FAIL: VectorSmokeProbe did not return 'success'" >&2
+  echo "FAIL: VectorSmokeProbe did not return ok=true" >&2
   echo "Response: $(cat /tmp/probe_vector_out.json)" >&2
   exit 1
 fi
@@ -109,9 +109,11 @@ fi
 # Uses Lambda invoke (not direct Function URL HTTP) so no SigV4 signing is needed
 # from bash. The Function URL auth_type=AWS_IAM is tested by the plan-assertion suite.
 echo "==> Invoking QueryLambda (${QUERY_NAME})..."
+# AWS CLI v2 requires --cli-binary-format for raw JSON payloads (not base64).
+echo '{"query": "probe"}' > /tmp/probe_query_payload.json
 aws lambda invoke \
   --function-name "${QUERY_NAME}" \
-  --payload '{"query": "probe"}' \
+  --payload fileb:///tmp/probe_query_payload.json \
   --log-type Tail \
   /tmp/probe_query_out.json \
   --query 'FunctionError' --output text > /tmp/probe_query_err.txt

@@ -582,7 +582,8 @@ def test_budget_alarm_has_threshold_and_subscriber(tfplan):
     budgets = _pv_by_type(tfplan, "aws_budgets_budget")
     assert len(budgets) == 1
     v = budgets[0]["values"]
-    assert v.get("limit_amount") == "150"
+    # limit_amount is "150" in fresh plans and "150.0" in applied-state plans (AWS API).
+    assert float(v.get("limit_amount", 0)) == 150.0
     assert v.get("budget_type") == "COST"
     notifications = v.get("notification", [])
     assert notifications, "budget must have at least one notification"

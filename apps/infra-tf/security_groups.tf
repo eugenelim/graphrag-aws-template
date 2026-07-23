@@ -40,6 +40,10 @@ resource "aws_security_group" "ingestion_task_sg" {
   vpc_id      = aws_vpc.main.id
   egress      = []
 
+  # egress rules are managed by aws_vpc_security_group_egress_rule resources below;
+  # ignore_changes prevents plan drift on subsequent applies.
+  lifecycle { ignore_changes = [egress] }
+
   tags = { Name = "graphrag-ingestion" }
 }
 
@@ -48,6 +52,8 @@ resource "aws_security_group" "smoke_probe_sg" {
   description = "Neptune smoke probe"
   vpc_id      = aws_vpc.main.id
   egress      = []
+
+  lifecycle { ignore_changes = [egress] }
 
   tags = { Name = "graphrag-smoke" }
 }
@@ -58,6 +64,8 @@ resource "aws_security_group" "vector_smoke_sg" {
   vpc_id      = aws_vpc.main.id
   egress      = []
 
+  lifecycle { ignore_changes = [egress] }
+
   tags = { Name = "graphrag-vector-smoke" }
 }
 
@@ -66,6 +74,8 @@ resource "aws_security_group" "query_lambda_sg" {
   description = "query lambda - in-VPC compute (egress to stores + VPC endpoints)"
   vpc_id      = aws_vpc.main.id
   egress      = []
+
+  lifecycle { ignore_changes = [egress] }
 
   tags = { Name = "graphrag-query" }
 }
