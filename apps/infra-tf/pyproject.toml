@@ -1,0 +1,4 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Set TFPLAN_JSON_PATH to a pre-generated plan JSON for cred-free assertion runs.
+# Set TERRAFORM_BIN to override the terraform binary path (default: "terraform").
