@@ -37,8 +37,14 @@ locals {
   # the account+region-qualified inference-profile ARN AND each underlying regional
   # foundation-model ARN it routes to — never a wildcard Resource (spec AC7/AC8).
   # Mirrors CDK _bedrock_synthesis_invoke (:692).
+  # Single source of truth for the synthesis model id: BOTH the query_role bedrock grant
+  # (the inference-profile ARN below) and the QueryLambda's SYNTHESIS_MODEL_ID env var
+  # (lambda.tf) reference this local. If they drift, query_role grants profile X while the
+  # Lambda invokes profile Y -> runtime AccessDenied on the query path.
+  synthesis_model_id = "us.anthropic.claude-sonnet-4-6"
+
   synthesis_arns = concat(
-    ["arn:aws:bedrock:${var.aws_region}:${local.account_id}:inference-profile/us.anthropic.claude-sonnet-4-6"],
+    ["arn:aws:bedrock:${var.aws_region}:${local.account_id}:inference-profile/${local.synthesis_model_id}"],
     [for r in ["us-east-1", "us-east-2", "us-west-2"] :
     "arn:aws:bedrock:${r}::foundation-model/anthropic.claude-sonnet-4-6"]
   )

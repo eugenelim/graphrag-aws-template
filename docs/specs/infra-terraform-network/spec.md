@@ -196,9 +196,12 @@ plan JSON negative-CIDR check (no public ingress/egress).
   route is installed and the in-VPC corpus read actually routes (no-NAT S3 path,
   ADR-0002). Without this the endpoint plans clean but never routes.
 
-- [ ] **AC10 — Live reachability.** *(infra/deploy — live)* (deferred: infra-terraform-verification)
-  Deferred to the `infra-terraform-verification` live AC or a combined live cycle with
-  `infra-terraform-compute`. VPC endpoints are reachable from an in-VPC Lambda;
+- [ ] **AC10 — Live reachability.** *(infra/deploy — live)* (deferred: terraform-compute-live-cycle)
+  Deferred to the combined full-stack live cycle (backlog `terraform-compute-live-cycle`,
+  run by the `infra-terraform-verification` tier). (Anchor repointed from the former
+  `infra-terraform-verification` backlog slug when the 5 build tiers moved to the
+  `["ini-001"]` initiative — the live-reachability checks below are confirmed by that
+  cycle's smoke probe + corpus read.) VPC endpoints are reachable from an in-VPC Lambda;
   closed-egress SGs are confirmed by the smoke probe passing; the S3 gateway-endpoint
   route is confirmed by the corpus read succeeding with no NAT path.
 
