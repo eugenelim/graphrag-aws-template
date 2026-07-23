@@ -66,15 +66,14 @@ shipped = [
   "adr-0011-neptune-sparql",
   "adr-0012-owl-schema-only",
   "spec-rdf-owl-ontology",
+  "adr-0013-multi-strategy-routing",
+  "adr-0016-git-ingestion",
 ]
 active  = []
 queue   = [
   # Wave 1 — pivot rationale; no dependencies (RFC-0004 Accepted 2026-07-23)
   # Wave 2 — ADR-0011 + ADR-0012 written and committed (cbac0e1); moved to shipped 2026-07-23
-
-  # Wave 3 — data model, routing, ingestion decisions; depend on ADR-0011/0012
-  {slug = "adr-0013-multi-strategy-routing", needs = ["shape:adr-0011-neptune-sparql", "shape:adr-0012-owl-schema-only"]},
-  {slug = "adr-0016-git-ingestion",          needs = ["shape:adr-0011-neptune-sparql", "shape:adr-0012-owl-schema-only"]},
+  # Wave 3 — ADR-0013 + ADR-0016 written 2026-07-23; moved to shipped
 
   # Wave 4 — feature specs; depend on wave 3 decisions
   {slug = "adr-0014-mcp-tool-server",        needs = ["shape:adr-0013-multi-strategy-routing"]},
@@ -304,14 +303,12 @@ open = [
 
   # ── ini-002 / RFC-0004 biz-ops KG pivot follow-ups (surfaced at RFC review) ──
 
-  # Record the formal supersession of ADR-0005 (Louvain community detection) and
-  # ADR-0007 (silver cache) in the follow-on ADR that replaces each mechanism —
-  # ADR-0016/Gold layer supersedes 0007; summarize+multi-strategy routing
-  # supersedes 0005's mechanism. RFC-0004 deliberately does NOT claim this
-  # supersession (not in workspace.toml supersedes-list); the follow-on ADR owns
-  # the "Superseded by ADR-NNNN" record per CONVENTIONS §2. Fix: add the ADR
-  # header field + a supersedes work item when 0015/0016 land.
-  {slug = "adr-0005-0007-supersession-record", source = "docs/rfc/0004-biz-ops-kg-pivot.md"},
+  # ADR-0007 (silver cache) is done: superseded by ADR-0016. ADR-0005 (Louvain
+  # community detection) mechanism is superseded by ADR-0013's `global` strategy
+  # + ADR-0014's `summarize` tool. Fix: add "Superseded by ADR-0013/ADR-0014" to
+  # ADR-0005's header once ADR-0014 lands; the `summarize` tool is what fully
+  # replaces the community-detection mechanism. ADR-0016 + ADR-0013 partial.
+  {slug = "adr-0005-supersession-record", source = "docs/rfc/0004-biz-ops-kg-pivot.md"},
 
   # Verify the Neptune SPARQL IAM data-action matrix: confirm SPARQL Update forms
   # (esp. DROP GRAPH) are gated by WriteDataViaQuery/DeleteDataViaQuery so the
