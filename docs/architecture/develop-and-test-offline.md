@@ -1,3 +1,10 @@
+> **Partially superseded — ini-002 in progress.**
+> The offline-first posture (no AWS credentials, in-memory stores, deterministic stand-ins)
+> remains the correct model. Implementation references are changing: `RuleText2CypherGenerator`
+> becomes `RuleText2SPARQLGenerator`; the offline Neptune store (`store/memory.py`) becomes
+> an rdflib-backed SPARQL memory store. See [`biz-ops-knowledge-graph/design.md`](biz-ops-knowledge-graph/design.md)
+> for the current retrieval architecture.
+
 # Developing and testing offline — and the text2cypher offline-execution decision
 
 > How to build and exercise this template **without a deployed AWS stack**, and the
