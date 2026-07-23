@@ -5,6 +5,7 @@ generates a fresh plan live. Fresh-plan mode: computed attributes
 (Neptune cluster_resource_id, S3 bucket name, role ARNs) are null;
 use the committed applied-state fixture for full-coverage assertions.
 """
+
 import json
 import os
 import subprocess
@@ -44,7 +45,11 @@ def tfplan(tmp_path_factory):
         )
         subprocess.run(
             [
-                terraform_bin, "plan", "-out", str(plan_file), "-input=false",
+                terraform_bin,
+                "plan",
+                "-out",
+                str(plan_file),
+                "-input=false",
                 "-var=budget_alarm_email=test@example.com",
                 "-var=invoker_role_arn=arn:aws:iam::123456789012:role/invoker",
             ],
