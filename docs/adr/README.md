@@ -19,7 +19,7 @@
 | [0011](0011-neptune-sparql-rdf-engine-and-text2sparql-guard.md) | Neptune SPARQL/RDF over openCypher/LPG: named-graph primitive and Text2SPARQL read-only guard | Accepted |
 | [0012](0012-owl-schema-only-and-named-graph-partition.md) | OWL schema-only + named-graph partition: typed RDF corpus with asymmetric retrieval semantics | Accepted |
 | [0013](0013-multi-strategy-server-side-routing.md) | Multi-strategy server-side routing: rules-first cascade over named-graph partitions | Accepted |
-| 0014 | MCP tool server as the primary interface | _(reserved — pending wave 4)_ |
+| [0014](0014-mcp-tool-server.md) | MCP tool server: generic typed tools over per-class or per-strategy tools | Accepted |
 | 0015 | OTEL observability | _(reserved — pending wave 5)_ |
 | [0016](0016-git-ingestion-commit-sha-delta-medallion.md) | Git ingestion: commit-SHA delta + medallion over CodePipeline/S3-mirror bronze source | Accepted |
 

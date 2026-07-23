@@ -1,6 +1,6 @@
 # ADR-0005: Community detection runs in the Fargate ingest task (Louvain via networkx), not a standing Neptune Analytics service
 
-- **Status:** Accepted <!-- Proposed | Accepted | Rejected | Deprecated | Superseded by ADR-NNNN -->
+- **Status:** Superseded by ADR-0014 <!-- Proposed | Accepted | Rejected | Deprecated | Superseded by ADR-NNNN -->
 - **Date:** 2026-06-26
 - **Decision-makers:** eugenelim
 - **Supersedes:** none
