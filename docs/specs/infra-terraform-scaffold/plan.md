@@ -1,7 +1,7 @@
 # Plan: infra-terraform-scaffold
 
 - **Spec:** [`spec.md`](spec.md)
-- **Status:** Drafting <!-- Drafting | Executing | Done -->
+- **Status:** Done <!-- Drafting | Executing | Done -->
 
 > **Plan contract:** this is the implementation strategy for the Terraform scaffold
 > tier. It may change as implementation proceeds; note substantial changes in the
@@ -108,20 +108,18 @@ apps/infra-tf/
 
 ## Tasks
 
-### T1: Author ADR-0010
+### T1: Author ADR-0010 + update ADR-0003 status
 
 **Depends on:** none
-**Touches:** `docs/adr/0010-terraform-migration.md`
-**Tests:** goal-based — ADR file exists, follows ADR format, `Status: Accepted`,
-  supersedes ADR-0003 in header.
-**Approach:** Write the ADR recording the CDK→Terraform decision rationale per
-  CONVENTIONS.md § 2. Content covers: context (ADR-0003's original rationale, why
-  it held, why it changes now), decision (migrate to `apps/infra-tf/`, keep CDK
-  app in place until live ACs pass), decision drivers, consequences, alternatives
-  considered.
-**Done when:** `docs/adr/0010-terraform-migration.md` exists with `Status: Accepted`;
-  ADR-0003's `Superseded by` field is not edited (ADRs are frozen; the supersession
-  is noted in ADR-0010's header only per CONVENTIONS.md § 2).
+**Touches:** `docs/adr/0010-terraform-migration.md`, `docs/adr/0003-iac-tool-aws-cdk-python.md`
+**Tests:** goal-based — ADR-0010 exists with `Status: Accepted`; ADR-0003's status
+  field reads `Superseded by ADR-0010` (body unchanged, per CONVENTIONS.md § 2 —
+  status fields change, bodies do not).
+**Approach:** ADR-0010 already exists at `Status: Accepted`. Update ADR-0003's
+  status line from `Accepted` to `Superseded by ADR-0010` (one-line status field
+  change; body is frozen and untouched).
+**Done when:** ADR-0010 is `Status: Accepted`; ADR-0003 is `Status: Superseded by ADR-0010`.
+**Status: Done** — ADR-0010 existed; ADR-0003 status updated in this PR.
 
 ---
 
@@ -129,13 +127,13 @@ apps/infra-tf/
 
 **Depends on:** T1
 **Touches:** `apps/infra-tf/versions.tf`
-**Tests:** goal-based — `terraform validate` exits 0 from `apps/infra-tf/` after `terraform init`;
-  `grep 'required_version' apps/infra-tf/versions.tf` shows `>= "1.11"`;
-  `grep 'version.*~> 5' apps/infra-tf/versions.tf` shows `~> "5.0"` for the aws provider.
-**Approach:** Create `apps/infra-tf/versions.tf` with `terraform { required_version =
-  ">= \"1.11\"" required_providers { aws = { source = \"hashicorp/aws\" version =
-  \"~> 5.0\" } } }`. No other providers.
-**Done when:** `terraform init && terraform validate` exits 0; `terraform fmt -check` exits 0.
+**Tests:** goal-based — `terraform validate` exits 0 from `apps/infra-tf/` after `terraform init -backend=false`;
+  `grep 'required_version' apps/infra-tf/versions.tf` shows `>= 1.11` (no extra quotes around version number);
+  `grep 'version.*~> 5' apps/infra-tf/versions.tf` shows `~> 5.0` for the aws provider.
+**Approach:** Create `apps/infra-tf/versions.tf` with `terraform { required_version = ">= 1.11"` and
+  `required_providers { aws = { source = "hashicorp/aws", version = "~> 5.0" } } }`. No other providers.
+  The constraint string is `">= 1.11"` — the version number itself is not additionally quoted.
+**Done when:** `terraform init -backend=false && terraform validate` exits 0; `terraform fmt -check` exits 0.
 
 ---
 
@@ -173,11 +171,11 @@ apps/infra-tf/
 
 **Depends on:** T3
 **Touches:** `apps/infra-tf/variables.tf`
-**Tests:** goal-based — running `terraform validate -var="budget_alarm_email=x"
-  -var="invoker_role_arn=arn:aws:iam::123456789012:role/x"
-  -var='s3_prefix_list_id=pl-abc123ef'` exits 0; running the same with
-  `s3_prefix_list_id=0.0.0.0/0` exits non-zero with a validation error message
-  referencing the prefix-list pattern.
+**Tests:** goal-based — `terraform validate` exits 0 with the full `variables.tf` in
+  place (structural check); the validation block is present and syntactically correct.
+  Note: `terraform validate` does not evaluate variable validation conditions — the
+  regex rejection (CIDR → error, `pl-abc123ef` → success) fires at `terraform plan`
+  time and is confirmed in subsequent spec live ACs.
 **Approach:** Write the full `variables.tf`:
   - `budget_alarm_email`: string, no default, description matching CDK parameter.
   - `invoker_role_arn`: string, no default.
@@ -197,23 +195,30 @@ apps/infra-tf/
 **Approach:** Write 12 output blocks with `value = null` stubs and descriptions
   matching the CDK `CfnOutput` descriptions. Names use snake_case matching Terraform
   convention (CDK's PascalCase → snake_case: `CorpusBucketName` → `corpus_bucket_name`).
+  Exception: `OpenSearchEndpoint` → `opensearch_endpoint` (OpenSearch is one product-name
+  token, not two words — per AC5 in the spec).
 **Done when:** 12 output stubs present; `terraform validate` exits 0.
 
 ---
 
 ### T7: Create `scripts/bootstrap.sh` + run format + validate
 
-**Depends on:** T5, T6
+**Depends on:** T4, T5, T6
 **Touches:** `apps/infra-tf/scripts/bootstrap.sh`, all `.tf` files (fmt pass)
 **Tests:** goal-based — `terraform fmt -check .` from `apps/infra-tf/` exits 0;
   `terraform validate` exits 0 after `terraform init -backend=false`;
-  `bootstrap.sh` contains `aws s3api create-bucket` and `terraform init`.
-**Approach:** Write `bootstrap.sh` that creates the S3 state bucket (if absent) and
-  runs `terraform init -backend-config=backend.hcl`. Run `terraform fmt -recursive .`
-  on all `.tf` files to canonicalize. Run `terraform validate` with `-backend=false`
-  to confirm schema validity without a real backend.
+  `bootstrap.sh` contains `aws sts get-caller-identity` guard and `aws s3api create-bucket`
+  and `terraform init`; `bootstrap.sh` is `chmod +x` (tracked in git as executable).
+**Approach:** Write `bootstrap.sh` that: (1) checks `aws sts get-caller-identity` and
+  exits with a helpful message if unauthenticated; (2) creates the S3 state bucket using
+  `aws s3api create-bucket` without `--create-bucket-configuration` for `us-east-1`
+  (any other region requires `--create-bucket-configuration LocationConstraint=<region>`
+  — the script must branch on region); (3) runs `terraform init -backend-config=backend.hcl`.
+  Run `terraform fmt -recursive .` on all `.tf` files to canonicalize. Run
+  `terraform validate` with `-backend=false` to confirm schema validity without a real backend.
+  Commit `bootstrap.sh` with executable bit (`git add --chmod=+x`).
 **Done when:** `terraform fmt -check` exits 0; `terraform validate -backend=false` exits 0;
-  `bootstrap.sh` exists and is `chmod +x`.
+  `bootstrap.sh` exists, is `chmod +x`, and contains the sts-identity guard.
 
 ## Rollout
 
