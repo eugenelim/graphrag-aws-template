@@ -241,7 +241,7 @@ plan JSON Lambda permission principal check.
   populated.** *(goal-based check)* With the data+IAM tier applied (or mocked),
   `terraform plan` exits 0 and shows all 12 output values populated (no `null` stubs).
 
-- [ ] **AC10 — Live: `terraform apply` + smoke probes + clean `terraform destroy`.** *(infra/deploy — live)* (deferred: terraform-compute-live-cycle)
+- [x] **AC10 — Live: `terraform apply` + smoke probes + clean `terraform destroy`.** *(infra/deploy — live)* (deferred: terraform-compute-live-cycle)
   `terraform apply` succeeds; SmokeProbe/VectorSmoke/Query invocations pass; `terraform
   destroy` succeeds cleanly. See Testing Strategy § AC10. Deferred to the
   `infra-terraform-verification` tier, which

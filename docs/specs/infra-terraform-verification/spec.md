@@ -1,6 +1,6 @@
 # Spec: infra-terraform-verification
 
-- **Status:** Implementing <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Shipped <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** [ADR-0010](../../adr/0010-terraform-migration.md) (Terraform migration —
@@ -177,7 +177,7 @@ Gates: `pytest apps/infra-tf/tests/` exits 0; `trivy config` exits 0;
   If Trivy ≥ 0.50 is not installed locally, the gate must pass in CI (document as
   a known-skip with a backlog entry if deferred from the local run).
 
-- [ ] **AC6 — Live: `probe.sh` exits 0 against a live `terraform apply` stack.** *(infra/deploy — live)*
+- [x] **AC6 — Live: `probe.sh` exits 0 against a live `terraform apply` stack.** *(infra/deploy — live)*
   After `terraform apply` completes:
   - Neptune cluster status = `available`.
   - OpenSearch domain `Processing = false`.
