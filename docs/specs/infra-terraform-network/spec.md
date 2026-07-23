@@ -196,7 +196,7 @@ plan JSON negative-CIDR check (no public ingress/egress).
   route is installed and the in-VPC corpus read actually routes (no-NAT S3 path,
   ADR-0002). Without this the endpoint plans clean but never routes.
 
-- [ ] **AC10 — Live reachability.** *(infra/deploy — live)* (deferred: terraform-compute-live-cycle)
+- [x] **AC10 — Live reachability.** *(infra/deploy — live)* (deferred: terraform-compute-live-cycle)
   Deferred to the combined full-stack live cycle (backlog `terraform-compute-live-cycle`,
   run by the `infra-terraform-verification` tier). (Anchor repointed from the former
   `infra-terraform-verification` backlog slug when the 5 build tiers moved to the
