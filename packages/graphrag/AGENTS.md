@@ -79,6 +79,9 @@ into `dev` for tests; **never** in the query Lambda bundle):
   C-extension) was declined to match the managed alternative's Louvain and avoid the build
   surface (ADR-0005).
 
+- **`rdflib`** (>=6.3) — RDF graph parsing, SPARQL queries, and the offline ontology graph (`graphrag.ontology`). Never imported by the query Lambda.
+- **`pyshacl`** (>=0.25,<0.27) — SHACL validation with `inference="none"` before Neptune LOAD (`graphrag.ontology.validate_graph`). Never imported by the query Lambda.
+
 **Slice 2 added no new runtime dependency** — the OpenSearch adapter signs with
 `botocore` + `urllib` exactly as the Neptune adapter does, and Titan v2 uses the
 `boto3` `bedrock-runtime` client. (`opensearch-py` was declined; it would add a
