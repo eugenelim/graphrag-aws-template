@@ -1,3 +1,9 @@
+> **Partially superseded — ini-002 in progress.**
+> The Terraform tier descriptions (scaffold → network → data+IAM → compute → verification)
+> remain accurate. The smoke probes and stack name are being updated for the SPARQL/MCP
+> architecture. See [`biz-ops-knowledge-graph/design.md`](biz-ops-knowledge-graph/design.md)
+> for the current infrastructure resource list and IAM roles.
+
 # Deployment & verification
 
 > How the demo's infrastructure is deployed, torn down, and **verified end-to-end**

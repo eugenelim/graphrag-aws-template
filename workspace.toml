@@ -41,6 +41,163 @@ shipped = [
 active = []
 queue = []
 
+["ini-002"]
+name      = "Business Operations Knowledge Graph"
+milestone = "M2 · RDF/OWL knowledge platform — ontology, SPARQL, MCP, git ingestion, OTEL"
+status    = "shaping"
+
+# Breaking pivot from the Kubernetes demo corpus to a generic business-operations
+# knowledge platform. Core changes: Neptune → SPARQL/RDF engine; OWL schema-only
+# ontology (Schema.org + SKOS, no reasoning); named-graph normative/descriptive
+# partition; MCP tool server (generic typed tools) as primary retrieval interface;
+# server-side multi-strategy router with transparent trace; AWS ADOT OTEL
+# observability; git commit-SHA delta ingestion replacing S3 content-hash delta.
+#
+# Supersedes: ADR-0001, ADR-0004, ADR-0008; specs graph-ingestion-resolution,
+#             opencypher-templates, text2opencypher-guarded, engine-routing,
+#             incremental-delta-reingest.
+# Archives:   docs/specs/graph-ingestion-resolution/ (Kubernetes-specific corpus).
+
+["ini-002".shape]
+# Design artifacts (ADRs, RFCs, specs) that must be agreed before implementation.
+# Wave ordering: each wave unblocks the next; items within a wave run in parallel.
+shipped = []
+active  = []
+queue   = [
+  # Wave 1 — pivot rationale; no dependencies
+  {slug = "rfc-0004-biz-ops-kg-pivot"},
+
+  # Wave 2 — core technology decisions; both depend on RFC-0004
+  {slug = "adr-0011-neptune-sparql",         needs = ["shape:rfc-0004-biz-ops-kg-pivot"]},
+  {slug = "adr-0012-owl-schema-only",        needs = ["shape:rfc-0004-biz-ops-kg-pivot"]},
+
+  # Wave 3 — data model, routing, ingestion decisions; depend on ADR-0011/0012
+  {slug = "spec-rdf-owl-ontology",           needs = ["shape:adr-0012-owl-schema-only"]},
+  {slug = "adr-0013-multi-strategy-routing", needs = ["shape:adr-0011-neptune-sparql", "shape:adr-0012-owl-schema-only"]},
+  {slug = "adr-0016-git-ingestion",          needs = ["shape:adr-0011-neptune-sparql", "shape:adr-0012-owl-schema-only"]},
+
+  # Wave 4 — feature specs; depend on wave 3 decisions
+  {slug = "adr-0014-mcp-tool-server",        needs = ["shape:adr-0013-multi-strategy-routing"]},
+  {slug = "spec-multi-strategy-routing",     needs = ["shape:adr-0013-multi-strategy-routing"]},
+  {slug = "spec-normative-partition",        needs = ["shape:adr-0012-owl-schema-only", "shape:adr-0013-multi-strategy-routing"]},
+  {slug = "spec-text2sparql-guarded",        needs = ["shape:adr-0011-neptune-sparql", "shape:adr-0012-owl-schema-only"]},
+  {slug = "spec-git-ingestion",              needs = ["shape:adr-0016-git-ingestion"]},
+  # Extraction + cleansing spec — format router, quality gates, PII flag+restrict, quarantine graph
+  {slug = "spec-ingestion-extraction-cleanse", needs = ["shape:adr-0016-git-ingestion", "shape:adr-0012-owl-schema-only"]},
+  # Provenance + citations spec — PROV-O model, Silver/Gold artifact metadata, MCP citation format
+  {slug = "spec-provenance-citations",       needs = ["shape:adr-0012-owl-schema-only", "shape:spec-rdf-owl-ontology"]},
+
+  # Wave 5 — interface + observability decisions; depend on ADR-0014
+  {slug = "adr-0015-otel-observability",     needs = ["shape:adr-0014-mcp-tool-server"]},
+  {slug = "spec-mcp-tool-server",            needs = ["shape:adr-0014-mcp-tool-server"]},
+
+  # Wave 6 — final observability spec; depends on ADR-0015
+  {slug = "spec-otel-observability",         needs = ["shape:adr-0015-otel-observability"]},
+]
+
+["ini-002".work]
+# Implementation tasks. No task starts until its named shape deps are agreed.
+# Wave ordering mirrors the shape queue; items within a wave run in parallel.
+shipped = []
+active  = []
+queue   = [
+  # Wave 1 — infrastructure + archival; unblocked once relevant shape items agreed
+  {path = "infra-tf/neptune-sparql-engine",           needs = ["shape:adr-0011-neptune-sparql"]},
+  {path = "docs/archive-k8s-specific-specs",          needs = ["shape:rfc-0004-biz-ops-kg-pivot"]},
+
+  # Wave 2 — parallel: SPARQL store migration + mock MCP server (independent)
+  # neptune-sparql-store gates all live retrieval work.
+  # mcp-mock-server needs only the spec; uses rdflib + in-memory stores — no AWS dep.
+  # Build both in parallel; mock unblocks local dev and CI before infra lands.
+  {path = "packages/graphrag/neptune-sparql-store",   needs = [
+    "work:infra-tf/neptune-sparql-engine",
+    "shape:spec-rdf-owl-ontology",
+  ]},
+  {path = "packages/graphrag/mcp-mock-server",        needs = [
+    "shape:spec-mcp-tool-server",
+  ]},
+
+  # Wave 3 — parallel live feature implementations; all gate on neptune-sparql-store
+  {path = "packages/graphrag/rdf-owl-ontology-loader", needs = [
+    "work:packages/graphrag/neptune-sparql-store",
+    "shape:spec-rdf-owl-ontology",
+    "shape:spec-provenance-citations",
+  ]},
+  # Extraction + cleansing Fargate task: format router (pandoc/docling/markitdown/Textract),
+  # Silver artifact write, PII flagging, quarantine graph, Gold artifact (chunks + PROV-O).
+  {path = "packages/graphrag/ingestion-extraction-cleanse", needs = [
+    "work:packages/graphrag/neptune-sparql-store",
+    "shape:spec-ingestion-extraction-cleanse",
+    "shape:spec-provenance-citations",
+  ]},
+  {path = "packages/graphrag/git-ingestion-pipeline", needs = [
+    "work:packages/graphrag/neptune-sparql-store",
+    "work:packages/graphrag/ingestion-extraction-cleanse",
+    "shape:spec-git-ingestion",
+  ]},
+  {path = "packages/graphrag/mcp-tool-server",        needs = [
+    "work:packages/graphrag/neptune-sparql-store",
+    "shape:spec-mcp-tool-server",
+    "work:packages/graphrag/mcp-mock-server",
+  ]},
+  # Local stdio→HTTPS proxy for AI IDE connections via API Gateway.
+  # Thin wrapper: translates stdio MCP frames to HTTPS + x-api-key header.
+  # No retrieval logic; same config schema as the mock server subprocess.
+  {path = "packages/graphrag/mcp-proxy",              needs = [
+    "shape:spec-mcp-tool-server",
+  ]},
+  {path = "packages/graphrag/text2sparql-guarded",    needs = [
+    "work:packages/graphrag/neptune-sparql-store",
+    "shape:spec-text2sparql-guarded",
+  ]},
+  {path = "packages/graphrag/normative-retrieval",    needs = [
+    "work:packages/graphrag/neptune-sparql-store",
+    "shape:spec-normative-partition",
+  ]},
+  {path = "packages/graphrag/sparql-templates",       needs = [
+    "work:packages/graphrag/neptune-sparql-store",
+    "shape:spec-multi-strategy-routing",
+  ]},
+  {path = "docs/supersede-adrs-0001-0004-0008",       needs = [
+    "shape:adr-0011-neptune-sparql",
+    "shape:spec-text2sparql-guarded",
+    "shape:spec-multi-strategy-routing",
+  ]},
+  {path = "docs/update-existing-specs",               needs = [
+    "work:packages/graphrag/neptune-sparql-store",
+    "shape:spec-rdf-owl-ontology",
+  ]},
+
+  # Wave 4 — integration, observability, final infra + docs; gate on mcp-tool-server
+  {path = "packages/graphrag/multi-strategy-router",  needs = [
+    "work:packages/graphrag/mcp-tool-server",
+    "shape:spec-multi-strategy-routing",
+  ]},
+  {path = "packages/graphrag/otel-instrumentation",   needs = [
+    "work:packages/graphrag/mcp-tool-server",
+    "shape:spec-otel-observability",
+  ]},
+  {path = "infra-tf/mcp-otel-lambda",                 needs = [
+    "work:packages/graphrag/mcp-tool-server",
+    "shape:adr-0015-otel-observability",
+  ]},
+  # API Gateway HTTP API in front of the MCP Lambda — human/IDE ingress path.
+  # Usage plan + API key auth (no SigV4 on the client side).
+  # Function URL retained separately for automation + AgentCore (SigV4/IAM).
+  {path = "infra-tf/api-gateway-mcp",                 needs = [
+    "work:packages/graphrag/mcp-tool-server",
+    "shape:spec-mcp-tool-server",
+  ]},
+  {path = "infra-tf/git-ingestion-trigger",           needs = [
+    "work:packages/graphrag/git-ingestion-pipeline",
+    "shape:spec-git-ingestion",
+  ]},
+  {path = "docs/update-architecture-docs",            needs = [
+    "work:packages/graphrag/mcp-tool-server",
+    "work:packages/graphrag/neptune-sparql-store",
+  ]},
+]
+
 [backlog]
 open = [
 

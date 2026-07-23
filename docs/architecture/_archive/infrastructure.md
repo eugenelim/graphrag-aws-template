@@ -1,3 +1,8 @@
+> **ARCHIVED — superseded by ini-002.**
+> Infrastructure details for the openCypher/CDK-era stack. Retained for historical
+> reference. Current infrastructure: physical view in
+> [`../biz-ops-knowledge-graph/design.md`](../biz-ops-knowledge-graph/design.md)
+
 # Infrastructure lens
 
 > **The rolled-up, current-state view of the demo's AWS infrastructure** — what is
