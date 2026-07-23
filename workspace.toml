@@ -62,10 +62,9 @@ status    = "shaping"
 # Design artifacts (ADRs, RFCs, specs) that must be agreed before implementation.
 # Wave ordering: each wave unblocks the next; items within a wave run in parallel.
 shipped = []
-active  = []
+active  = ["rfc-0004-biz-ops-kg-pivot"]
 queue   = [
-  # Wave 1 — pivot rationale; no dependencies
-  {slug = "rfc-0004-biz-ops-kg-pivot"},
+  # Wave 1 — pivot rationale; no dependencies (intent framed; RFC authoring in progress)
 
   # Wave 2 — core technology decisions; both depend on RFC-0004
   {slug = "adr-0011-neptune-sparql",         needs = ["shape:rfc-0004-biz-ops-kg-pivot"]},
