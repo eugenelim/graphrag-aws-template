@@ -1,6 +1,6 @@
 # Spec: spec-provenance-citations
 
-- **Status:** Draft <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Approved <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** [ADR-0012](../../adr/0012-owl-schema-only-and-named-graph-partition.md) (PROV-O is part of the W3C standard stack unlocked by SPARQL/RDF; `biz:gitCommitSHA` required by SHACL shapes); [ADR-0016](../../adr/0016-git-ingestion-commit-sha-delta-medallion.md) (Bronze/Silver/Gold artifact keying scheme; the commit SHA is the provenance anchor); [`spec-rdf-owl-ontology`](../rdf-owl-ontology/spec.md) (`biz:Chunk` has `prov:wasDerivedFrom` as a required SHACL property — this spec expands that to the full PROV-O model)

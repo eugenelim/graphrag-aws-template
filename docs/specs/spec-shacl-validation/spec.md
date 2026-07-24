@@ -1,6 +1,6 @@
 # Spec: spec-shacl-validation
 
-- **Status:** Draft <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Approved <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** [ADR-0012](../../adr/0012-owl-schema-only-and-named-graph-partition.md) (SHACL gate before Neptune LOAD; quarantine routing on violation; `biz:QuarantineRecord` structure); [ADR-0011](../../adr/0011-neptune-sparql-rdf-engine-and-text2sparql-guard.md) (`ingestion_task_role` WriteDataViaQuery for quarantine INSERT; quarantine graph is `urn:graph:quarantine`); [`spec-rdf-owl-ontology`](../rdf-owl-ontology/spec.md) (`graphrag.ontology.validate_graph()` is the underlying validation API this module wraps; already shipped)

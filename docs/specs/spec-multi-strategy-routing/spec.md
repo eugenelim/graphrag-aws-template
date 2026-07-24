@@ -1,6 +1,6 @@
 # Spec: spec-multi-strategy-routing
 
-- **Status:** Draft <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Approved <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** [ADR-0013](../../adr/0013-multi-strategy-server-side-routing.md) (multi-strategy routing — primary decision this spec implements); [ADR-0011](../../adr/0011-neptune-sparql-rdf-engine-and-text2sparql-guard.md) (SPARQL/RDF engine; untrusted-data guard carried forward); [ADR-0012](../../adr/0012-owl-schema-only-and-named-graph-partition.md) (named-graph partition the strategies operate over); [ADR-0014](../../adr/0014-mcp-tool-server.md) (MCP tool server whose `ask` tool this router powers)

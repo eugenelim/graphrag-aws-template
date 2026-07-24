@@ -104,7 +104,8 @@ shipped = [
   "packages/graphrag/neptune-sparql-store",
   "packages/graphrag/mcp-proxy",
   "packages/graphrag/mcp-mock-server",
-  "packages/graphrag/text2sparql-guarded",
+  "docs/update-existing-specs",
+  "packages/graphrag/sparql-templates",
 ]
 active  = []
 queue   = [
@@ -150,15 +151,9 @@ queue   = [
     "work:packages/graphrag/neptune-sparql-store",
     "shape:spec-normative-partition",
   ]},
-  {path = "packages/graphrag/sparql-templates",       needs = [
-    "work:packages/graphrag/neptune-sparql-store",
-    "shape:spec-multi-strategy-routing",
-  ]},
+  # packages/graphrag/sparql-templates — shipped 2026-07-24 (PR #75)
   # docs/supersede-adrs-0001-0004-0008 — shipped 2026-07-24 (PR #66)
-  {path = "docs/update-existing-specs",               needs = [
-    "work:packages/graphrag/neptune-sparql-store",
-    "shape:spec-rdf-owl-ontology",
-  ]},
+  # docs/update-existing-specs — shipped 2026-07-24 (PR #72)
 
   # Wave 4 — integration, observability, final infra + docs; gate on mcp-tool-server
   {path = "packages/graphrag/multi-strategy-router",  needs = [
