@@ -115,6 +115,7 @@ shipped = [
   "infra-tf/api-gateway-mcp",
   "packages/graphrag/multi-strategy-router",
   "packages/graphrag/ingestion-extraction-cleanse",
+  "infra-tf/mcp-otel-lambda",
   "packages/graphrag/otel-instrumentation",
 ]
 active  = []
@@ -142,9 +143,9 @@ queue   = [
   # docs/update-existing-specs — shipped 2026-07-24 (PR #72)
 
   # Wave 4 — integration, observability, final infra + docs; gate on mcp-tool-server
-  {path = "infra-tf/mcp-otel-lambda",                 needs = [
+  {path = "packages/graphrag/otel-instrumentation",   needs = [
     "work:packages/graphrag/mcp-tool-server",
-    "shape:adr-0015-otel-observability",
+    "shape:spec-otel-observability",
   ]},
   {path = "infra-tf/git-ingestion-trigger",           needs = [
     "work:packages/graphrag/git-ingestion-pipeline",
