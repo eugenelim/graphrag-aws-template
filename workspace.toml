@@ -5,7 +5,9 @@
 # ready items, blocked items, and active signals — or to initialise this file
 # with your first initiative and the full schema.
 #
-# Queue entries are strings (no deps) or inline objects {path/slug, needs}.
+# Queue entries are strings (no deps) or inline objects {path/slug, summary, needs}.
+# Every queue item carries a `summary` — a one-line description used as its label
+# in `workspace-status` output (see the workspace-status skill schema).
 # `needs` uses queue-prefix notation:
 #   "work:<path>"      — depends on a work queue entry
 #   "shape:<slug>"     — depends on a shaping queue entry
@@ -14,7 +16,7 @@
 #   "backlog:<slug>"   — depends on a repo-level [backlog] item
 #
 # The [backlog] section below tracks open work not yet scoped to an initiative.
-# Add items as: {slug = "my-deferred-item"}
+# Add items as: {slug = "my-deferred-item", summary = "one-line description"}
 # Run `workspace-status` to see all open backlog items.
 
 ["ini-001"]
@@ -44,7 +46,7 @@ queue = []
 ["ini-002"]
 name      = "Business Operations Knowledge Graph"
 milestone = "M2 · RDF/OWL knowledge platform — ontology, SPARQL, MCP, git ingestion, OTEL"
-status    = "complete"
+status    = "closed"
 
 # Breaking pivot from the Kubernetes demo corpus to a generic business-operations
 # knowledge platform. Core changes: Neptune → SPARQL/RDF engine; OWL schema-only
@@ -152,39 +154,39 @@ open = [
   # Mirror the opensearch urllib fix to neptune: catch HTTPError, return
   # HttpResponse(status, text) instead of raising — same unit test pattern.
   # store/neptune.py _UrllibClient.request.  Source: vector-rag-baseline spec.
-  {slug = "neptune-urllib-http-error-idempotency", source = "docs/specs/opensearch-create-index-idempotency/"},
+  {slug = "neptune-urllib-http-error-idempotency", summary = "Mirror the opensearch urllib HTTPError fix to the neptune store (return HttpResponse, don't raise)", source = "docs/specs/opensearch-create-index-idempotency/"},
 
   # Add errors="replace" to the 2xx decode path in _UrllibClient.request
   # (opensearch + neptune) so a malformed-body 200 doesn't bypass _request's
   # uniform RuntimeError.  One-liner; symmetric with the error-path fix.
-  {slug = "opensearch-urllib-success-decode", source = "docs/specs/opensearch-create-index-idempotency/"},
+  {slug = "opensearch-urllib-success-decode", summary = "Add errors=\"replace\" to the 2xx decode path in the urllib clients (opensearch + neptune)", source = "docs/specs/opensearch-create-index-idempotency/"},
 
   # Clamp k to a sane ceiling at both VectorStore.knn and
   # ParentChildStore.search adapters (cross-cutting one-liner; OWASP API4).
   # Doing only one adapter leaves the sibling inconsistent.
-  {slug = "bound-knn-k-at-vector-adapters", source = "docs/specs/parent-child-retrieval/"},
+  {slug = "bound-knn-k-at-vector-adapters", summary = "Clamp k to a sane ceiling at both VectorStore.knn and ParentChildStore.search adapters (OWASP API4)", source = "docs/specs/parent-child-retrieval/"},
 
   # Narrow cdk-nag IAM5/IAM4 suppressions from stack-level to specific
   # role/policy constructs via add_resource_suppressions — defence-in-depth
   # gap today; present grants are legitimately scoped.
   # apps/infra/stacks/graphrag_stack.py add_nag_suppressions.
-  {slug = "security-hardening-followups-nag-iam-resource-scope", source = "docs/specs/security-hardening-followups/"},
+  {slug = "security-hardening-followups-nag-iam-resource-scope", summary = "Narrow cdk-nag IAM5/IAM4 suppressions from stack-level to specific role/policy constructs", source = "docs/specs/security-hardening-followups/"},
 
   # Include typed edges (src → kind → dst) from the hop trace in the context
   # synthesize() builds for the Bedrock Claude call — hybrid_query already has
   # the trace with edge kinds; this stops Claude hedging on the ownership chain.
   # Verify: re-run live entity-led query, confirm KEP-1880/2086 named as owned.
-  {slug = "hybrid-orchestration-synthesis-edges", source = "docs/specs/hybrid-orchestration/"},
+  {slug = "hybrid-orchestration-synthesis-edges", summary = "Include typed hop-trace edges (src → kind → dst) in the context synthesize() builds for the Bedrock call", source = "docs/specs/hybrid-orchestration/"},
 
   # Add a debug-level log line on create_index's tolerated-4xx branch so the
   # already-exists tolerance is observable.  Only when the store grows logging;
   # no change to the error contract.
-  {slug = "opensearch-urllib-no-trace-on-tolerated-400", source = "docs/specs/opensearch-create-index-idempotency/"},
+  {slug = "opensearch-urllib-no-trace-on-tolerated-400", summary = "Add a debug-level log line on create_index's tolerated-4xx branch so the already-exists tolerance is observable", source = "docs/specs/opensearch-create-index-idempotency/"},
 
   # Extract a shared module-level _signed_opencypher helper in store/neptune.py
   # and wire both NeptuneGraphStore and NeptuneCommunityStore to it — stops
   # hardening changes (timeout, header, credential) from needing to land twice.
-  {slug = "share-signed-opencypher-run-helper", source = "docs/specs/global-community-summary/"},
+  {slug = "share-signed-opencypher-run-helper", summary = "Extract a shared module-level _signed_opencypher helper in neptune.py; wire both graph + community stores to it", source = "docs/specs/global-community-summary/"},
 
   # ── larger implementation work (code-only, no live deploy needed) ─────────
 
@@ -192,20 +194,20 @@ open = [
   # once and thread docs through ingest(), _vector_dual_write(), and
   # build_manifest() — currently parses three times.  Needs per-doc prop
   # provenance or singly-sourced KEP title to do cleanly.
-  {slug = "incremental-delta-full-mode-triple-parse", source = "docs/specs/incremental-delta-reingest/"},
+  {slug = "incremental-delta-full-mode-triple-parse", summary = "Refactor MODE=full/rebuild to parse the corpus once and thread docs through ingest/dual-write/manifest", source = "docs/specs/incremental-delta-reingest/"},
 
   # Route MODE=full/rebuild through ingest_staged (Silver-cached Bronze/Silver/
   # Gold driver) while preserving: IngestReport return, parent-child one-embed-
   # pass, community summaries, schema-extraction flag/trace contract.  Rewrite
   # test_entrypoint.py expectations.  Grounding caveat: when delta is wired,
   # ground against store-merged graph (store ∪ scratch), not scratch alone.
-  {slug = "medallion-fullrebuild-staging", source = "docs/specs/medallion-staging/"},
+  {slug = "medallion-fullrebuild-staging", summary = "Route MODE=full/rebuild through ingest_staged while preserving report/parent-child/community/trace contracts", source = "docs/specs/medallion-staging/"},
 
   # Recompute (or fail-closed clear) Community nodes in MODE=delta when any
   # member entity's visibility label changes — today delta leaves Community.tier
   # stale, producing a down-classification leak the query-time gate can't catch.
   # Must handle both directions: stale-low (leak) and stale-high (availability).
-  {slug = "global-community-summary-delta-tier-refresh", source = "docs/specs/global-community-summary/"},
+  {slug = "global-community-summary-delta-tier-refresh", summary = "Recompute (or fail-closed clear) Community tier in MODE=delta when a member entity's visibility changes", source = "docs/specs/global-community-summary/"},
 
   # ── live eval / QA (needs a live AWS deploy cycle) ────────────────────────
 
@@ -213,24 +215,24 @@ open = [
   # task once; verify cdk destroy leaves no billable resource; confirm Budgets
   # alarm fires.  Blocked on a maintainer running deploy/destroy on a clean
   # account.
-  {slug = "graph-ingestion-resolution-live-deploy", source = "docs/specs/graph-ingestion-resolution/"},
+  {slug = "graph-ingestion-resolution-live-deploy", summary = "AC9 live: deploy slice-1, run ingestion once, verify clean destroy + Budgets alarm fires", source = "docs/specs/graph-ingestion-resolution/"},
 
   # AC5 follow-on: run resolver eval over full kubernetes/community +
   # kubernetes/enhancements clone (not the pinned CI excerpts) and record
   # precision/recall on the complete shared-entity set.
-  {slug = "graph-ingestion-resolution-full-corpus-eval", source = "docs/specs/graph-ingestion-resolution/"},
+  {slug = "graph-ingestion-resolution-full-corpus-eval", summary = "AC5: run resolver eval over the full k8s community+enhancements clone; record precision/recall", source = "docs/specs/graph-ingestion-resolution/"},
 
   # Full end-to-end re-confirm of the opensearch idempotency fix on a live
   # deploy: deploy → slice-2 vector smoke probe (leaves index) → Fargate ingest
   # completes past create_index → hybrid-query returns non-empty vector seeds
   # → teardown.  Run when a deploy cycle is otherwise warranted.
-  {slug = "opensearch-create-index-idempotency-live-confirm", source = "docs/specs/opensearch-create-index-idempotency/"},
+  {slug = "opensearch-create-index-idempotency-live-confirm", summary = "End-to-end live re-confirm of the opensearch idempotency fix (deploy → vector smoke → ingest → hybrid query → teardown)", source = "docs/specs/opensearch-create-index-idempotency/"},
 
   # AC9 live-eval: deploy on a clean account, confirm ingest + hybrid Function-
   # URL query + both smoke probes succeed under allow_all_outbound=False +
   # explicit per-SG egress; capture deployed SG-egress + IAM posture into
   # docs/architecture/security.md; cdk destroy to zero billable resources.
-  {slug = "security-hardening-followups-live-eval", source = "docs/specs/security-hardening-followups/"},
+  {slug = "security-hardening-followups-live-eval", summary = "AC9 live-eval: confirm ingest + hybrid query + smoke under per-SG egress; capture SG/IAM posture to security.md", source = "docs/specs/security-hardening-followups/"},
 
   # ── Terraform migration (CDK → Terraform) ─────────────────────────────────
   # All 5 build tiers shipped (ini-001). Migration-specific deferred items shipped:
@@ -245,31 +247,21 @@ open = [
   # mcp_lambda_role read-only grant (ReadDataViaQuery only) actually blocks a
   # generated/injected partition-destroying mutation. Blocker-1 assumption from
   # the RFC security review; verify against AWS docs during ADR-0011/text2sparql.
-  {slug = "neptune-sparql-dropgraph-iam-action-verify", source = "docs/rfc/0004-biz-ops-kg-pivot.md"},
+  {slug = "neptune-sparql-dropgraph-iam-action-verify", summary = "Verify the Neptune SPARQL IAM data-action matrix gates DROP GRAPH under the read-only mcp_lambda_role grant", source = "docs/rfc/0004-biz-ops-kg-pivot.md"},
 
   # Budgets alarm footgun: the biz-ops standing floor (~$226/mo = Neptune min
   # 1 NCU ~$110 + OpenSearch ~$26 + interface VPC endpoints ~$90) EXCEEDS 80% of
   # the $250/mo alarm ($200), so the alarm fires at idle on day one. Raise the
   # Budgets threshold above the standing floor (or lower the floor) in the infra
   # follow-on. Fix in spec-git-ingestion / infra-tf. design.md:810,884.
-  {slug = "biz-ops-budgets-threshold-above-standing-floor", source = "docs/rfc/0004-biz-ops-kg-pivot.md"},
+  {slug = "biz-ops-budgets-threshold-above-standing-floor", summary = "Raise the Budgets threshold above the ~$226/mo biz-ops standing floor so the alarm doesn't fire at idle", source = "docs/rfc/0004-biz-ops-kg-pivot.md"},
 
   # Restate the scoped-principal Function URL invoke grant for the new AgentCore
   # principal in design.md Mode 3: the invoke grant must stay scoped to
   # enumerated principal ARNs (automation role + AgentCore execution role),
   # never Principal:*. Carried-forward control from security.md:40; currently
   # only AuthType=AWS_IAM is restated. design.md:332,398-403,880.
-  {slug = "biz-ops-functionurl-scoped-principal-restate", source = "docs/rfc/0004-biz-ops-kg-pivot.md"},
-
-  # docs/product/roadmap.md predates the ini-002 pivot (Last updated 2026-06-23):
-  # its Now/Next/Later sections describe the superseded K8s-demo slices and it has
-  # no ini-002 section — so the OTEL shaping ship (and every prior ini-002 shape
-  # artifact) is not reflected there. Reconcile: add an ini-002 section covering the
-  # now-empty shaping queue + the remaining work queue, and move/retire the superseded
-  # demo slices. Do when the ini-002 work queue starts landing, so the roadmap tracks
-  # real in-flight work rather than a single doc line. This is the roadmap companion
-  # to the workspace.toml queue.
-  {slug = "roadmap-reconcile-ini-002-pivot", source = "docs/specs/spec-otel-observability/"},
+  {slug = "biz-ops-functionurl-scoped-principal-restate", summary = "Restate the scoped-principal Function URL invoke grant for the new AgentCore principal in design.md Mode 3", source = "docs/rfc/0004-biz-ops-kg-pivot.md"},
 
   # OTEL trace/metric export "drops silently" when the OTLP endpoint is unreachable
   # (correct for offline CI). In production the same silence means a broken ADOT
@@ -277,14 +269,14 @@ open = [
   # telemetry (separate from the security audit log). Add a CloudWatch alarm on the
   # ADOT collector's export-failure metric. Owner: infra-tf/mcp-otel-lambda. Surfaced
   # by the spec-otel-observability security review (Nit 6).
-  {slug = "otel-collector-export-failure-alarm", source = "docs/specs/spec-otel-observability/"},
+  {slug = "otel-collector-export-failure-alarm", summary = "Add a CloudWatch alarm on the ADOT collector's export-failure metric (silent OTLP-drop blind spot)", source = "docs/specs/spec-otel-observability/"},
 
   # Neptune CloudWatch audit-log export for detective control (neptune-sparql-engine AC-DEFER-2).
   # No `enable_cloudwatch_logs_exports = ["audit"]` means an escaped SPARQL Update mutation
   # (e.g. DROP GRAPH) under a future misconfigured grant would be non-repudiable. Accepted for
   # the ephemeral teardown-first demo (ADR-0002); revisit in a regulated deployment.
   # Owner: apps/infra-tf/neptune.tf. Surfaced by security review of neptune-sparql-engine.
-  {slug = "neptune-audit-log-export", source = "docs/specs/neptune-sparql-engine/"},
+  {slug = "neptune-audit-log-export", summary = "Enable Neptune CloudWatch audit-log export for a detective control on escaped SPARQL Update mutations", source = "docs/specs/neptune-sparql-engine/"},
 
   # ── text2sparql-guarded deferred ACs ───────────────────────────────────────
 
@@ -292,7 +284,7 @@ open = [
   # credentialed SPARQL POST of DROP GRAPH <urn:graph:normative> to the Neptune
   # /sparql endpoint returns IAM AccessDeniedException (ADR-0011 Confirmation gate).
   # Tagged @pytest.mark.live_aws; skipped in offline CI.
-  {slug = "text2sparql-live-smoke-iam-backstop", source = "docs/specs/spec-text2sparql-guarded/"},
+  {slug = "text2sparql-live-smoke-iam-backstop", summary = "AC8 live-smoke: confirm a mcp_lambda_role DROP GRAPH SPARQL POST returns IAM AccessDeniedException", source = "docs/specs/spec-text2sparql-guarded/"},
 
   # ── graphrag.mcp deferred ACs (PR #69) ────────────────────────────────────
   # ac2-subprocess-transport — shipped PR #74 (test_mock_subprocess.py)
@@ -301,6 +293,6 @@ open = [
   # AC3 deferred: API Gateway round-trip parity — same 6 queries against mock
   # (_mock.py in-process) and Mangum-wrapped Lambda handler (synthetic APIGW event).
   # Blocked until infra-tf/api-gateway-mcp lands.
-  {slug = "ac3-api-gw-round-trip", source = "docs/specs/spec-mcp-tool-server/"},
+  {slug = "ac3-api-gw-round-trip", summary = "AC3: API Gateway round-trip parity — same 6 queries against the in-process mock and the Mangum-wrapped Lambda", source = "docs/specs/spec-mcp-tool-server/"},
 
 ]
