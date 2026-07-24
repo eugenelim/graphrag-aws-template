@@ -68,7 +68,24 @@ No AWS credentials are needed for T1–T4. The `ask` timing gate (T4) uses wall-
 - **Fixed placeholder for mock `ask` + `summarize`.** The mock returns a fixed string `"[MOCK] No live synthesis — mock server returned this placeholder."` — deterministic and never calls Bedrock. Question/topic text is NOT echoed into the response field. The spec §Boundaries Never-do explicitly forbids "Return question text in any field of `AskResponse`, `PolicyResult`, or any other response schema" — the mock complies by using a static placeholder. Citations are populated from the vector store search results (seeded from the fixture corpus).
 - **`query` named templates registry.** A `dict[str, str]` of template name → SPARQL SELECT string in `_tools.py` (or `_templates.py`). For ini-002: one template `"policies_by_domain"`. Unknown template names return `QueryResult(rows=[], row_count=0, error="template not found")` without exception.
 - **`hops` max-2 guard.** `search_graph(uri, hops)` clamps `hops = min(hops, 2)` before the graph traversal. A `hops > 2` request does not raise — it is silently clamped. This is a cost guard, not a protocol error.
-- **`get_policies` uses `NormativeRetriever` in production, direct SPARQL in mock.** In the mock, `get_policies` issues a SPARQL `SELECT * WHERE { GRAPH <urn:graph:normative> { ?doc a ?type . } }` directly against the fixture rdflib store — no router, no Bedrock. In production, the `NormativeRetriever` (`spec-normative-partition`) is called directly (bypassing the router per ADR-0013).
+- **`get_policies` uses direct SPARQL in both mock and production (interim).** In the mock, `get_policies` issues a SPARQL SELECT directly against the fixture rdflib store — no router, no Bedrock. In production (ini-002 interim), `NeptuneSparqlStore.sparql_select()` is called directly with a domain-filtered template, bypassing the `NormativeRetriever` (spec-normative-partition) which has not yet landed. When `spec-normative-partition` ships, production `get_policies` will delegate to `NormativeRetriever` per ADR-0013.
+
+### Production wiring (added in mcp-tool-server PR)
+
+The `_lambda.py` handler routes initialisation based on the ``NEPTUNE_SPARQL_ENDPOINT`` env var:
+- **Set** → `init_production()` (NeptuneSparqlStore + OpenSearch/MemoryVector fallback + Bedrock client)
+- **Unset** → `init_mock()` with a WARNING log (fixture-backed mock mode)
+
+`init_production()` env-var interface:
+- ``NEPTUNE_SPARQL_ENDPOINT`` (required): HTTPS URL of the Neptune SPARQL endpoint.
+- ``OPENSEARCH_ENDPOINT`` (optional): HTTPS URL of the OpenSearch domain; falls back to ``MemoryVectorStore``.
+- ``AWS_REGION`` (optional): AWS region; defaults to ``us-east-1``.
+
+Production tool dispatch:
+- `ask()`, `search()`, `summarize()` — use `_ProductionStore.vector` and `.embedder` (same interface as mock).
+- `get_policies()`, `search_graph()`, `query()` — dispatch via `NeptuneSparqlStore.sparql_select()`.
+- `ask()` answer text uses ``[RuleQueryRouter]`` placeholder until `graphrag.routing` ships.
+- `search()` type filter is skipped in production (no pre-populated URI metadata); unfiltered results returned.
 
 ### Data & schema
 
@@ -232,3 +249,4 @@ packages/graphrag/tests/fixtures/
 
 - 2026-07-23: initial plan
 - 2026-07-23: post-adversarial-review corrections — remove fixture_vectors.json (not generated), rename corpus to biz_ops_fixture.ttl, update design decision (mock returns fixed placeholder, not echoed question), fix fixture description (skos:Concept not biz:OrgRole), update domain filter AC, note Citation/StrategyTrace local stubs
+- 2026-07-23: mcp-tool-server production wiring — added _production.py, _ProductionStore, production dispatch in tools, updated _lambda.py routing; design decision for get_policies updated (direct SPARQL, not NormativeRetriever, until spec-normative-partition lands); production env-var contract documented
