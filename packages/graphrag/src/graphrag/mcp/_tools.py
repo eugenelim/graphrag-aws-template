@@ -23,6 +23,7 @@ from typing import Any
 
 import rdflib
 from mcp.server.fastmcp import FastMCP
+from rdflib import Literal, URIRef
 
 from graphrag.mcp._schemas import (
     AskResponse,
@@ -50,29 +51,22 @@ mcp: FastMCP = FastMCP("biz-ops-knowledge-platform")
 _POLICIES_BY_DOMAIN_SPARQL = """
 PREFIX biz:    <https://graphrag-aws.demo/biz-ops/ontology#>
 PREFIX schema: <https://schema.org/>
-SELECT ?policy ?name ?effectiveDate ?scope WHERE {{
-    GRAPH <urn:graph:normative> {{
+SELECT ?policy ?name ?effectiveDate ?scope WHERE {
+    GRAPH <urn:graph:normative> {
         ?policy a biz:Policy ;
                 schema:name ?name ;
                 biz:scope ?scope .
-        OPTIONAL {{ ?policy biz:effectiveDate ?effectiveDate . }}
-        FILTER(?scope = "{domain}")
-    }}
-}}
+        OPTIONAL { ?policy biz:effectiveDate ?effectiveDate . }
+        FILTER(?scope = ?domain)
+    }
+}
 """
 
 
 def _run_policies_by_domain(graph: Any, params: dict[str, Any]) -> list[dict[str, str]]:
     domain = str(params.get("domain", ""))
-    # Security note: ``domain`` is string-interpolated into SPARQL.  This is
-    # acceptable ONLY in the mock server (offline CI; no user-supplied input
-    # reaches this function directly — tool parameters are the MCP client's
-    # ``params`` dict which is caller-controlled).  Production templates must
-    # use rdflib's parameterised query API (``initBindings``) to prevent
-    # injection.  Tracked as backlog item: use-rdflib-initbindings.
-    sparql = _POLICIES_BY_DOMAIN_SPARQL.format(domain=domain)
     rows: list[dict[str, str]] = []
-    for row in graph.query(sparql):
+    for row in graph.query(_POLICIES_BY_DOMAIN_SPARQL, initBindings={"domain": Literal(domain)}):
         rows.append(
             {
                 "policy": str(row.policy),
@@ -230,37 +224,7 @@ async def search_graph(uri: str, hops: int = 1) -> SubgraphResult:
     for _ in range(hops):
         next_frontier: list[str] = []
         for root in frontier:
-            # Security note: ``root`` is a URI interpolated into SPARQL angle-bracket
-            # notation.  Acceptable ONLY in this mock/offline path — no user input
-            # reaches ``root`` without going through the ``uri`` parameter which is
-            # caller-controlled (same caveat as ``_run_policies_by_domain``).
-            # Production code should use rdflib ``initBindings`` to prevent injection.
-            #
-            # GRAPH ?g wrapper is required: the fixture corpus uses named graphs
-            # (TriG format loaded into rdflib.Dataset without default_union=True),
-            # so the default graph is empty and unqualified triple patterns return
-            # zero results.  Wrapping in GRAPH ?g queries all named graphs.
-            sparql = f"""
-PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-SELECT ?s ?p ?o ?type ?label WHERE {{
-    GRAPH ?g {{
-        {{
-            BIND(<{root}> AS ?s)
-            <{root}> ?p ?o .
-            OPTIONAL {{ <{root}> a ?type . }}
-            OPTIONAL {{ <{root}> rdfs:label ?label . }}
-        }}
-        UNION
-        {{
-            ?s ?p <{root}> .
-            BIND(<{root}> AS ?o)
-            OPTIONAL {{ ?s a ?type . }}
-            OPTIONAL {{ ?s rdfs:label ?label . }}
-        }}
-    }}
-}}
-"""
-            for row in store.graph.query(sparql):
+            for row in store.graph.query(_SEARCH_GRAPH_SPARQL, initBindings={"root": URIRef(root)}):
                 s_str = str(row.s)
                 o_str = str(row.o)
                 p_str = str(row.p)
@@ -320,6 +284,31 @@ SELECT ?policy ?name ?effectiveDate ?scope WHERE {
                 schema:name ?name .
         OPTIONAL { ?policy biz:effectiveDate ?effectiveDate . }
         OPTIONAL { ?policy biz:scope ?scope . }
+    }
+}
+"""
+
+# GRAPH ?g wrapper is required: the fixture corpus uses named graphs (TriG format loaded
+# into rdflib.Dataset without default_union=True), so the default graph is empty and
+# unqualified triple patterns return zero results.  Wrapping in GRAPH ?g queries all
+# named graphs.  Uses initBindings to pass the root URI safely (no f-string injection).
+_SEARCH_GRAPH_SPARQL = """
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?s ?p ?o ?type ?label WHERE {
+    GRAPH ?g {
+        {
+            BIND(?root AS ?s)
+            ?root ?p ?o .
+            OPTIONAL { ?root a ?type . }
+            OPTIONAL { ?root rdfs:label ?label . }
+        }
+        UNION
+        {
+            ?s ?p ?root .
+            BIND(?root AS ?o)
+            OPTIONAL { ?s a ?type . }
+            OPTIONAL { ?s rdfs:label ?label . }
+        }
     }
 }
 """

@@ -74,6 +74,9 @@ graphrag = ["aliases.yaml", "labels.yaml", "py.typed", "showcase/queries.yaml", 
 [tool.pytest.ini_options]
 testpaths = ["packages/graphrag/tests", "apps/ingestion/tests", "apps/infra/tests"]
 pythonpath = ["packages/graphrag/src", "apps", "apps/infra"]
+markers = [
+    "timeout: marks tests with a timeout in seconds (requires pytest-timeout to enforce; harmless without it)",
+]
 
 [tool.ruff]
 line-length = 100
