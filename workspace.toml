@@ -112,6 +112,7 @@ shipped = [
   "packages/graphrag/normative-retrieval",
   "packages/graphrag/rdf-owl-ontology-loader",
   "docs/update-architecture-docs",
+  "infra-tf/api-gateway-mcp",
   "packages/graphrag/multi-strategy-router",
 ]
 active  = []
@@ -152,13 +153,6 @@ queue   = [
   {path = "infra-tf/mcp-otel-lambda",                 needs = [
     "work:packages/graphrag/mcp-tool-server",
     "shape:adr-0015-otel-observability",
-  ]},
-  # API Gateway HTTP API in front of the MCP Lambda — human/IDE ingress path.
-  # Usage plan + API key auth (no SigV4 on the client side).
-  # Function URL retained separately for automation + AgentCore (SigV4/IAM).
-  {path = "infra-tf/api-gateway-mcp",                 needs = [
-    "work:packages/graphrag/mcp-tool-server",
-    "shape:spec-mcp-tool-server",
   ]},
   {path = "infra-tf/git-ingestion-trigger",           needs = [
     "work:packages/graphrag/git-ingestion-pipeline",
