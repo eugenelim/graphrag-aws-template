@@ -1,7 +1,7 @@
 # Plan: spec-otel-observability
 
 - **Spec:** [`spec.md`](spec.md)
-- **Status:** Drafting <!-- Drafting | Executing | Done -->
+- **Status:** Executing <!-- Drafting | Executing | Done -->
 
 > **Plan contract:** this is the implementation strategy. Unlike the spec, this
 > document is allowed to change as you learn. When it changes substantially
@@ -16,7 +16,7 @@ The riskiest part is the content filter's mechanism. ADR-0015 item 6 says "SpanP
 
 The second risk is the export-path ownership split. **In Lambda the ADOT layer owns the global `TracerProvider` and the OTLP→collector pipeline** (installed by `AWS_LAMBDA_EXEC_WRAPPER` before the handler runs); a module `set_tracer_provider()` is a no-op, so the module's `ContentCaptureFilterExporter` is not on the Lambda export path. Content-capture enforcement in Lambda is therefore the ADOT collector's attribute processor (owned by `infra-tf/mcp-otel-lambda`, verified by spec AC8). The module registers and filters exporters only where it owns the provider — tests, local/console, and the ingestion task — and there `configure_observability()` must not raise when no OTLP endpoint is reachable and must import without boto3. No AWS credentials are needed for T1–T4; the live X-Ray trace (spec AC8) is a deploy-time gate owned jointly with `infra-tf/mcp-otel-lambda`.
 
-This is a spec-authoring deliverable for the ini-002 shape queue: the tasks below define the contract for the `packages/graphrag/otel-instrumentation` work item, which is built later via `work-loop`. No `graphrag.observability` code lands in this PR.
+This plan has been executed. The `graphrag.observability` module is implemented at `packages/graphrag/src/graphrag/observability/` with 27 TDD tests covering AC1-AC6 and AC9 offline. AC7 (infra-tf/mcp-otel-lambda plan assertion) and AC8 (live X-Ray trace) are deferred to the infra work item.
 
 ## Constraints
 
@@ -38,7 +38,7 @@ This is a spec-authoring deliverable for the ini-002 shape queue: the tasks belo
 - `from graphrag.observability import ContentCaptureFilterExporter, DENY_SET, AUTO_CAPTURE_KEYS` succeeds without boto3 installed; `DENY_SET == {"question.text","query.text","sparql.query","document.content","chunk.text"}`.
 
 **T2 (EMF metrics):**
-- `emit_tool_metrics(tool_name="ask", duration_ms=12.0)` → captured EMF JSON contains `mcp.tool.duration_ms` (unit `Milliseconds`, dimension `tool_name="ask"`) under the configured namespace.
+- `emit_tool_metrics(tool_name="ask", duration_ms=12.0)` → captured EMF JSON contains `mcp.tool.duration_ms` (unit `Milliseconds`, dimension `tool_name="ask"`) under namespace `"graphrag/mcp"`.
 - `emit_tool_metrics(tool_name="ask", duration_ms=12.0, exc=TimeoutError("what are the HR policies?"))` additionally emits `mcp.tool.error_count` (dimensions `tool_name`, `error_type`), where `error_type == "TimeoutError"` (the class name) and the message text appears in no dimension value — bounded enum, no content leak, no cardinality blow-up.
 - With no EMF sink configured (offline), `emit_tool_metrics` falls back to a plain log line and does not raise.
 
@@ -82,10 +82,12 @@ _STRIP = DENY_SET | AUTO_CAPTURE_KEYS
 class ContentCaptureFilterExporter(SpanExporter):
     def __init__(self, inner: SpanExporter) -> None: ...
     def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
-        filtered = [self._strip(s) for s in spans]   # drop every _STRIP attribute key
+        filtered = [self._strip(s) for s in spans]   # drop _STRIP keys from attrs AND event attrs
         return self._inner.export(filtered)
     def shutdown(self) -> None: ...
     def force_flush(self, timeout_millis: int = 30_000) -> bool: ...
+    # _strip rebuilds ReadableSpan with filtered top-level attrs + filtered event attrs
+    # (ReadableSpan constructor stable in OTEL 1.x; version-confirmed at T1)
 ```
 
 ```python
@@ -164,7 +166,7 @@ packages/graphrag/tests/
 - `packages/graphrag/tests/observability/test_content_filter.py`
 - `packages/graphrag/tests/observability/test_bootstrap_offline.py`
 
-**Tests (TDD):** `DENY_SET` ∪ `AUTO_CAPTURE_KEYS` stripped (all-keys + per-key), benign auto keys (`db.system`, `http.status_code`) survive, boto3-free import, `DENY_SET` value pinned, offline bootstrap raises nothing + wraps every module-registered exporter in the filter + configures `boto3`/`urllib3` capture-off.
+**Tests (TDD):** `DENY_SET` ∪ `AUTO_CAPTURE_KEYS` stripped (all-keys + per-key), benign auto keys (`db.system`, `http.status_code`) survive, boto3-free import, `DENY_SET` value pinned, offline bootstrap raises nothing + wraps every module-registered exporter in the filter. Note: in test context no real boto3/urllib3 auto-instrumentation fires (ADOT layer absent); capture-off is an env-var control owned by infra-tf/mcp-otel-lambda (AC7). T1 verifies the bootstrap does not raise and the filter is applied.
 
 **Done when:** filter + bootstrap tests pass; `python -c "from graphrag.observability import ContentCaptureFilterExporter, DENY_SET, AUTO_CAPTURE_KEYS"` exits 0 without boto3; `ruff check` + `mypy` clean.
 
@@ -205,10 +207,11 @@ packages/graphrag/tests/
 **Touches:**
 - `packages/graphrag/src/graphrag/observability/_tracing.py`
 - `packages/graphrag/tests/observability/test_tracing_legs.py`
+- `packages/graphrag/src/graphrag/mcp/__init__.py` (wire `configure_observability("graphrag-mcp")` call)
 
-**Tests (TDD):** `retrieval.hybrid` / `SpanKind.CLIENT`; `routing.*` / `SpanKind.INTERNAL`; deny-set stripped on leg spans. **Goal-based:** `python -m graphrag.mcp --mock` with observability active starts, runs six tools, exits 0, no export error.
+**Tests (TDD):** `retrieval.hybrid` / `SpanKind.CLIENT`; `routing.*` / `SpanKind.INTERNAL`; deny-set stripped on leg spans. **Goal-based:** with `configure_observability("graphrag-mcp")` wired in `graphrag.mcp.__init__` and no AWS credentials set, `init_mock()` + `mcp.call_tool` for each of six tools completes with no span-export ERROR (uses the in-process pattern from `test_mock_server.py`; no blocking subprocess).
 
-**Done when:** tracing tests pass; the mock offline-isolation gate is green; full suite green; `ruff check` + `mypy` clean.
+**Done when:** tracing tests pass; `configure_observability` is wired in `graphrag.mcp.__init__`; the offline-isolation gate (in-process mock server, no subprocess) is green; full suite green; `ruff check` + `mypy` clean.
 
 ## Rollout
 

@@ -116,6 +116,7 @@ shipped = [
   "packages/graphrag/multi-strategy-router",
   "packages/graphrag/ingestion-extraction-cleanse",
   "infra-tf/mcp-otel-lambda",
+  "packages/graphrag/otel-instrumentation",
 ]
 active  = []
 queue   = [
