@@ -75,3 +75,22 @@ variable "user" {
   description = "User tag value (owner of the deployment)."
   default     = "unspecified"
 }
+
+# ── OTEL / ADOT variables ──────────────────────────────────────────────────────
+
+variable "adot_layer_arn" {
+  type        = string
+  description = <<-DESC
+    AWS ADOT Lambda Python 3.12 layer ARN for the deployment region.
+    Find the per-region ARN at: https://aws-otel.github.io/docs/getting-started/lambda/lambda-python
+    Format: arn:aws:lambda:<region>:901920570463:layer:aws-otel-python-amd64-ver-<X>-<Y>-<Z>:<build>
+    Default: us-east-1 ADOT 1.24.0 (Python 3.12 amd64). Update when a new ADOT version ships;
+    there is no auto-update mechanism (ADR-0015 Negative consequences).
+  DESC
+  default     = "arn:aws:lambda:us-east-1:901920570463:layer:aws-otel-python-amd64-ver-1-24-0:1"
+
+  validation {
+    condition     = can(regex("^arn:aws:lambda:[a-z0-9-]+:[0-9]{12}:layer:[a-zA-Z0-9_-]+:[0-9]+$", var.adot_layer_arn))
+    error_message = "adot_layer_arn must be a valid Lambda layer ARN (arn:aws:lambda:<region>:<account>:layer:<name>:<version>)."
+  }
+}

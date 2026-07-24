@@ -73,7 +73,7 @@ graphrag = "graphrag.cli:main"
 where = ["packages/graphrag/src"]
 
 [tool.setuptools.package-data]
-graphrag = ["aliases.yaml", "labels.yaml", "py.typed", "showcase/queries.yaml", "ontology/*.ttl"]
+graphrag = ["aliases.yaml", "labels.yaml", "py.typed", "showcase/queries.yaml", "ontology/*.ttl", "otel-collector-config.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["packages/graphrag/tests", "apps/ingestion/tests", "apps/infra/tests"]

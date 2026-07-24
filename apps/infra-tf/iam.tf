@@ -93,6 +93,18 @@ locals {
     }]
   })
 
+  # ADR-0011 parallel for OpenSearch: search-only read path (GET/POST/HEAD).
+  # MCP Lambda uses this to avoid granting PUT/DELETE on the vector index — symmetric
+  # to the neptune_readonly_policy pattern. POST is required for kNN search queries.
+  opensearch_search_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["es:ESHttpGet", "es:ESHttpPost", "es:ESHttpHead"]
+      Resource = local.opensearch_domain_arn
+    }]
+  })
+
   bedrock_titan_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{

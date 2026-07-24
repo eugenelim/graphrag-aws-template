@@ -141,6 +141,7 @@ queue   = [
   # packages/graphrag/sparql-templates — shipped 2026-07-24 (PR #75)
   # docs/supersede-adrs-0001-0004-0008 — shipped 2026-07-24 (PR #66)
   # docs/update-existing-specs — shipped 2026-07-24 (PR #72)
+  # infra-tf/mcp-otel-lambda — shipped 2026-07-24 (PR TBD)
 
   # Wave 4 — integration, observability, final infra + docs; gate on mcp-tool-server
   {path = "packages/graphrag/multi-strategy-router",  needs = [
@@ -150,10 +151,6 @@ queue   = [
   {path = "packages/graphrag/otel-instrumentation",   needs = [
     "work:packages/graphrag/mcp-tool-server",
     "shape:spec-otel-observability",
-  ]},
-  {path = "infra-tf/mcp-otel-lambda",                 needs = [
-    "work:packages/graphrag/mcp-tool-server",
-    "shape:adr-0015-otel-observability",
   ]},
   # API Gateway HTTP API in front of the MCP Lambda — human/IDE ingress path.
   # Usage plan + API key auth (no SigV4 on the client side).
