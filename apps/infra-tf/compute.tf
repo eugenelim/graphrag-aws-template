@@ -57,15 +57,17 @@ resource "aws_cloudwatch_log_group" "ingestion" {
   retention_in_days = 7
 }
 
-# Fargate ingestion task. cpu/memory pinned (512/1024) to match the CDK task def. Task role
+# Fargate ingestion task. 2048 CPU / 8192 MiB required for docling model weights (~2.4 GB). Task role
 # is the data+IAM tier's ingestion_task_role (Neptune RW + OpenSearch + Bedrock + S3 grants);
 # execution role is the ECR-pull/Logs role above. Container env is byte-identical to CDK
 # (:590) — self-configured so `aws ecs run-task` needs no env overrides; AWS_REGION is
 # injected by the Fargate agent, not set here.
 resource "aws_ecs_task_definition" "ingestion" {
   family                   = "graphrag-ingestion"
-  cpu                      = "512"
-  memory                   = "1024"
+  # 2048 CPU / 8192 MiB required for docling model weights (~2.4 GB PyTorch stack).
+  # spec-ingestion-extraction-cleanse AC10.
+  cpu                      = "2048"
+  memory                   = "8192"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
   task_role_arn            = aws_iam_role.ingestion_task_role.arn
@@ -80,6 +82,10 @@ resource "aws_ecs_task_definition" "ingestion" {
       { name = "OPENSEARCH_ENDPOINT", value = local.opensearch_endpoint_url },
       { name = "CORPUS_BUCKET", value = aws_s3_bucket.corpus.id },
       { name = "SCHEMA_EXTRACTION", value = "false" },
+      # Prevent docling from downloading model weights at runtime — weights are baked
+      # into the Docker image at build time. spec-ingestion-extraction-cleanse AC11.
+      { name = "TRANSFORMERS_OFFLINE", value = "1" },
+      { name = "HF_DATASETS_OFFLINE",  value = "1" },
     ]
     logConfiguration = {
       logDriver = "awslogs"

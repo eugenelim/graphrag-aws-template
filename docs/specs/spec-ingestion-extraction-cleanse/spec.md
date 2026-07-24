@@ -1,6 +1,6 @@
 # Spec: spec-ingestion-extraction-cleanse
 
-- **Status:** Approved <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Shipped <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** [ADR-0016](../../adr/0016-git-ingestion-commit-sha-delta-medallion.md) (medallion layers — Bronze/Silver/Gold; format router decision; PII flag-and-surface model); [ADR-0012](../../adr/0012-owl-schema-only-and-named-graph-partition.md) (SHACL gate before Neptune LOAD; `biz:gitCommitSHA` required; quarantine routing on violation; PII stays in natural partition); [ADR-0011](../../adr/0011-neptune-sparql-rdf-engine-and-text2sparql-guard.md) (`ingestion_task_role` WriteDataViaQuery for quarantine INSERT); `spec-git-ingestion` (caller of `process_document()`)
@@ -71,19 +71,19 @@ Key sub-components:
 
 ## Acceptance Criteria
 
-- [ ] A `.docx` fixture file is routed to pandoc (`pypandoc.convert_file`) and produces Markdown with at least one heading (e.g. `# Introduction`) and no raw XML residue.
-- [ ] A `.pdf` fixture with a text layer is routed to docling and produces Markdown with table structure preserved (a fixture PDF containing a 3-column table produces a Markdown table, not run-on text).
-- [ ] A `.pptx` fixture is routed to markitdown and produces Markdown with one `##`-level heading per slide.
-- [ ] A document whose extracted text is < 200 characters after stripping artifacts produces `ProcessResult.outcome = "quarantined"` with `biz:quarantineReason = "Silver gate failed: min_content (observed: N chars)"` and no Silver S3 artifact write.
-- [ ] A document containing the fixture email `test@example.com` produces `biz:hasPII true` in the emitted RDF and `pii_flagged=True` in the cleansing report. Its `rdf:type` and partition assignment are unchanged by the PII flag.
-- [ ] `RDFEmitter` assigns `rdf:type biz:Policy` and partition `urn:graph:normative` to a fixture document whose cleansing report classifier is `"policy"`; assigns `rdf:type biz:SOP` and `urn:graph:descriptive` to a fixture with classifier `"sop"`.
-- [ ] A `biz:Policy` emitted without `biz:effectiveDate` triggers `validate_graph()` to return `conforms=False`, and `ProcessResult.outcome = "quarantined"`; no Gold S3 artifact is written; the quarantine Neptune INSERT carries a `biz:quarantineReason` triple with the SHACL violation path.
-- [ ] A document with no structural elements (no headings, no paragraph blocks detected) produces `ProcessResult.outcome = "quarantined"` with gate `"structure"`.
-- [ ] The emitted Turtle for any processed document contains `biz:gitCommitSHA`, `biz:gitRepo`, `biz:gitPath`, and `biz:extractorUsed` as properties on the document-class RDF subject, confirmed by SPARQL SELECT on the Turtle string.
-- [ ] The Terraform ECS task definition resource specifies `cpu = 2048` and `memory = 8192` for the Fargate ingestion task — required for docling model weights (~2.4 GB PyTorch stack).
-- [ ] The Terraform ECS task definition environment block contains `{ name = "TRANSFORMERS_OFFLINE", value = "1" }` and `{ name = "HF_DATASETS_OFFLINE", value = "1" }`.
-- [ ] A JSON cleansing report is written to S3 at `silver/<doc_uri>/<sha>.report.json` for every processed document, whether it passed all gates or was quarantined. The report JSON contains: `doc_uri`, `sha`, `extractor`, `char_count_raw`, `char_count_clean`, `gates_passed`, `gates_failed`, `pii_flagged`, `pii_entities_detected`, `quarantined`.
-- [ ] `ruff check` and `mypy` pass on `packages/graphrag/src/graphrag/ingestion/` with zero errors.
+- [x] A `.docx` fixture file is routed to pandoc (`pypandoc.convert_file`) and produces Markdown with at least one heading (e.g. `# Introduction`) and no raw XML residue.
+- [x] A `.pdf` fixture with a text layer is routed to docling and produces Markdown with table structure preserved (a fixture PDF containing a 3-column table produces a Markdown table, not run-on text).
+- [x] A `.pptx` fixture is routed to markitdown and produces Markdown with one `##`-level heading per slide.
+- [x] A document whose extracted text is < 200 characters after stripping artifacts produces `ProcessResult.outcome = "quarantined"` with `biz:quarantineReason = "Silver gate failed: min_content (observed: N chars)"` and no Silver S3 artifact write.
+- [x] A document containing the fixture email `test@example.com` produces `biz:hasPII true` in the emitted RDF and `pii_flagged=True` in the cleansing report. Its `rdf:type` and partition assignment are unchanged by the PII flag.
+- [x] `RDFEmitter` assigns `rdf:type biz:Policy` and partition `urn:graph:normative` to a fixture document whose cleansing report classifier is `"policy"`; assigns `rdf:type biz:SOP` and `urn:graph:descriptive` to a fixture with classifier `"sop"`.
+- [x] A `biz:Policy` emitted without `biz:effectiveDate` triggers `validate_graph()` to return `conforms=False`, and `ProcessResult.outcome = "quarantined"`; no Gold S3 artifact is written; the quarantine Neptune INSERT carries a `biz:quarantineReason` triple with the SHACL violation path.
+- [x] A document with no structural elements (no headings, no paragraph blocks detected) produces `ProcessResult.outcome = "quarantined"` with gate `"structure"`.
+- [x] The emitted Turtle for any processed document contains `biz:gitCommitSHA`, `biz:gitRepo`, `biz:gitPath`, and `biz:extractorUsed` as properties on the document-class RDF subject, confirmed by SPARQL SELECT on the Turtle string.
+- [x] The Terraform ECS task definition resource specifies `cpu = 2048` and `memory = 8192` for the Fargate ingestion task — required for docling model weights (~2.4 GB PyTorch stack).
+- [x] The Terraform ECS task definition environment block contains `{ name = "TRANSFORMERS_OFFLINE", value = "1" }` and `{ name = "HF_DATASETS_OFFLINE", value = "1" }`.
+- [x] A JSON cleansing report is written to S3 at `silver/<doc_uri>/<sha>.report.json` for every processed document, whether it passed all gates or was quarantined. The report JSON contains: `doc_uri`, `sha`, `extractor`, `char_count_raw`, `char_count_clean`, `gates_passed`, `gates_failed`, `pii_flagged`, `pii_entities_detected`, `quarantined`.
+- [x] `ruff check` and `mypy` pass on `packages/graphrag/src/graphrag/ingestion/` with zero errors.
 
 ## Assumptions
 
