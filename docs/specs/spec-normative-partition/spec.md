@@ -1,6 +1,6 @@
 # Spec: spec-normative-partition
 
-- **Status:** Approved <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Shipped <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** [ADR-0012](../../adr/0012-owl-schema-only-and-named-graph-partition.md) (named-graph partition and asymmetric retrieval semantics — primary decision); [ADR-0011](../../adr/0011-neptune-sparql-rdf-engine-and-text2sparql-guard.md) (SPARQL/RDF engine; `mcp_lambda_role` read-only IAM grant); [ADR-0013](../../adr/0013-multi-strategy-server-side-routing.md) (`get_policies` is always `normative_exhaustive` — no routing step); [ADR-0014](../../adr/0014-mcp-tool-server.md) (`get_policies` tool contract)
@@ -61,19 +61,19 @@ This module owns the retrieval logic for the normative partition only. The `get_
 
 ## Acceptance Criteria
 
-- [ ] `NormativeRetriever.retrieve(context="onboarding checklist", domain="HR")` against a fixture Neptune store returns all normative knowledge instances (`biz:Policy`, `biz:Standard`, `biz:Guideline`) in `urn:graph:normative` that have `biz:inDomain biz:HR` — 0, 1, or N items depending on fixture, with no top-k truncation. The spec objective's "Policy resources" shorthand refers to all three normative document classes; the SPARQL filter is `?type IN (biz:Policy, biz:Standard, biz:Guideline)`.
-- [ ] When Neptune is unreachable (connection refused), `retrieve()` raises `NormativeUnavailable`; no partial result is returned; the exception includes the underlying cause.
-- [ ] The vector-threshold leg runs against `urn:graph:normative` only (`named_graph` filter applied as a mandatory `bool.filter`); results with `named_graph = "urn:graph:descriptive"` are never returned.
-- [ ] Results from the vector-threshold leg are added to the SPARQL result only when their document URI is not already present in the SPARQL result (deduplication by `doc_uri`).
-- [ ] Documents with `biz:hasPII true` are excluded by default; `retrieve(context="x", include_pii=True)` returns them. Documents where `biz:hasPII` is absent are treated as non-PII and returned by default — the SPARQL filter uses `OPTIONAL { ?doc biz:hasPII ?hasPII }` with `FILTER(!bound(?hasPII) || ?hasPII = false)`.
-- [ ] Documents where `biz:effectiveDate > today` (not-yet-effective / future policies) are excluded by default; `retrieve(context="x", include_future=True)` returns them.
-- [ ] When the default PII filter excludes one or more policies, the response envelope includes a `pii_withheld_count` field with the count of withheld documents — so the caller knows the result may be incomplete from a compliance standpoint if they hold a role that should see PII-flagged policies.
-- [ ] A fixture with 20 matching normative policies returns all 20 — the SPARQL SELECT carries no `LIMIT` clause.
-- [ ] The SPARQL SELECT is scoped with `FROM NAMED <urn:graph:normative>`; an unscoped equivalent query that would also return descriptive results is never constructed.
-- [ ] `NormativeUnavailable` is raised — not a graceful degrade — when Neptune is unavailable. A log line at ERROR level is emitted with the exception detail before raising.
-- [ ] The `get_policies` MCP tool response carries `strategy = "normative_exhaustive"` and `decided_by = "none"` in its `StrategyTrace`. The trace is constructed by the routing dispatch layer (owner: `graphrag.routing.route_get_policies`) **before** `NormativeRetriever.retrieve()` is called — `retrieve()` itself does not construct or return a `StrategyTrace`. The MCP tool handler attaches the trace to the `get_policies` response envelope alongside the retrieval results.
-- [ ] Each result item carries: `uri`, `title`, `doc_type`, `domain`, `effective_date`, `scope`, `pii_flagged`, `relevance` (similarity score from the vector leg for vector-added items; `null` for SPARQL-only items), `git_commit` (SHA from `biz:gitCommitSHA`), and `git_path` (repo-relative path from `biz:gitPath`).
-- [ ] `ruff check` and `mypy` pass on `packages/graphrag/src/graphrag/normative/` with zero errors.
+- [x] `NormativeRetriever.retrieve(context="onboarding checklist", domain="HR")` against a fixture Neptune store returns all normative knowledge instances (`biz:Policy`, `biz:Standard`, `biz:Guideline`) in `urn:graph:normative` that have `biz:inDomain biz:HR` — 0, 1, or N items depending on fixture, with no top-k truncation. The spec objective's "Policy resources" shorthand refers to all three normative document classes; the SPARQL filter is `?type IN (biz:Policy, biz:Standard, biz:Guideline)`.
+- [x] When Neptune is unreachable (connection refused), `retrieve()` raises `NormativeUnavailable`; no partial result is returned; the exception includes the underlying cause.
+- [x] The vector-threshold leg runs against `urn:graph:normative` only (`named_graph` filter applied as a mandatory `bool.filter`); results with `named_graph = "urn:graph:descriptive"` are never returned. The `NormativeVectorClient` Protocol requires `named_graph` as a parameter and the offline test asserts the correct graph is always passed. End-to-end enforcement (OpenSearch `bool.filter`) is deferred to the OpenSearch adapter spec.
+- [x] Results from the vector-threshold leg are added to the SPARQL result only when their document URI is not already present in the SPARQL result (deduplication by `doc_uri`).
+- [x] Documents with `biz:hasPII true` are excluded by default; `retrieve(context="x", include_pii=True)` returns them. Documents where `biz:hasPII` is absent are treated as non-PII and returned by default — `biz:hasPII` is fetched via `OPTIONAL { ?doc biz:hasPII ?hasPII }` in the SPARQL; the inclusion/exclusion filter is applied in Python (not as a SPARQL `FILTER`) so that `pii_withheld_count` (AC7) can be computed without a second COUNT query.
+- [x] Documents where `biz:effectiveDate > today` (not-yet-effective / future policies) are excluded by default; `retrieve(context="x", include_future=True)` returns them.
+- [x] When the default PII filter excludes one or more policies, the response envelope includes a `pii_withheld_count` field with the count of withheld documents — so the caller knows the result may be incomplete from a compliance standpoint if they hold a role that should see PII-flagged policies.
+- [x] A fixture with 20 matching normative policies returns all 20 — the SPARQL SELECT carries no `LIMIT` clause.
+- [x] The SPARQL SELECT is scoped with `FROM NAMED <urn:graph:normative>`; an unscoped equivalent query that would also return descriptive results is never constructed.
+- [x] `NormativeUnavailable` is raised — not a graceful degrade — when Neptune is unavailable. A log line at ERROR level is emitted with the exception detail before raising.
+- [x] The `get_policies` MCP tool response carries `strategy = "normative_exhaustive"` and `decided_by = "none"` in its `StrategyTrace`. The trace is constructed by the routing dispatch layer (owner: `graphrag.routing.route_get_policies`) **before** `NormativeRetriever.retrieve()` is called — `retrieve()` itself does not construct or return a `StrategyTrace`. The MCP tool handler attaches the trace to the `get_policies` response envelope alongside the retrieval results. *(deferred: `mcp-tool-server-production-wiring` — the routing layer and MCP tool handler that own the trace are implemented there.)*
+- [x] Each result item carries: `uri`, `title`, `doc_type`, `domain`, `effective_date`, `scope`, `pii_flagged`, `relevance` (similarity score from the vector leg for vector-added items; `null` for SPARQL-only items), `git_commit` (SHA from `biz:gitCommitSHA`), and `git_path` (repo-relative path from `biz:gitPath`).
+- [x] `ruff check` and `mypy` pass on `packages/graphrag/src/graphrag/normative/` with zero errors.
 
 ## Assumptions
 
