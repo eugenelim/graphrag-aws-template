@@ -1,6 +1,6 @@
 # Spec: spec-mcp-tool-server
 
-- **Status:** Implementing <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Approved → Implementing <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** [ADR-0014](../../adr/0014-mcp-tool-server.md) (six generic typed tools; FastMCP + Mangum; mock server; two deployment targets; content-capture policy — primary decision this spec implements); [ADR-0013](../../adr/0013-multi-strategy-server-side-routing.md) (`ask` delegates to `RuleQueryRouter` → `BedrockQueryRouter` cascade); [ADR-0011](../../adr/0011-neptune-sparql-rdf-engine-and-text2sparql-guard.md) (`mcp_lambda_role` read-only: `ReadDataViaQuery` + `connect`); [ADR-0015](../../adr/0015-otel-observability.md) (content-capture policy: question text never in spans or log lines above DEBUG; ADOT layer on Lambda); [ADR-0012](../../adr/0012-owl-schema-only-and-named-graph-partition.md) (named-graph partition model the tools operate over)
