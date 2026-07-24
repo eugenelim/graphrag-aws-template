@@ -60,6 +60,10 @@ dev = [
     "graphrag-aws-demo[ingest]",
     # MCP server deps — pulls in mcp, pydantic, mangum for offline tests.
     "graphrag-aws-demo[server]",
+    # HTTP client used by the subprocess transport test (test_mock_subprocess.py).
+    "requests>=2.28",
+    # Enforces @pytest.mark.timeout; without this the markers are silently inert.
+    "pytest-timeout>=2.0",
 ]
 
 [project.scripts]
@@ -74,6 +78,9 @@ graphrag = ["aliases.yaml", "labels.yaml", "py.typed", "showcase/queries.yaml", 
 [tool.pytest.ini_options]
 testpaths = ["packages/graphrag/tests", "apps/ingestion/tests", "apps/infra/tests"]
 pythonpath = ["packages/graphrag/src", "apps", "apps/infra"]
+markers = [
+    "timeout: marks tests with a timeout in seconds (requires pytest-timeout to enforce; harmless without it)",
+]
 
 [tool.ruff]
 line-length = 100
