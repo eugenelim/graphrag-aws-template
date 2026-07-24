@@ -209,3 +209,16 @@ resource, widens nothing, and holds Budgets unchanged at `150` (ADR-0002).
 - [Neptune IAM data-access actions](https://docs.aws.amazon.com/neptune/latest/userguide/iam-dp-actions.html)
 - [Neptune reader endpoint / read replicas](https://docs.aws.amazon.com/neptune/latest/userguide/feature-overview-endpoints.html)
 - [OWASP Top 10 for LLM Applications 2025 — LLM01 Prompt Injection, LLM08](https://owasp.org/www-project-top-10-for-large-language-model-applications/)
+
+## Supersession record
+
+**Superseded by:** [ADR-0011](0011-neptune-sparql-rdf-engine-and-text2sparql-guard.md) (date: 2026-07-23)
+
+**What was superseded:**
+The openCypher read-only guard used IAM data-action scoping (`ReadDataViaQuery` + `connect` only on the query-Lambda role) as the primary backstop against LLM-authored mutations, backed by an app-layer openCypher mutation denylist (`CREATE`/`MERGE`/`SET`/`DELETE`/`REMOVE`/`DETACH`/`DROP`), a bounded self-heal loop, and a Neptune engine query timeout. The mechanism was designed specifically for the openCypher/LPG engine and its mutation keyword grammar.
+
+**What replaces it:**
+ADR-0011 re-ratifies the same layered defense — IAM `ReadDataViaQuery` + `connect` scoping on the `mcp_lambda_role` as the load-bearing backstop — re-authored for SPARQL grammar. The app-layer denylist is updated from openCypher mutation keywords to SPARQL Update keywords (`INSERT`, `DELETE`, `DROP`, `CLEAR`, `LOAD`, `CREATE`). The self-heal loop and Neptune query timeout carry forward unchanged.
+
+**What carries forward:**
+The IAM read-only backstop principle, the bounded self-heal loop, the Neptune engine query timeout, and the untrusted-data posture at the Bedrock boundary all carry forward verbatim. Only the grammar of the app-layer denylist changes (openCypher mutation keywords replaced by SPARQL Update keywords).
