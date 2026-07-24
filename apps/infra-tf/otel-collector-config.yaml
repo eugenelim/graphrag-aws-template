@@ -1,0 +1,66 @@
+# ADOT OpenTelemetry Collector configuration for the graphrag MCP Lambda.
+#
+# Deployed as package data at /var/task/graphrag/otel-collector-config.yaml
+# (graphrag Python package, see pyproject.toml [tool.setuptools.package-data]).
+# Canonical source: packages/graphrag/src/graphrag/otel-collector-config.yaml
+#
+# Pipeline: OTLP gRPC (localhost:4317) → attributes/deny_content → batch → X-Ray daemon
+#
+# The attributes/deny_content processor is the load-bearing content-capture backstop
+# (ADR-0015 item 6). It deletes every attribute in DENY_SET ∪ AUTO_CAPTURE_KEYS before
+# spans reach the X-Ray daemon. The primary control is the Lambda env-var layer
+# (OTEL_PYTHON_BOTOCORE_SUPPRESS_HTTP_INSTRUMENTATION, OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT).
+#
+# DENY_SET (ADR-0015 item 6 canonical names):
+#   question.text, query.text, sparql.query, document.content, chunk.text
+#
+# AUTO_CAPTURE_KEYS (ADOT boto3/urllib3/gen-AI auto-instrumentation content vectors):
+#   db.statement, db.query.text, http.url, url.full, url.query,
+#   http.request.body, gen_ai.prompt, gen_ai.completion
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: "127.0.0.1:4317"
+
+processors:
+  attributes/deny_content:
+    actions:
+      # ── DENY_SET — ADR-0015 item 6 canonical names ──────────────────────────
+      - {key: "question.text",    action: delete}
+      - {key: "query.text",       action: delete}
+      - {key: "sparql.query",     action: delete}
+      - {key: "document.content", action: delete}
+      - {key: "chunk.text",       action: delete}
+      # ── AUTO_CAPTURE_KEYS — ADOT auto-instrumentation content vectors ────────
+      # boto3/botocore (Bedrock prompt + response, DynamoDB statements)
+      - {key: "db.statement",      action: delete}
+      - {key: "db.query.text",     action: delete}
+      # urllib3/requests (Neptune SPARQL endpoint URL, query params)
+      - {key: "http.url",          action: delete}
+      - {key: "url.full",          action: delete}
+      - {key: "url.query",         action: delete}
+      - {key: "http.request.body", action: delete}
+      # gen-AI instrumentation (prompt content, completion content)
+      - {key: "gen_ai.prompt",      action: delete}
+      - {key: "gen_ai.completion",  action: delete}
+
+  batch: {}
+
+exporters:
+  awsxray:
+    # local_mode: send to the Lambda-bundled X-Ray daemon via UDP (127.0.0.1:2000)
+    # rather than calling the X-Ray API directly over HTTPS. This avoids the need
+    # for a com.amazonaws.<region>.xray VPC endpoint in the private-VPC deployment
+    # (no NAT gateway — ADR-0015 + network.tf). The daemon forwards segments to
+    # X-Ray using the Lambda sandbox's standard network path (not the VPC interface).
+    local_mode: true
+    region: "${env:AWS_REGION}"
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [attributes/deny_content, batch]
+      exporters: [awsxray]

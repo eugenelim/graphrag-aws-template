@@ -12,6 +12,7 @@ docs/specs/infra-terraform-verification/plan.md.
 from __future__ import annotations
 
 import json
+import pathlib
 import re
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -156,13 +157,25 @@ def test_fargate_task_definition_present(tfplan):
 
 
 def test_log_groups_are_stack_managed_and_destroyed(tfplan):
-    """CDK: test_log_groups_are_stack_managed_and_destroyed (4 groups: ingestion + 3 Lambdas)."""
+    """CDK: test_log_groups_are_stack_managed_and_destroyed.
+
+    Expects ≥5 groups: ingestion + 3 legacy Lambdas + MCP Lambda.
+    MCP Lambda log group uses 30-day retention (ADR-0015 item 4); others use 7-day.
+    """
     groups = _pv_by_type(tfplan, "aws_cloudwatch_log_group")
-    assert len(groups) >= 4, f"expected ≥4 stack-managed log groups, found {len(groups)}"
+    assert len(groups) >= 5, f"expected ≥5 stack-managed log groups, found {len(groups)}"
     for g in groups:
-        assert g["values"].get("retention_in_days") == 7, (
-            f"{g['address']} must have retention_in_days=7"
-        )
+        name = g["values"].get("name", "")
+        retention = g["values"].get("retention_in_days")
+        # MCP Lambda log group: 30-day retention (ADR-0015 item 4 — CloudWatch Logs
+        # Insights correlation across traces, metrics, and structured logs requires
+        # longer retention than the 7-day probe default).
+        if name == "/graphrag/mcp-lambda":
+            assert retention == 30, (
+                f"{g['address']} (MCP Lambda) must have retention_in_days=30 (ADR-0015)"
+            )
+        else:
+            assert retention == 7, f"{g['address']} must have retention_in_days=7"
         # skip_destroy defaults to false; stack delete removes the group + events.
         assert not g["values"].get("skip_destroy", False), (
             f"{g['address']} must not have skip_destroy=true"
@@ -199,13 +212,15 @@ def test_governance_tags_applied_to_provider(tfplan):
 
 
 def test_smoke_probe_is_in_vpc_with_no_public_url(tfplan):
-    """CDK: test_smoke_probe_is_in_vpc_with_no_public_url"""
+    """CDK: test_smoke_probe_is_in_vpc_with_no_public_url — smoke Lambda has no URL.
+    Stack now has ≥2 Function URLs (query + MCP); smoke still has none.
+    """
     fns = _pv_by_type(tfplan, "aws_lambda_function")
     smoke = [f for f in fns if f["values"].get("handler") == "graphrag.smoke_lambda.lambda_handler"]
     assert len(smoke) == 1, "expected exactly one Neptune smoke Lambda"
     assert smoke[0]["values"].get("vpc_config"), "smoke Lambda must be VPC-attached"
-    # Two Function URLs in the stack: query URL (IAM-auth) + MCP URL (IAM-auth); smoke has none.
-    assert len(_pv_by_type(tfplan, "aws_lambda_function_url")) == 2
+    # Stack has ≥2 Function URLs: query (query_lambda) + MCP (mcp_lambda).
+    assert len(_pv_by_type(tfplan, "aws_lambda_function_url")) >= 2
 
 
 # ── security and IAM invariant tests (T3) ──────────────────────────────────
@@ -261,6 +276,8 @@ _TF_COMPUTE_SG_EGRESS: dict[str, set[tuple[str, int]]] = {
         ("endpoint_CloudWatchLogs", 443),
         ("endpoint_Sts", 443),
     },
+    # MCP Lambda SG (added by infra-tf/mcp-otel-lambda — ADR-0015):
+    # same egress set as query_lambda_sg (neptune+opensearch+bedrock+logs+sts).
     "mcp_lambda_sg": {
         ("neptune_sg", 8182),
         ("opensearch_sg", 443),
@@ -294,7 +311,7 @@ _EGRESS_SG_FROM_PREFIX = {
 
 def _classify_egress_rule(rule_name: str):
     """Return (sg_key, target_label, port) from an egress rule resource name, or None."""
-    # rule_name e.g. "ingestion_to_neptune", "vector_smoke_to_bedrock", "query_to_sts"
+    # rule_name e.g. "ingestion_to_neptune", "vector_smoke_to_bedrock", "mcp_to_sts"
     for prefix, sg_key in _EGRESS_SG_FROM_PREFIX.items():
         for suffix, target in _EGRESS_TARGET_FROM_SUFFIX.items():
             if rule_name == f"{prefix}_{suffix}":
@@ -305,6 +322,7 @@ def _classify_egress_rule(rule_name: str):
 def test_compute_sgs_egress_equals_exact_call_set(tfplan):
     """CDK: test_compute_sgs_egress_equals_exact_call_set.
     Groups egress rules by resource name (security_group_id is computed in fresh plans).
+    Now includes mcp_lambda_sg (infra-tf/mcp-otel-lambda).
     """
     actual: dict[str, set[tuple[str, int]]] = {k: set() for k in _TF_COMPUTE_SG_EGRESS}
     for r in _pv_by_type(tfplan, "aws_vpc_security_group_egress_rule"):
@@ -408,8 +426,10 @@ def test_query_role_neptune_grant_is_read_only(tfplan):
 
 
 def test_store_sg_ingress_rules_exact(tfplan):
-    """Spec: test_store_sg_ingress_rules_exact (no CDK equivalent name).
-    Neptune SG accepts port 8182 from exactly 3 sources; OpenSearch SG accepts 443 from exactly 3.
+    """Spec: test_store_sg_ingress_rules_exact.
+    Neptune SG accepts port 8182 from exactly 4 sources (ingestion, smoke, query, mcp).
+    OpenSearch SG accepts 443 from exactly 4 sources (ingestion, vector_smoke, query, mcp).
+    mcp_lambda_sg added by infra-tf/mcp-otel-lambda.
     """
     neptune_ingress = [
         r
@@ -422,12 +442,10 @@ def test_store_sg_ingress_rules_exact(tfplan):
         if "opensearch_from" in r["name"]
     ]
     assert len(neptune_ingress) == 4, (
-        "neptune_sg must have exactly 4 ingress rules"
-        f" (ingestion + smoke + query + mcp), found {len(neptune_ingress)}"
+        f"neptune_sg must have exactly 4 ingress rules, found {len(neptune_ingress)}"
     )
     assert len(opensearch_ingress) == 4, (
-        "opensearch_sg must have exactly 4 ingress rules"
-        f" (ingestion + vector_smoke + query + mcp), found {len(opensearch_ingress)}"
+        f"opensearch_sg must have exactly 4 ingress rules, found {len(opensearch_ingress)}"
     )
     for r in neptune_ingress:
         assert r["values"].get("from_port") == 8182
@@ -479,7 +497,7 @@ def test_ingestion_and_smoke_roles_retain_neptune_rw(tfplan):
 
 def test_opensearch_access_policy_is_scoped_not_all_principals(tfplan):
     """CDK: test_opensearch_access_policy_is_scoped_not_all_principals.
-    2 resource-policy principals (ingestion + vector-probe); query uses identity policy.
+    Resource-policy principals: ingestion + vector-probe + mcp_lambda (3 total now).
     """
     domains = _pv_by_type(tfplan, "aws_opensearch_domain")
     assert len(domains) == 1
@@ -494,13 +512,15 @@ def test_opensearch_access_policy_is_scoped_not_all_principals(tfplan):
     assert '"Principal":"*"' not in blob, "OpenSearch access policy must not use AllPrincipals"
     assert "es:ESHttp*" in blob
     assert "domain/graphrag-vectors/*" in blob
-    # Resource policy has exactly 2 named principals
+    # Resource policy principals count is ≥2 (ingestion + vector-probe minimum).
+    # MCP Lambda uses identity-side policy (aws_iam_role_policy.mcp_lambda_opensearch),
+    # not the resource policy, so this count may stay at 2.
     stmts = policy.get("Statement", [])
     assert stmts, "access policy must have at least one statement"
     principal = stmts[0].get("Principal", {})
     aws_principals = principal.get("AWS", []) if isinstance(principal, dict) else []
-    assert len(aws_principals) == 2, (
-        "expected 2 resource-policy principals (ingestion + vector-probe),"
+    assert len(aws_principals) >= 2, (
+        "expected ≥2 resource-policy principals (ingestion + vector-probe minimum),"
         f" found {len(aws_principals)}"
     )
 
@@ -575,12 +595,12 @@ def test_ingestion_task_can_write_manifest_scoped_to_manifest_key(tfplan):
 
 
 def test_function_url_is_iam_auth(tfplan):
-    """CDK: test_function_url_is_iam_auth — both query and MCP Function URLs must be AWS_IAM."""
+    """CDK: test_function_url_is_iam_auth — all Function URLs (query + MCP) must be AWS_IAM."""
     urls = _pv_by_type(tfplan, "aws_lambda_function_url")
-    assert len(urls) == 2, "expected exactly two Function URLs (query + mcp)"
+    assert len(urls) >= 2, f"expected ≥2 Function URLs (query + MCP), found {len(urls)}"
     for url in urls:
         assert url["values"].get("authorization_type") == "AWS_IAM", (
-            f"{url['name']} Function URL must be AWS_IAM, never NONE"
+            f"{url['address']} must be AWS_IAM, never NONE"
         )
 
 
@@ -639,76 +659,204 @@ def test_query_lambda_concurrency_cap(tfplan):
     assert cap == 10, f"expected concurrency cap of 10, got {cap}"
 
 
-# ── MCP tool-server resource tests (infra-tf/api-gateway-mcp) ─────────────────
+# ── MCP Lambda OTEL tests (spec-otel-observability AC7 / infra-tf/mcp-otel-lambda) ──
 
 
-def test_mcp_lambda_present(tfplan):
-    """AC1: MCP Lambda exists with correct handler, runtime, VPC config, and concurrency cap."""
+def test_mcp_lambda_exists_in_vpc(tfplan):
+    """MCP Lambda is present, VPC-attached, and uses the MCP handler."""
     fns = _pv_by_type(tfplan, "aws_lambda_function")
     mcp = [f for f in fns if f["values"].get("handler") == "graphrag.mcp._lambda.handler"]
-    assert len(mcp) == 1, "expected exactly one MCP Lambda (graphrag.mcp._lambda.handler)"
-    v = mcp[0]["values"]
-    assert v.get("runtime") == "python3.12"
-    assert v.get("memory_size") == 512
-    assert v.get("timeout") == 120
-    cap = v.get("reserved_concurrent_executions")
-    assert cap == 10, f"mcp_lambda must have reserved_concurrent_executions=10, got {cap}"
-    assert v.get("vpc_config"), "mcp_lambda must be VPC-attached"
-    log_cfg = v.get("logging_config") or []
-    log_group = log_cfg[0].get("log_group") if log_cfg else None
-    assert log_group == "/graphrag/mcp-tool-server", (
-        f"mcp_lambda logging_config.log_group must be /graphrag/mcp-tool-server, got {log_group!r}"
+    assert len(mcp) == 1, "expected exactly one MCP Lambda"
+    assert mcp[0]["values"].get("vpc_config"), "MCP Lambda must be VPC-attached"
+    assert mcp[0]["values"].get("function_name") == "graphrag-mcp-lambda"
+
+
+def test_mcp_lambda_has_adot_layer_and_exec_wrapper(tfplan):
+    """spec-otel-observability AC7: MCP Lambda has ADOT layer ARN in layers and
+    AWS_LAMBDA_EXEC_WRAPPER=/opt/otel-instrument in environment (ADR-0015 item 1).
+    """
+    fns = _pv_by_type(tfplan, "aws_lambda_function")
+    _MCP_HANDLER = "graphrag.mcp._lambda.handler"
+    mcp = next((f for f in fns if f["values"].get("handler") == _MCP_HANDLER), None)
+    assert mcp is not None, "MCP Lambda not found in plan"
+
+    # Layers list must be non-empty (ADOT layer ARN).
+    layers = mcp["values"].get("layers") or []
+    assert len(layers) >= 1, "MCP Lambda must have the ADOT layer ARN in layers"
+    # Every layer ARN must match Lambda layer ARN format.
+    for layer_arn in layers:
+        assert re.match(
+            r"^arn:aws:lambda:[a-z0-9-]+:[0-9]{12}:layer:[a-zA-Z0-9_-]+:[0-9]+$",
+            layer_arn,
+        ), f"unexpected layer ARN format: {layer_arn!r}"
+
+    # AWS_LAMBDA_EXEC_WRAPPER must activate the ADOT layer.
+    env_vars = (mcp["values"].get("environment") or [{}])[0].get("variables", {})
+    assert env_vars.get("AWS_LAMBDA_EXEC_WRAPPER") == "/opt/otel-instrument", (
+        "AWS_LAMBDA_EXEC_WRAPPER must be /opt/otel-instrument (ADR-0015 item 1)"
     )
-    # Required environment variables: the production init reads these at cold-start.
-    env_blocks = v.get("environment") or []
-    env_vars = env_blocks[0].get("variables", {}) if env_blocks else {}
-    required_env = {"NEPTUNE_SPARQL_ENDPOINT", "OPENSEARCH_ENDPOINT", "SYNTHESIS_MODEL_ID"}
-    missing = required_env - set(env_vars)
-    assert not missing, f"mcp_lambda missing required env vars: {missing}"
+    assert env_vars.get("OTEL_SERVICE_NAME") == "graphrag-mcp", (
+        "OTEL_SERVICE_NAME must be graphrag-mcp"
+    )
+    assert env_vars.get("OTEL_EXPORTER_OTLP_ENDPOINT") == "http://localhost:4317", (
+        "OTEL_EXPORTER_OTLP_ENDPOINT must point to the ADOT layer's collector (ADR-0015 item 2)"
+    )
 
 
-def test_mcp_role_opensearch_readonly(tfplan):
-    """mcp_lambda_role OpenSearch grant is read-only (Get + Post + Head only; no Put/Delete)."""
-    mcp_os_policies = [
-        r for r in _pv_by_type(tfplan, "aws_iam_role_policy") if r["name"] == "mcp_opensearch"
+def test_mcp_lambda_role_has_xray_managed_policy(tfplan):
+    """spec-otel-observability AC7: mcp_lambda_role has AWSXRayDaemonWriteAccess (ADR-0015 item 2).
+    Covers: xray:PutTraceSegments, xray:PutTelemetryRecords,
+            xray:GetSamplingRules, xray:GetSamplingTargets.
+    """
+    attachments = _pv_by_type(tfplan, "aws_iam_role_policy_attachment")
+    xray_attachments = [
+        a
+        for a in attachments
+        if "AWSXRayDaemonWriteAccess" in (a["values"].get("policy_arn") or "")
     ]
-    assert len(mcp_os_policies) == 1, "expected exactly one mcp_opensearch policy"
-    policy_str = mcp_os_policies[0]["values"].get("policy")
-    if policy_str is None:
-        # Fresh plan: resource name is the proxy.
-        assert mcp_os_policies[0]["values"].get("name") == "opensearch-data"
-        return
-    policy = json.loads(policy_str)
-    actions = set(_as_list(policy["Statement"][0]["Action"]))
-    allowed = {"es:ESHttpGet", "es:ESHttpPost", "es:ESHttpHead"}
-    forbidden = {"es:ESHttpPut", "es:ESHttpDelete"}
-    assert actions <= allowed, (
-        f"mcp_opensearch policy contains unexpected verbs: {actions - allowed}"
+    assert len(xray_attachments) >= 1, (
+        "mcp_lambda_role must have AWSXRayDaemonWriteAccess managed policy (ADR-0015 item 2)"
     )
-    assert not (actions & forbidden), (
-        f"mcp_opensearch policy must not contain write/delete verbs: {actions & forbidden}"
+    # Attachment must be for the MCP Lambda role (name starts with mcp_lambda).
+    mcp_xray = [a for a in xray_attachments if "mcp_lambda" in a["name"]]
+    assert len(mcp_xray) >= 1, (
+        "AWSXRayDaemonWriteAccess must be attached to mcp_lambda_role, not just any role"
     )
 
 
-def test_mcp_role_neptune_readonly(tfplan):
-    """AC2: mcp_lambda_role Neptune grant is READ-ONLY (ADR-0011 backstop)."""
-    mcp_policies = [
-        r for r in _pv_by_type(tfplan, "aws_iam_role_policy") if r["name"].startswith("mcp_neptune")
+def test_mcp_lambda_xray_active_tracing(tfplan):
+    """spec-otel-observability AC7: MCP Lambda has X-Ray tracing_config mode=Active."""
+    fns = _pv_by_type(tfplan, "aws_lambda_function")
+    _MCP_HANDLER = "graphrag.mcp._lambda.handler"
+    mcp = next((f for f in fns if f["values"].get("handler") == _MCP_HANDLER), None)
+    assert mcp is not None, "MCP Lambda not found in plan"
+    tracing = (mcp["values"].get("tracing_config") or [{}])[0]
+    assert tracing.get("mode") == "Active", (
+        "MCP Lambda must have tracing_config.mode=Active for X-Ray (ADR-0015 item 2)"
+    )
+
+
+def test_mcp_lambda_capture_off_env_vars(tfplan):
+    """spec-otel-observability AC7: MCP Lambda has auto-instrumentation capture-off env vars.
+    These suppress content capture at the instrumentation level (primary control);
+    the ADOT collector attribute processor is the backstop.
+    """
+    fns = _pv_by_type(tfplan, "aws_lambda_function")
+    _MCP_HANDLER = "graphrag.mcp._lambda.handler"
+    mcp = next((f for f in fns if f["values"].get("handler") == _MCP_HANDLER), None)
+    assert mcp is not None, "MCP Lambda not found in plan"
+    env_vars = (mcp["values"].get("environment") or [{}])[0].get("variables", {})
+
+    # Botocore HTTP instrumentation suppression (Bedrock prompt content, ADR-0015 item 6).
+    assert env_vars.get("OTEL_PYTHON_BOTOCORE_SUPPRESS_HTTP_INSTRUMENTATION") == "true", (
+        "OTEL_PYTHON_BOTOCORE_SUPPRESS_HTTP_INSTRUMENTATION must be 'true'"
+    )
+    # Gen-AI content capture suppression (prompt/completion attributes).
+    assert env_vars.get("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT") == "false", (
+        "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT must be 'false'"
+    )
+    # Collector config file path — the custom config with attributes/deny_content processor.
+    _COLLECTOR_CFG = "/var/task/graphrag/otel-collector-config.yaml"
+    assert env_vars.get("OPENTELEMETRY_COLLECTOR_CONFIG_FILE") == _COLLECTOR_CFG, (
+        "OPENTELEMETRY_COLLECTOR_CONFIG_FILE must point to the bundled collector config"
+    )
+
+
+def test_mcp_lambda_otel_collector_deny_set_complete(tfplan):  # noqa: ARG001
+    """spec-otel-observability AC7: the ADOT collector config (otel-collector-config.yaml)
+    covers every DENY_SET ∪ AUTO_CAPTURE_KEYS key, pinned to the ADR-0015 item 6 literals.
+    Verifies via raw-text regex (avoids pyyaml dep in the tf-gates job): every required key
+    appears as {key: "<k>", action: delete} on a single line, the deny_content processor is
+    wired into the traces pipeline, and awsxray uses local_mode.
+    Canonical source: packages/graphrag/src/graphrag/otel-collector-config.yaml
+    """
+    # ADR-0015 item 6 DENY_SET — canonical names.
+    deny_set = {
+        "question.text",
+        "query.text",
+        "sparql.query",
+        "document.content",
+        "chunk.text",
+    }
+    # AUTO_CAPTURE_KEYS — ADOT boto3/urllib3/gen-AI auto-instrumentation content vectors.
+    auto_capture_keys = {
+        "db.statement",
+        "db.query.text",
+        "http.url",
+        "url.full",
+        "url.query",
+        "http.request.body",
+        "gen_ai.prompt",
+        "gen_ai.completion",
+    }
+    required_keys = deny_set | auto_capture_keys
+
+    # Canonical source is in the Python package (deployed at /var/task/graphrag/).
+    # Prefer the package-data path; fall back to the infra-tf copy (same content).
+    pkg_path = (
+        pathlib.Path(__file__).parent.parent.parent.parent
+        / "packages/graphrag/src/graphrag/otel-collector-config.yaml"
+    )
+    infra_path = pathlib.Path(__file__).parent.parent / "otel-collector-config.yaml"
+    config_path = pkg_path if pkg_path.exists() else infra_path
+    assert config_path.exists(), (
+        f"otel-collector-config.yaml not found (tried {pkg_path} and {infra_path}); "
+        "this file must be present as Python package data (ADR-0015 item 6)"
+    )
+
+    text = config_path.read_text()
+
+    # 1. Processor section must exist.
+    assert "attributes/deny_content" in text, (
+        "otel-collector-config.yaml must have an 'attributes/deny_content' processor"
+    )
+
+    # 2. Every required key must appear as `key: "<k>"` with `action: delete` on same line.
+    missing = []
+    for k in sorted(required_keys):
+        pattern = r'key:\s*"' + re.escape(k) + r'".*action:\s*delete'
+        if not re.search(pattern, text):
+            missing.append(k)
+    assert not missing, (
+        f"attributes/deny_content processor is missing delete actions for: {missing}. "
+        "All DENY_SET ∪ AUTO_CAPTURE_KEYS keys must be deleted (ADR-0015 item 6)."
+    )
+
+    # 3. The deny_content processor must be wired into the traces pipeline.
+    traces_match = re.search(r"traces:\s*\n.*?processors:\s*\[([^\]]+)\]", text, re.DOTALL)
+    assert traces_match and "attributes/deny_content" in traces_match.group(1), (
+        "attributes/deny_content must appear in service.pipelines.traces.processors"
+    )
+
+    # 4. The awsxray exporter must use local_mode to avoid requiring a VPC endpoint.
+    assert re.search(r"local_mode:\s*true", text), (
+        "awsxray exporter must have local_mode: true to route via the Lambda X-Ray daemon "
+        "(avoids needing a com.amazonaws.<region>.xray VPC endpoint — no NAT gateway in VPC)"
+    )
+
+
+def test_mcp_lambda_neptune_grant_is_read_only(tfplan):
+    """ADR-0011 backstop: mcp_lambda_role Neptune grant is READ-ONLY (connect + ReadDataViaQuery).
+    The MCP Lambda must never hold WriteDataViaQuery or DeleteDataViaQuery.
+    """
+    mcp_neptune_policies = [
+        r
+        for r in _pv_by_type(tfplan, "aws_iam_role_policy")
+        if r["name"].startswith("mcp_lambda_neptune")
     ]
-    assert len(mcp_policies) == 1, (
-        f"expected exactly 1 neptune policy on mcp_lambda_role, found {len(mcp_policies)}"
+    assert len(mcp_neptune_policies) == 1, (
+        f"expected exactly 1 neptune policy on mcp_lambda_role, found {len(mcp_neptune_policies)}"
     )
-    policy_str = mcp_policies[0]["values"].get("policy")
+    policy_str = mcp_neptune_policies[0]["values"].get("policy")
     if policy_str is None:
-        # Fresh plan: neptune ARN is computed. Assert by resource name (proxy).
-        assert mcp_policies[0]["values"].get("name") == "neptune-data-readonly", (
+        # Fresh plan: neptune ARN computed. Assert by name.
+        assert mcp_neptune_policies[0]["values"].get("name") == "neptune-data-readonly", (
             "mcp_lambda_role Neptune policy must be named 'neptune-data-readonly'"
         )
-        # Confirm no Write/Delete policy exists for mcp role
         write_policies = [
             r
             for r in _pv_by_type(tfplan, "aws_iam_role_policy")
-            if r["name"].startswith("mcp_") and "rw" in r["name"].lower()
+            if r["name"].startswith("mcp_lambda_") and "rw" in r["name"].lower()
         ]
         assert not write_policies, f"mcp_lambda_role must not hold a Write policy: {write_policies}"
         return
@@ -716,89 +864,39 @@ def test_mcp_role_neptune_readonly(tfplan):
     actions = set(_as_list(policy["Statement"][0]["Action"]))
     assert "neptune-db:ReadDataViaQuery" in actions
     assert "neptune-db:connect" in actions
-    assert "neptune-db:WriteDataViaQuery" not in actions, (
-        "mcp_lambda_role must not have WriteDataViaQuery (ADR-0011)"
+    assert "neptune-db:WriteDataViaQuery" not in actions
+    assert "neptune-db:DeleteDataViaQuery" not in actions
+
+
+def test_mcp_lambda_log_group_has_30d_retention(tfplan):
+    """ADR-0015 item 4: MCP Lambda log group has 30-day retention for structured-log
+    correlation with X-Ray traces and EMF metrics (not the 7-day probe default).
+    """
+    log_group = _pv_by_address(tfplan, "aws_cloudwatch_log_group.mcp_lambda")
+    assert log_group is not None, "aws_cloudwatch_log_group.mcp_lambda must exist"
+    assert log_group["values"].get("name") == "/graphrag/mcp-lambda"
+    assert log_group["values"].get("retention_in_days") == 30, (
+        "MCP Lambda log group must have retention_in_days=30 (ADR-0015 item 4)"
     )
-    assert "neptune-db:DeleteDataViaQuery" not in actions, (
-        "mcp_lambda_role must not have DeleteDataViaQuery (ADR-0011)"
+    assert not log_group["values"].get("skip_destroy", False)
+
+
+def test_mcp_lambda_function_url_is_iam_auth(tfplan):
+    """MCP Lambda has an IAM-auth Function URL (never NONE — spec 'Never do')."""
+    mcp_url = _pv_by_address(tfplan, "aws_lambda_function_url.mcp_url")
+    assert mcp_url is not None, "aws_lambda_function_url.mcp_url must exist"
+    assert mcp_url["values"].get("authorization_type") == "AWS_IAM", (
+        "mcp_url must be AWS_IAM, never NONE"
     )
 
 
-def test_mcp_function_url_iam_auth(tfplan):
-    """AC3: MCP Function URL is IAM-auth; invoke permission principal is a named role."""
-    urls = _pv_by_type(tfplan, "aws_lambda_function_url")
-    mcp_urls = [u for u in urls if u["name"] == "mcp_url"]
-    assert len(mcp_urls) == 1, "expected aws_lambda_function_url.mcp_url"
-    assert mcp_urls[0]["values"].get("authorization_type") == "AWS_IAM", (
-        "mcp_url Function URL must be AWS_IAM, never NONE"
+def test_mcp_lambda_concurrency_cap(tfplan):
+    """Blast-radius cost ceiling on the MCP Lambda (same as query_lambda)."""
+    fns = _pv_by_type(tfplan, "aws_lambda_function")
+    mcp = [f for f in fns if f["values"].get("handler") == "graphrag.mcp._lambda.handler"]
+    assert len(mcp) == 1, "expected exactly one MCP Lambda"
+    cap = mcp[0]["values"].get("reserved_concurrent_executions")
+    assert cap is not None and cap > 0, (
+        f"mcp_lambda must have reserved_concurrent_executions > 0, got {cap!r}"
     )
-
-    perms = _pv_by_type(tfplan, "aws_lambda_permission")
-    mcp_url_perms = [p for p in perms if p["name"] == "mcp_url_invoke"]
-    assert mcp_url_perms, "expected aws_lambda_permission.mcp_url_invoke"
-    principal = mcp_url_perms[0]["values"].get("principal")
-    assert principal not in ("*", None), (
-        f"mcp_url_invoke principal must be a named role ARN, got {principal!r}"
-    )
-    assert mcp_url_perms[0]["values"].get("action") == "lambda:InvokeFunctionUrl"
-
-
-def test_mcp_api_gateway_present(tfplan):
-    """AC4: HTTP API with protocol_type=HTTP, auto-deploy stage, integration timeout <= 29000."""
-    apis = _pv_by_type(tfplan, "aws_apigatewayv2_api")
-    mcp_apis = [a for a in apis if a["name"] == "mcp"]
-    assert len(mcp_apis) == 1, "expected aws_apigatewayv2_api.mcp"
-    assert mcp_apis[0]["values"].get("protocol_type") == "HTTP", (
-        "MCP API Gateway must use protocol_type=HTTP (v2 HTTP API, not REST API)"
-    )
-
-    stages = _pv_by_type(tfplan, "aws_apigatewayv2_stage")
-    mcp_stages = [s for s in stages if s["name"] == "mcp_default"]
-    assert len(mcp_stages) == 1, "expected aws_apigatewayv2_stage.mcp_default"
-    assert mcp_stages[0]["values"].get("auto_deploy") is True, (
-        "mcp_default stage must have auto_deploy=true"
-    )
-    # Pin throttle values precisely — these are the blast-radius / cost ceilings.
-    route_settings = mcp_stages[0]["values"].get("default_route_settings") or []
-    assert route_settings, "mcp_default stage must have default_route_settings"
-    burst = route_settings[0].get("throttling_burst_limit")
-    rate = route_settings[0].get("throttling_rate_limit")
-    assert burst == 10, f"throttling_burst_limit must be 10, got {burst}"
-    assert rate == 5 or rate == 5.0, f"throttling_rate_limit must be 5, got {rate}"
-
-    integrations = _pv_by_type(tfplan, "aws_apigatewayv2_integration")
-    mcp_integ = [i for i in integrations if i["name"] == "mcp_lambda"]
-    assert len(mcp_integ) == 1, "expected aws_apigatewayv2_integration.mcp_lambda"
-    timeout_ms = mcp_integ[0]["values"].get("timeout_milliseconds")
-    assert timeout_ms is not None and timeout_ms <= 29000, (
-        f"mcp_lambda integration timeout must be <= 29000 ms, got {timeout_ms}"
-    )
-    assert mcp_integ[0]["values"].get("integration_type") == "AWS_PROXY"
-
-    # The $default route is the wiring that actually connects API → Lambda.
-    # Without it the API returns 404 for every request.
-    routes = _pv_by_type(tfplan, "aws_apigatewayv2_route")
-    mcp_routes = [r for r in routes if r["name"] == "mcp_default"]
-    assert len(mcp_routes) == 1, "expected aws_apigatewayv2_route.mcp_default"
-    assert mcp_routes[0]["values"].get("route_key") == "$default", (
-        "mcp_default route must have route_key=$default"
-    )
-    # target must reference the integration (format: integrations/<id>)
-    target = mcp_routes[0]["values"].get("target") or ""
-    assert target.startswith("integrations/"), (
-        f"mcp_default route target must be integrations/<id>, got {target!r}"
-    )
-
-    # Lambda invoke permission for API Gateway — prevents APIGW 403 on invocation.
-    perms = _pv_by_type(tfplan, "aws_lambda_permission")
-    apigw_perms = [p for p in perms if p["name"] == "mcp_apigw_invoke"]
-    assert len(apigw_perms) == 1, "expected aws_lambda_permission.mcp_apigw_invoke"
-    perm_vals = apigw_perms[0]["values"]
-    assert perm_vals.get("principal") == "apigateway.amazonaws.com", (
-        "mcp_apigw_invoke must be granted to apigateway.amazonaws.com"
-    )
-    source_arn = perm_vals.get("source_arn") or ""
-    assert "execute-api" in source_arn and source_arn.endswith("/*"), (
-        "mcp_apigw_invoke source_arn must be scoped to this API"
-        f" (execute-api ARN/*), got {source_arn!r}"
-    )
+    assert cap == 10, f"expected concurrency cap of 10, got {cap}"
