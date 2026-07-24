@@ -664,17 +664,13 @@ def test_mcp_lambda_present(tfplan):
     env_vars = env_blocks[0].get("variables", {}) if env_blocks else {}
     required_env = {"NEPTUNE_SPARQL_ENDPOINT", "OPENSEARCH_ENDPOINT", "SYNTHESIS_MODEL_ID"}
     missing = required_env - set(env_vars)
-    assert not missing, (
-        f"mcp_lambda missing required env vars: {missing}"
-    )
+    assert not missing, f"mcp_lambda missing required env vars: {missing}"
 
 
 def test_mcp_role_opensearch_readonly(tfplan):
     """mcp_lambda_role OpenSearch grant is read-only (Get + Post + Head only; no Put/Delete)."""
     mcp_os_policies = [
-        r
-        for r in _pv_by_type(tfplan, "aws_iam_role_policy")
-        if r["name"] == "mcp_opensearch"
+        r for r in _pv_by_type(tfplan, "aws_iam_role_policy") if r["name"] == "mcp_opensearch"
     ]
     assert len(mcp_os_policies) == 1, "expected exactly one mcp_opensearch policy"
     policy_str = mcp_os_policies[0]["values"].get("policy")
@@ -697,9 +693,7 @@ def test_mcp_role_opensearch_readonly(tfplan):
 def test_mcp_role_neptune_readonly(tfplan):
     """AC2: mcp_lambda_role Neptune grant is READ-ONLY (ADR-0011 backstop)."""
     mcp_policies = [
-        r
-        for r in _pv_by_type(tfplan, "aws_iam_role_policy")
-        if r["name"].startswith("mcp_neptune")
+        r for r in _pv_by_type(tfplan, "aws_iam_role_policy") if r["name"].startswith("mcp_neptune")
     ]
     assert len(mcp_policies) == 1, (
         f"expected exactly 1 neptune policy on mcp_lambda_role, found {len(mcp_policies)}"
