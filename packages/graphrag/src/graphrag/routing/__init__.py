@@ -15,10 +15,11 @@ from __future__ import annotations
 import time
 
 from graphrag.routing._bedrock_router import BedrockQueryRouter
-from graphrag.routing._rule_router import AMBIGUOUS, RuleQueryRouter
+from graphrag.routing._rule_router import AMBIGUOUS, RuleQueryRouter, _AmbiguousType
 from graphrag.routing._types import LegSpan, StrategyEnum, StrategyTrace
 
 __all__ = [
+    "AMBIGUOUS",
     "BedrockQueryRouter",
     "LegSpan",
     "RuleQueryRouter",
@@ -62,8 +63,8 @@ def route_ask(
     result = rule_router.route(question, entity_uris=entity_uris)
     router_ms = int((time.monotonic() - t0) * 1000)
 
-    if result is not AMBIGUOUS:
-        strategy: StrategyEnum = result  # type: ignore[assignment]
+    if not isinstance(result, _AmbiguousType):
+        strategy: StrategyEnum = result
         return StrategyTrace(
             strategy=strategy,
             decided_by="rule",

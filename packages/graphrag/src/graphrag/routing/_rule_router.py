@@ -28,8 +28,27 @@ from graphrag.routing._types import StrategyEnum
 # ---------------------------------------------------------------------------
 # Sentinel for "could not resolve — escalate to BedrockQueryRouter"
 # ---------------------------------------------------------------------------
-_AMBIGUOUS: object = object()
-AMBIGUOUS: object = _AMBIGUOUS  # public alias for callers
+
+
+class _AmbiguousType:
+    """Distinct type for the ambiguous sentinel — enables ``isinstance`` checks.
+
+    ``ambiguous`` is never a ``StrategyEnum`` member; this type makes the
+    distinction explicit at the type-checker level.
+    """
+
+    _instance: _AmbiguousType | None = None
+
+    def __new__(cls) -> _AmbiguousType:
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __repr__(self) -> str:
+        return "AMBIGUOUS"
+
+
+AMBIGUOUS: _AmbiguousType = _AmbiguousType()
 
 
 class RuleQueryRouter:
@@ -43,7 +62,7 @@ class RuleQueryRouter:
         self,
         question: str,
         entity_uris: list[str] | None = None,
-    ) -> StrategyEnum | object:
+    ) -> StrategyEnum | _AmbiguousType:
         """Classify *question* and return a :class:`StrategyEnum` or ``AMBIGUOUS``.
 
         Parameters
@@ -79,7 +98,7 @@ class RuleQueryRouter:
 
         # ── Rule 3: multiple entity URIs, no dominant signal → ambiguous ─────
         if len(all_uris) >= 2:
-            return _AMBIGUOUS
+            return AMBIGUOUS
 
         # ── Rule 4: single entity URI → hybrid_graph ─────────────────────────
         if len(all_uris) == 1:
