@@ -329,4 +329,22 @@ open = [
   # only AuthType=AWS_IAM is restated. design.md:332,398-403,880.
   {slug = "biz-ops-functionurl-scoped-principal-restate", source = "docs/rfc/0004-biz-ops-kg-pivot.md"},
 
+  # docs/product/roadmap.md predates the ini-002 pivot (Last updated 2026-06-23):
+  # its Now/Next/Later sections describe the superseded K8s-demo slices and it has
+  # no ini-002 section — so the OTEL shaping ship (and every prior ini-002 shape
+  # artifact) is not reflected there. Reconcile: add an ini-002 section covering the
+  # now-empty shaping queue + the remaining work queue, and move/retire the superseded
+  # demo slices. Do when the ini-002 work queue starts landing, so the roadmap tracks
+  # real in-flight work rather than a single doc line. This is the roadmap companion
+  # to the workspace.toml queue.
+  {slug = "roadmap-reconcile-ini-002-pivot", source = "docs/specs/spec-otel-observability/"},
+
+  # OTEL trace/metric export "drops silently" when the OTLP endpoint is unreachable
+  # (correct for offline CI). In production the same silence means a broken ADOT
+  # collector export pipeline is undetectable — a monitoring blind spot for timing
+  # telemetry (separate from the security audit log). Add a CloudWatch alarm on the
+  # ADOT collector's export-failure metric. Owner: infra-tf/mcp-otel-lambda. Surfaced
+  # by the spec-otel-observability security review (Nit 6).
+  {slug = "otel-collector-export-failure-alarm", source = "docs/specs/spec-otel-observability/"},
+
 ]
