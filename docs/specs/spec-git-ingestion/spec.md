@@ -16,7 +16,7 @@
 
 The `graphrag.ingestion.git` module implements the Fargate ingestion task orchestrator that drives the Bronze → Silver → Gold medallion pipeline from a git commit-SHA delta signal. It provides:
 
-1. **`GitDeltaReader`** — reads `last_commit_sha` from the S3 manifest; runs `git diff <last_sha>..HEAD --name-status`; parses the output into add, modify, and delete sets. Falls back to a full rescan (empty-tree SHA `4b825dc642cb6eb9a060e54bf8d69288fbee4904`) when the manifest is absent or corrupt.
+1. **`GitDeltaReader`** — reads `last_commit_sha` from the S3 manifest; runs `git diff <last_sha>..HEAD --name-status`; parses the output into add, modify, and delete sets. Falls back to a full rescan (empty-tree SHA `4b825dc642cb6eb9a060e54bf8d69288fbee4904`) when the manifest is absent or corrupt. <!-- pragma: allowlist secret -->
 
 2. **`MedallionOrchestrator`** — dispatches each added/modified file to the extraction and cleansing pipeline (`spec-ingestion-extraction-cleanse`) and each deleted file to the Neptune DELETE + OpenSearch delete path. Drives the pipeline document by document; the Gold SHACL gate routes validation failures to `urn:graph:quarantine` without stopping the run.
 
@@ -54,7 +54,7 @@ This module owns the orchestration loop and the Neptune/OpenSearch coordination.
 ## Testing Strategy
 
 - **TDD** — `GitDeltaReader` delta parsing (AC1–AC2): fixture `--name-status` output strings for add (`A`), modify (`M`), rename (`R100`), and delete (`D`); assert correct set membership. Rename is treated as delete-old + add-new.
-- **TDD** — `GitDeltaReader` manifest fallback (AC2): stub S3 client that raises `NoSuchKey`; assert `last_sha = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"` (empty-tree SHA) is used and `git diff 4b825dc642cb6eb9a060e54bf8d69288fbee4904..HEAD` is the effective delta command.
+- **TDD** — `GitDeltaReader` manifest fallback (AC2): stub S3 client that raises `NoSuchKey`; assert `last_sha = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"` (empty-tree SHA) is used and `git diff 4b825dc642cb6eb9a060e54bf8d69288fbee4904..HEAD` is the effective delta command. <!-- pragma: allowlist secret -->
 - **TDD** — no-op for unchanged files (AC3): a delta with zero added/modified/deleted files produces zero S3 writes, zero Neptune operations, and zero embedding calls — confirmed via mock assertions.
 - **TDD** — delete path (AC5): fixture taxonomy graph with `<urn:doc:repo:path> biz:inPartition <urn:graph:descriptive>`; assert the orchestrator issues a `DELETE WHERE` scoped to `urn:graph:descriptive` for the document's triples and chunks, then a `DELETE WHERE` on the taxonomy entry, then an OpenSearch delete by `doc_uri`.
 - **TDD** — manifest write timing (AC8): assert `ManifestManager.write_sha()` is called exactly once, after `MedallionOrchestrator.process_all()` completes, even when some documents are quarantined.
@@ -65,7 +65,7 @@ This module owns the orchestration loop and the Neptune/OpenSearch coordination.
 ## Acceptance Criteria
 
 - [x] `GitDeltaReader` correctly classifies `git diff --name-status` output lines: `A <path>` → added; `M <path>` → modified; `D <path>` → deleted; `R100 <old> <new>` → old path deleted + new path added.
-- [x] When `manifest/last_commit_sha` is absent from S3 (key does not exist), `GitDeltaReader` uses `last_sha = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"` (the empty-tree SHA), producing a full-corpus rescan from the initial commit.
+- [x] When `manifest/last_commit_sha` is absent from S3 (key does not exist), `GitDeltaReader` uses `last_sha = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"` (the empty-tree SHA), producing a full-corpus rescan from the initial commit. <!-- pragma: allowlist secret -->
 - [x] Unchanged files (files present in HEAD but not in the `git diff` output) produce zero S3 writes, zero Neptune SPARQL calls, and zero Bedrock embedding calls.
 - [x] An added file produces, in order: `process_document()` (pipeline owns Silver + Gold S3 writes) → Neptune SPARQL `INSERT DATA` into the partition graph (if outcome=`loaded`) or `INSERT` into quarantine (if outcome=`quarantined`) → taxonomy graph `INSERT DATA` (loaded only) → OpenSearch upsert (loaded only).
 - [x] A modified file (action `M`) is treated as delete-old-version then add-new-version: the orchestrator first issues `DELETE WHERE` for the old document's triples and chunks from the resolved partition graph, then `DELETE WHERE` on the taxonomy entry, then calls `process_document()` and follows the add path. After a modify run, the Neptune partition graph contains only the new SHA's triples — no old-SHA triples survive.
@@ -78,7 +78,7 @@ This module owns the orchestration loop and the Neptune/OpenSearch coordination.
 - [x] The delete path does not issue `DROP GRAPH` — it uses `DELETE WHERE { GRAPH <partition> { <doc_uri> ?p ?o } }` and a separate `DELETE WHERE` for chunks.
 - [x] `terraform plan` output for `apps/infra-tf/` confirms the ingestion subnet route table has no `0.0.0.0/0` route to an internet gateway or NAT gateway (no-NAT fitness test — offline CI, no AWS credentials needed to run `terraform plan` on a mock backend).
 - [x] A document failing the SHACL gate (e.g. `biz:Policy` missing `biz:effectiveDate`) routes to `urn:graph:quarantine` with a structured `biz:quarantineReason` triple; no Gold S3 artifact is written; no Neptune partition INSERT is issued.
-- [x] When `last_commit_sha` is `"4b825dc642cb6eb9a060e54bf8d69288fbee4904"` (empty-tree SHA), every file in `HEAD` is in the added set — a full rescan with no skips.
+- [x] When `last_commit_sha` is `"4b825dc642cb6eb9a060e54bf8d69288fbee4904"` (empty-tree SHA), every file in `HEAD` is in the added set — a full rescan with no skips. <!-- pragma: allowlist secret -->
 - [x] `ruff check` and `mypy` pass on `packages/graphrag/src/graphrag/ingestion/` with zero errors.
 
 ## Assumptions

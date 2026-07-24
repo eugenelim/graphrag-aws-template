@@ -25,7 +25,7 @@ __all__ = [
 ]
 
 # git empty-tree SHA — used as a sentinel to trigger a full-corpus rescan.
-_EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+_EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"  # pragma: allowlist secret
 _MANIFEST_KEY = "manifest/last_commit_sha"
 
 # git diff --name-status lines are tab-separated:
