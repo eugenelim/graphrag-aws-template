@@ -1,6 +1,6 @@
 # Spec: spec-ingestion-extraction-cleanse
 
-- **Status:** Draft <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Approved <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** [ADR-0016](../../adr/0016-git-ingestion-commit-sha-delta-medallion.md) (medallion layers — Bronze/Silver/Gold; format router decision; PII flag-and-surface model); [ADR-0012](../../adr/0012-owl-schema-only-and-named-graph-partition.md) (SHACL gate before Neptune LOAD; `biz:gitCommitSHA` required; quarantine routing on violation; PII stays in natural partition); [ADR-0011](../../adr/0011-neptune-sparql-rdf-engine-and-text2sparql-guard.md) (`ingestion_task_role` WriteDataViaQuery for quarantine INSERT); `spec-git-ingestion` (caller of `process_document()`)

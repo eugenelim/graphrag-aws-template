@@ -1,6 +1,6 @@
 # Spec: spec-mcp-tool-server
 
-- **Status:** Shipped <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Approved → Implementing <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** [ADR-0014](../../adr/0014-mcp-tool-server.md) (six generic typed tools; FastMCP + Mangum; mock server; two deployment targets; content-capture policy — primary decision this spec implements); [ADR-0013](../../adr/0013-multi-strategy-server-side-routing.md) (`ask` delegates to `RuleQueryRouter` → `BedrockQueryRouter` cascade); [ADR-0011](../../adr/0011-neptune-sparql-rdf-engine-and-text2sparql-guard.md) (`mcp_lambda_role` read-only: `ReadDataViaQuery` + `connect`); [ADR-0015](../../adr/0015-otel-observability.md) (content-capture policy: question text never in spans or log lines above DEBUG; ADOT layer on Lambda); [ADR-0012](../../adr/0012-owl-schema-only-and-named-graph-partition.md) (named-graph partition model the tools operate over)
@@ -147,7 +147,7 @@ The fixture corpus (`packages/graphrag/tests/fixtures/`) contains: 3 `biz:Policy
 ## Acceptance Criteria
 
 - [x] AC1 — The FastMCP instance's generated MCP schema, parsed as JSON, contains exactly six tools: `ask`, `search`, `search_graph`, `get_policies`, `query`, `summarize`. Each tool's `inputSchema` matches the decorated function's type annotations (verified by FastMCP's own schema introspection test fixture). **Verified by `tests/mcp/test_schema.py`.**
-- [x] AC2 — Tool smoke (in-process): all six tools invoked in-process via `mcp.call_tool()` with the fixture corpus return non-empty, schema-valid responses. **Verified by `tests/mcp/test_mock_server.py`.** (deferred: ac2-subprocess-transport) — subprocess + HTTP POST smoke (`python -m graphrag.mcp --mock`) deferred to `spec-otel-observability` integration phase; see backlog.
+- [x] AC2 — Tool smoke (in-process): all six tools invoked in-process via `mcp.call_tool()` with the fixture corpus return non-empty, schema-valid responses. **Verified by `tests/mcp/test_mock_server.py`.** Subprocess + HTTP POST smoke: `python -m graphrag.mcp --mock` started in a real subprocess with no AWS env vars; all six tools invoked via HTTP POST to the streamable-http endpoint; each returns HTTP 200 + schema-valid JSON; subprocess exits cleanly after SIGTERM. **Verified by `tests/mcp/test_mock_subprocess.py`.**
 - [x] AC3 — Two-target structural parity: `Mangum(mcp.streamable_http_app(), lifespan="off")` instantiates without error; in-process tool calls return schema-identical responses for mock and Mangum-wrapped ASGI app. **Verified by `tests/mcp/test_two_target_parity.py`.** (deferred: ac3-api-gw-round-trip) — full API Gateway event round-trip deferred until Terraform module is wired; see backlog.
 - [x] AC4 — `ask(question="What are the HR policies?")` against the mock fixture corpus completes in < 30 s (wall clock) — this confirms the mock path has no runaway loop or blocking call. If mock execution exceeds 20 s, a `WARNING`-level log line is emitted: `"ask path exceeded 20s warning threshold"`. **Verified by `tests/mcp/test_timing.py`.**
 - [x] AC5 — A pytest test in `test_content_capture_conventions.py` reads the source of `_tools.py`, `text2sparql/_orchestrator.py`, and `text2sparql/_generator.py` and asserts none of the following strings appear as span attribute keys: `question.text`, `query.text`, `sparql.query`, `document.content`, `chunk.text`. (Static source inspection — no runtime needed.) **Verified by `tests/mcp/test_content_capture_conventions.py`.**
@@ -157,8 +157,7 @@ The fixture corpus (`packages/graphrag/tests/fixtures/`) contains: 3 `biz:Policy
 
 ### Deferred items (backlog)
 
-- **ac2-subprocess-transport:** Start `python -m graphrag.mcp --mock` in a subprocess with no AWS env vars; POST each of the 6 tools to `localhost:8000`; assert HTTP 200 + schema-valid JSON. Deferred to integration phase alongside `spec-otel-observability` (requires live server process management in CI, which is out of scope for the offline mock spec).
-- **ac3-api-gw-round-trip:** Drive `Mangum` handler with a fully-formed synthetic API Gateway v2 HTTP payload event; assert end-to-end response parity. Deferred until `infra-tf/mcp-lambda` is wired and the API Gateway event schema is confirmed against a live deployment.
+- **ac3-api-gw-round-trip:** Drive `Mangum` handler with a fully-formed synthetic API Gateway v2 HTTP payload event; assert end-to-end response parity. Deferred until `infra-tf/mcp-lambda` is wired and the API Gateway event schema is confirmed against a live deployment. (deferred: ac3-api-gw-round-trip)
 
 ## Assumptions
 
