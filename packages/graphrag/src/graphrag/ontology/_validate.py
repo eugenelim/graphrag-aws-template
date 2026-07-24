@@ -1,4 +1,5 @@
 """SHACL validation API for graphrag.ontology."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

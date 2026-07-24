@@ -1,4 +1,5 @@
 """Class-shape completeness lint for graphrag.ontology."""
+
 from __future__ import annotations
 
 import rdflib
@@ -17,7 +18,5 @@ def check_class_shape_completeness(
     A non-empty list names the unshaped classes; adding a class without a shape fails CI.
     """
     owl_classes = {str(c) for c in ontology_graph.subjects(RDF.type, OWL.Class)}
-    shaped_classes = {
-        str(c) for _, _, c in shapes_graph.triples((None, _SH_TARGET_CLASS, None))
-    }
+    shaped_classes = {str(c) for _, _, c in shapes_graph.triples((None, _SH_TARGET_CLASS, None))}
     return sorted(owl_classes - shaped_classes)
