@@ -66,7 +66,9 @@ def test_parse_rename_any_similarity() -> None:
 
 
 def test_manifest_missing_returns_empty_tree_sha() -> None:
-    """NoSuchKey on manifest read → last_sha = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'."""
+    """NoSuchKey on manifest read → last_sha falls back to the git empty-tree SHA.
+    Empty-tree SHA: 4b825dc642cb6eb9a060e54bf8d69288fbee4904.  # pragma: allowlist secret
+    """
     mock_s3 = MagicMock()
 
     class _FakeClientError(Exception):
