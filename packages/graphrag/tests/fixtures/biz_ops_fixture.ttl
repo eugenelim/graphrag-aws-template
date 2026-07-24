@@ -24,7 +24,6 @@ GRAPH <urn:graph:normative> {
         biz:effectiveDate "2024-01-01" ;
         biz:scope "hr" ;
         biz:hasPII false ;
-        biz:gitCommitSHA "abc123def456" ;
         rdfs:label "HR Leave Policy"@en .
 
     <urn:biz:policy:expense-reimbursement>
@@ -33,7 +32,6 @@ GRAPH <urn:graph:normative> {
         biz:effectiveDate "2024-03-15" ;
         biz:scope "finance" ;
         biz:hasPII false ;
-        biz:gitCommitSHA "789012abc345" ;
         rdfs:label "Expense Reimbursement Policy"@en .
 
     <urn:biz:policy:data-handling>
@@ -42,7 +40,6 @@ GRAPH <urn:graph:normative> {
         biz:effectiveDate "2024-06-01" ;
         biz:scope "all" ;
         biz:hasPII true ;
-        biz:gitCommitSHA "cdef012345678" ;
         rdfs:label "Data Handling Policy"@en .
 }
 
@@ -54,13 +51,11 @@ GRAPH <urn:graph:descriptive> {
     <urn:biz:sop:employee-onboarding>
         a biz:SOP ;
         schema:name "Employee Onboarding SOP" ;
-        biz:gitCommitSHA "111aaa222bbb" ;
         rdfs:label "Employee Onboarding SOP"@en .
 
     <urn:biz:sop:expense-submission>
         a biz:SOP ;
         schema:name "Expense Submission SOP" ;
-        biz:gitCommitSHA "333ccc444ddd" ;
         rdfs:label "Expense Submission SOP"@en .
 
     <urn:biz:domain:hr>
