@@ -104,6 +104,7 @@ shipped = [
   "packages/graphrag/neptune-sparql-store",
   "packages/graphrag/mcp-proxy",
   "packages/graphrag/mcp-mock-server",
+  "packages/graphrag/shacl-validation",
 ]
 active  = []
 queue   = [
@@ -116,12 +117,7 @@ queue   = [
     "shape:spec-rdf-owl-ontology",
     "shape:spec-provenance-citations",
   ]},
-  # SHACL validation gate — pyshacl wrapper; fires between RDF triple emit and Neptune LOAD;
-  # on violation routes to quarantine graph with structured violation report; CI-safe (rdflib, no AWS)
-  {path = "packages/graphrag/shacl-validation",            needs = [
-    "work:packages/graphrag/neptune-sparql-store",
-    "shape:spec-shacl-validation",
-  ]},
+  # SHACL validation gate — shipped 2026-07-23 (PR shacl-validation)
   # Extraction + cleansing Fargate task: format router (pandoc/docling/markitdown/Textract),
   # Silver artifact write, PII flagging, quarantine graph, SHACL gate, Gold artifact (chunks + PROV-O).
   {path = "packages/graphrag/ingestion-extraction-cleanse", needs = [
@@ -340,6 +336,15 @@ open = [
   # the ephemeral teardown-first demo (ADR-0002); revisit in a regulated deployment.
   # Owner: apps/infra-tf/neptune.tf. Surfaced by security review of neptune-sparql-engine.
   {slug = "neptune-audit-log-export", source = "docs/specs/neptune-sparql-engine/"},
+
+  # ── graphrag.validation.shacl deferred ACs ───────────────────────────────
+
+  # Wire ShaclGate.validate() into the ingestion-extraction-cleanse pipeline:
+  # replace the inline validate_graph() + quarantine INSERT in that spec's
+  # _emitter.py / _provenance.py with a call to ShaclGate.validate().
+  # The quarantine INSERT owner must be exactly one module (ShaclGate).
+  # Owner: packages/graphrag/ingestion-extraction-cleanse.
+  {slug = "shacl-gate-ingestion-seam", source = "docs/specs/spec-shacl-validation/spec.md"},
 
   # ── graphrag.mcp deferred ACs (PR #69) ────────────────────────────────────
 
