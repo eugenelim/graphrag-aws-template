@@ -125,7 +125,7 @@ def test_timeout_default_is_60(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_round_trip_posts_frame_and_writes_response() -> None:
     """proxy_loop forwards a JSON-RPC frame and writes the response + newline (AC3)."""
     endpoint = "https://example.execute-api.us-east-1.amazonaws.com/prod/mcp"
-    api_key = "test-api-key"
+    api_key = "test-api-key"  # pragma: allowlist secret
     request_frame = json.dumps({"jsonrpc": "2.0", "method": "tools/list", "id": 1})
     response_body = json.dumps({"jsonrpc": "2.0", "result": {"tools": []}, "id": 1})
 
@@ -163,7 +163,7 @@ def test_round_trip_posts_frame_and_writes_response() -> None:
 def test_empty_lines_skipped_no_request_sent() -> None:
     """Blank stdin lines do not produce an HTTP request."""
     endpoint = "https://example.execute-api.us-east-1.amazonaws.com/prod/mcp"
-    api_key = "test-api-key"
+    api_key = "test-api-key"  # pragma: allowlist secret
 
     stdin = io.StringIO("\n  \n\t\n")
     stdout = io.StringIO()
@@ -181,7 +181,7 @@ def test_empty_lines_skipped_no_request_sent() -> None:
 def test_url_error_writes_jsonrpc_error_frame() -> None:
     """On URLError, proxy_loop writes a valid JSON-RPC error frame (AC4)."""
     endpoint = "https://example.execute-api.us-east-1.amazonaws.com/prod/mcp"
-    api_key = "test-api-key"
+    api_key = "test-api-key"  # pragma: allowlist secret
     request_frame = json.dumps({"jsonrpc": "2.0", "method": "tools/list", "id": 1})
 
     def fail_open(req: urllib.request.Request, timeout: int) -> None:
@@ -206,7 +206,7 @@ def test_url_error_writes_jsonrpc_error_frame() -> None:
 def test_generic_exception_writes_jsonrpc_error_frame() -> None:
     """On any Exception, proxy_loop writes a valid JSON-RPC error frame (AC4)."""
     endpoint = "https://example.execute-api.us-east-1.amazonaws.com/prod/mcp"
-    api_key = "test-api-key"
+    api_key = "test-api-key"  # pragma: allowlist secret
     request_frame = json.dumps({"jsonrpc": "2.0", "method": "tools/list", "id": 2})
 
     def raise_generic(req: urllib.request.Request, timeout: int) -> None:
@@ -231,7 +231,7 @@ def test_api_key_not_in_startup_log(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """main() startup message must not contain the api key value (AC5)."""
-    api_key = "super-secret-key-value-12345"
+    api_key = "super-secret-key-value-12345"  # pragma: allowlist secret
     monkeypatch.setenv(
         "MCP_ENDPOINT_URL",
         "https://example.execute-api.us-east-1.amazonaws.com/prod/mcp",
