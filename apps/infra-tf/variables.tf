@@ -107,3 +107,42 @@ variable "adot_layer_arn" {
     error_message = "adot_layer_arn must be a valid Lambda layer ARN (arn:aws:lambda:<region>:<account>:layer:<name>:<version>)."
   }
 }
+
+# ── Git ingestion trigger variables (CodePipeline + EventBridge, ADR-0016) ────
+
+variable "codestar_connection_arn" {
+  type        = string
+  description = <<-DESC
+    ARN of the AWS CodeStar Connections connection to GitHub. Created via the AWS Console
+    (Connections → Create connection → GitHub) and must be in AVAILABLE status before the
+    CodePipeline pipeline can pull from GitHub. Terraform provisions the pipeline but
+    cannot complete the OAuth handshake.
+    Format: arn:aws:codestar-connections:<region>:<account-id>:connection/<uuid>
+  DESC
+
+  validation {
+    condition     = can(regex("^arn:aws:codestar-connections:[a-z0-9-]+:[0-9]{12}:connection/[0-9a-f-]+$", var.codestar_connection_arn))
+    error_message = "codestar_connection_arn must be a valid CodeStar connection ARN: arn:aws:codestar-connections:<region>:<account-id>:connection/<uuid>."
+  }
+}
+
+variable "github_repo_id" {
+  type        = string
+  description = "GitHub repository to mirror (format: owner/repo, e.g. acme/biz-ops-docs). The CodePipeline source action mirrors this repo to S3 on each push."
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", var.github_repo_id))
+    error_message = "github_repo_id must be in owner/repo format (e.g. acme/biz-ops-docs)."
+  }
+}
+
+variable "github_branch" {
+  type        = string
+  description = "Branch to mirror from the GitHub repository (default: main)."
+  default     = "main"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9._/-]+$", var.github_branch))
+    error_message = "github_branch must use git-ref-legal characters (A-Z a-z 0-9 . _ / -)."
+  }
+}

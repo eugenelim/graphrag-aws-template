@@ -53,6 +53,12 @@ def tfplan(tmp_path_factory):
                 "-var=budget_alarm_email=test@example.com",
                 "-var=invoker_role_arn=arn:aws:iam::123456789012:role/invoker",
                 "-var=mcp_invoker_role_arn=arn:aws:iam::123456789012:role/mcp-invoker",
+                (
+                    "-var=codestar_connection_arn="
+                    "arn:aws:codestar-connections:us-east-1:123456789012:"
+                    "connection/12345678-1234-1234-1234-123456789012"  # pragma: allowlist secret
+                ),
+                "-var=github_repo_id=owner/repo",
             ],
             cwd=infra_dir,
             check=True,
