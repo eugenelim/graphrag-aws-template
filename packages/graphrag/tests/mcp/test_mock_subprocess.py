@@ -11,6 +11,7 @@ Marked ``pytest.mark.timeout(60)`` (effective when pytest-timeout is installed).
 
 from __future__ import annotations
 
+import collections.abc
 import json
 import os
 import signal
@@ -79,7 +80,7 @@ def _parse_sse_result(response_text: str) -> dict:
 
 
 @pytest.fixture(scope="module")
-def mcp_session() -> pytest.Generator[dict, None, None]:  # type: ignore[type-arg]
+def mcp_session() -> collections.abc.Generator[dict, None, None]:
     """Start the mock server, initialise an MCP session, yield session state.
 
     Yields a dict with ``session_id`` and ``port``.  Tears down the server
@@ -270,15 +271,35 @@ def test_summarize_subprocess(mcp_session: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Clean exit check: subprocess exits with code 0 after SIGTERM
+# Clean exit check: subprocess exits cleanly after SIGTERM
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.timeout(60)
 def test_subprocess_clean_exit(mcp_session: dict) -> None:
-    """The mock server subprocess has not crashed by the end of the test module."""
+    """The mock server exits cleanly (within 10 s) after SIGTERM.
+
+    This test runs last (file-definition order for module-scoped fixture) and
+    intentionally terminates the server so the fixture teardown is a no-op.
+    """
     proc: subprocess.Popen[bytes] = mcp_session["proc"]
-    # Server should still be running after all tool calls
-    assert proc.poll() is None, f"Mock server crashed during tests (exit code {proc.returncode})"
-    # SIGTERM is sent by the fixture teardown; here we verify the server is alive
-    # Signal handling (clean exit) is verified in the fixture teardown itself.
+    assert proc.poll() is None, (
+        f"Mock server already crashed before clean-exit test (returncode {proc.returncode})"
+    )
+
+    proc.send_signal(signal.SIGTERM)
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=5)
+        pytest.fail("Mock server did not respond to SIGTERM within 10 s")
+
+    # POSIX: process killed by SIGTERM has returncode = -signal.SIGTERM (-15).
+    # A server that calls sys.exit(0) on SIGTERM would have returncode 0.
+    # Both are "clean" (no crash, no hang).
+    expected = (0, -signal.SIGTERM)
+    assert proc.returncode in expected, (
+        f"Mock server exited with unexpected returncode {proc.returncode!r} "
+        f"(expected one of {expected})"
+    )

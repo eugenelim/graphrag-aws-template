@@ -60,6 +60,10 @@ dev = [
     "graphrag-aws-demo[ingest]",
     # MCP server deps — pulls in mcp, pydantic, mangum for offline tests.
     "graphrag-aws-demo[server]",
+    # HTTP client used by the subprocess transport test (test_mock_subprocess.py).
+    "requests>=2.28",
+    # Enforces @pytest.mark.timeout; without this the markers are silently inert.
+    "pytest-timeout>=2.0",
 ]
 
 [project.scripts]
