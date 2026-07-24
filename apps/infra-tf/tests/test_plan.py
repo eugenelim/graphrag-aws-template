@@ -422,10 +422,12 @@ def test_store_sg_ingress_rules_exact(tfplan):
         if "opensearch_from" in r["name"]
     ]
     assert len(neptune_ingress) == 4, (
-        f"neptune_sg must have exactly 4 ingress rules (ingestion + smoke + query + mcp), found {len(neptune_ingress)}"
+        "neptune_sg must have exactly 4 ingress rules"
+        f" (ingestion + smoke + query + mcp), found {len(neptune_ingress)}"
     )
     assert len(opensearch_ingress) == 4, (
-        f"opensearch_sg must have exactly 4 ingress rules (ingestion + vector_smoke + query + mcp), found {len(opensearch_ingress)}"
+        "opensearch_sg must have exactly 4 ingress rules"
+        f" (ingestion + vector_smoke + query + mcp), found {len(opensearch_ingress)}"
     )
     for r in neptune_ingress:
         assert r["values"].get("from_port") == 8182
@@ -433,7 +435,12 @@ def test_store_sg_ingress_rules_exact(tfplan):
         assert r["values"].get("from_port") == 443
     # Verify expected source names (no public CIDR — all are referenced_security_group_id)
     neptune_names = {r["name"] for r in neptune_ingress}
-    assert neptune_names == {"neptune_from_ingestion", "neptune_from_smoke", "neptune_from_query", "neptune_from_mcp"}
+    assert neptune_names == {
+        "neptune_from_ingestion",
+        "neptune_from_smoke",
+        "neptune_from_query",
+        "neptune_from_mcp",
+    }
     opensearch_names = {r["name"] for r in opensearch_ingress}
     assert opensearch_names == {
         "opensearch_from_ingestion",
@@ -743,7 +750,7 @@ def test_mcp_function_url_iam_auth(tfplan):
 
 
 def test_mcp_api_gateway_present(tfplan):
-    """AC4: HTTP API present with protocol_type=HTTP, auto-deploy stage, and integration timeout <= 29000."""
+    """AC4: HTTP API with protocol_type=HTTP, auto-deploy stage, integration timeout <= 29000."""
     apis = _pv_by_type(tfplan, "aws_apigatewayv2_api")
     mcp_apis = [a for a in apis if a["name"] == "mcp"]
     assert len(mcp_apis) == 1, "expected aws_apigatewayv2_api.mcp"
@@ -798,5 +805,6 @@ def test_mcp_api_gateway_present(tfplan):
     )
     source_arn = perm_vals.get("source_arn") or ""
     assert "execute-api" in source_arn and source_arn.endswith("/*"), (
-        f"mcp_apigw_invoke source_arn must be scoped to this API (execute-api ARN/*), got {source_arn!r}"
+        "mcp_apigw_invoke source_arn must be scoped to this API"
+        f" (execute-api ARN/*), got {source_arn!r}"
     )
