@@ -111,6 +111,7 @@ shipped = [
   "packages/graphrag/mcp-tool-server",
   "packages/graphrag/normative-retrieval",
   "packages/graphrag/rdf-owl-ontology-loader",
+  "packages/graphrag/multi-strategy-router",
 ]
 active  = []
 queue   = [
@@ -143,10 +144,7 @@ queue   = [
   # docs/update-existing-specs — shipped 2026-07-24 (PR #72)
 
   # Wave 4 — integration, observability, final infra + docs; gate on mcp-tool-server
-  {path = "packages/graphrag/multi-strategy-router",  needs = [
-    "work:packages/graphrag/mcp-tool-server",
-    "shape:spec-multi-strategy-routing",
-  ]},
+  # packages/graphrag/multi-strategy-router — shipped (PR pending)
   {path = "packages/graphrag/otel-instrumentation",   needs = [
     "work:packages/graphrag/mcp-tool-server",
     "shape:spec-otel-observability",
