@@ -104,6 +104,7 @@ shipped = [
   "packages/graphrag/neptune-sparql-store",
   "packages/graphrag/mcp-proxy",
   "packages/graphrag/mcp-mock-server",
+  "packages/graphrag/text2sparql-guarded",
 ]
 active  = []
 queue   = [
@@ -144,10 +145,7 @@ queue   = [
   # Thin wrapper: translates stdio MCP frames to HTTPS + x-api-key header.
   # No retrieval logic; same config schema as the mock server subprocess.
   # mcp-proxy shipped 2026-07-24 (PR #68)
-  {path = "packages/graphrag/text2sparql-guarded",    needs = [
-    "work:packages/graphrag/neptune-sparql-store",
-    "shape:spec-text2sparql-guarded",
-  ]},
+  # text2sparql-guarded shipped — moved to shipped section (PR in progress)
   {path = "packages/graphrag/normative-retrieval",    needs = [
     "work:packages/graphrag/neptune-sparql-store",
     "shape:spec-normative-partition",
@@ -340,6 +338,14 @@ open = [
   # the ephemeral teardown-first demo (ADR-0002); revisit in a regulated deployment.
   # Owner: apps/infra-tf/neptune.tf. Surfaced by security review of neptune-sparql-engine.
   {slug = "neptune-audit-log-export", source = "docs/specs/neptune-sparql-engine/"},
+
+  # ── text2sparql-guarded deferred ACs ───────────────────────────────────────
+
+  # AC8 deferred: live-smoke IAM backstop — confirm that a mcp_lambda_role-
+  # credentialed SPARQL POST of DROP GRAPH <urn:graph:normative> to the Neptune
+  # /sparql endpoint returns IAM AccessDeniedException (ADR-0011 Confirmation gate).
+  # Tagged @pytest.mark.live_aws; skipped in offline CI.
+  {slug = "text2sparql-live-smoke-iam-backstop", source = "docs/specs/spec-text2sparql-guarded/"},
 
   # ── graphrag.mcp deferred ACs (PR #69) ────────────────────────────────────
 

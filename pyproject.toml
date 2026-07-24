@@ -74,6 +74,9 @@ graphrag = ["aliases.yaml", "labels.yaml", "py.typed", "showcase/queries.yaml", 
 [tool.pytest.ini_options]
 testpaths = ["packages/graphrag/tests", "apps/ingestion/tests", "apps/infra/tests"]
 pythonpath = ["packages/graphrag/src", "apps", "apps/infra"]
+markers = [
+    "live_aws: marks tests that require a live AWS deployment (deselect with -m 'not live_aws')",
+]
 
 [tool.ruff]
 line-length = 100
