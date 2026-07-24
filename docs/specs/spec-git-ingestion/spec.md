@@ -76,7 +76,7 @@ This module owns the orchestration loop and the Neptune/OpenSearch coordination.
 - [ ] Re-running the orchestrator with the same commit SHA (same delta set) produces no exception and no incorrect state: Neptune INSERT for an existing triple is a no-op; OpenSearch upsert is idempotent; the manifest is overwritten with the same SHA.
 - [ ] All SPARQL writes use `ingestion_task_role` credentials (`WriteDataViaQuery` + `connect`). No SPARQL write is attempted from a context that uses `mcp_lambda_role`.
 - [ ] The delete path does not issue `DROP GRAPH` — it uses `DELETE WHERE { GRAPH <partition> { <doc_uri> ?p ?o } }` and a separate `DELETE WHERE` for chunks.
-- [ ] `terraform plan` output for `apps/infra-tf/` confirms the ingestion subnet route table has no `0.0.0.0/0` route to an internet gateway or NAT gateway (no-NAT fitness test — offline CI, no AWS credentials needed to run `terraform plan` on a mock backend).
+- [x] `terraform plan` output for `apps/infra-tf/` confirms the ingestion subnet route table has no `0.0.0.0/0` route to an internet gateway or NAT gateway (no-NAT fitness test — offline CI, no AWS credentials needed to run `terraform plan` on a mock backend).
 - [ ] A document failing the SHACL gate (e.g. `biz:Policy` missing `biz:effectiveDate`) routes to `urn:graph:quarantine` with a structured `biz:quarantineReason` triple; no Gold S3 artifact is written; no Neptune partition INSERT is issued.
 - [ ] When `last_commit_sha` is `"4b825dc42b"` (empty-tree SHA), every file in `HEAD` is in the added set — a full rescan with no skips.
 - [ ] `ruff check` and `mypy` pass on `packages/graphrag/src/graphrag/ingestion/` with zero errors.

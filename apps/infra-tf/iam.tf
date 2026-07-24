@@ -168,6 +168,26 @@ locals {
       Resource = "${aws_s3_bucket.corpus.arn}/silver/*"
     }]
   })
+
+  # Read-only access to the CodePipeline git mirror bucket (ADR-0016).
+  # GetObject on objects + ListBucket on the bucket — mirrors s3_read_policy above
+  # but scoped to the mirror bucket. Kept separate from corpus read so policy names
+  # remain self-describing and least-privilege audit is straightforward.
+  s3_read_git_mirror_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = "s3:GetObject"
+        Resource = "${aws_s3_bucket.git_mirror.arn}/*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = "s3:ListBucket"
+        Resource = aws_s3_bucket.git_mirror.arn
+      },
+    ]
+  })
 }
 
 # ── Roles + trust policies ─────────────────────────────────────────────────────
@@ -266,6 +286,28 @@ resource "aws_iam_role_policy" "ingestion_s3_put_silver" {
   name   = "s3-put-silver"
   role   = aws_iam_role.ingestion_task_role.id
   policy = local.s3_put_silver_policy
+}
+
+resource "aws_iam_role_policy" "ingestion_s3_git_mirror_read" {
+  name   = "s3-git-mirror-read"
+  role   = aws_iam_role.ingestion_task_role.id
+  policy = local.s3_read_git_mirror_policy
+}
+
+# The ingestion task calls codepipeline:GetPipelineExecution to resolve the HEAD commit
+# SHA from the CODEPIPELINE_EXECUTION_ID passed by the EventBridge input_transformer.
+# Scoped to the git-mirror pipeline ARN — no wildcard.
+resource "aws_iam_role_policy" "ingestion_codepipeline_get_execution" {
+  name = "codepipeline-get-execution"
+  role = aws_iam_role.ingestion_task_role.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = "codepipeline:GetPipelineExecution"
+      Resource = aws_codepipeline.git_mirror.arn
+    }]
+  })
 }
 
 # ── VectorProbeRole inline policies (2): OpenSearch data + Bedrock Titan ──────────

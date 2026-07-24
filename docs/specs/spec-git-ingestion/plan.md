@@ -1,7 +1,7 @@
 # Plan: spec-git-ingestion
 
 - **Spec:** [`spec.md`](spec.md)
-- **Status:** Drafting <!-- Drafting | Executing | Done -->
+- **Status:** Executing <!-- Drafting | Executing | Done -->
 
 > **Plan contract:** this is the implementation strategy. Unlike the spec, this
 > document is allowed to change as you learn. When it changes substantially
@@ -59,7 +59,7 @@ No AWS credentials are needed for T1–T4 unit tests. The no-NAT fitness test in
 ### Design decisions
 
 - **`GitDeltaReader` does not invoke a git binary.** In the Fargate task, the git repository is available as a local clone from S3 (via `aws s3 cp` + `git bundle unbundle`). In unit tests, `git diff` output is a fixture string — no subprocess call. The production path shells out to `git diff` once the bundle is reconstructed locally; this subprocess call is tested only in integration.
-- **S3 mirror bundle pattern.** CodePipeline mirrors the repo to S3 as a `git bundle` file. The Fargate task runs: `aws s3 cp s3://${GIT_MIRROR_BUCKET}/repo.bundle /tmp/repo.bundle && git clone /tmp/repo.bundle /tmp/repo`. This is VPC-private (S3 gateway endpoint, no NAT). The `GitDeltaReader` then shells to `git -C /tmp/repo diff`.
+- **S3 mirror format: CODE_ZIP (not git bundle).** CodePipeline's CodeStarSourceConnection delivers a `CODE_ZIP` artifact — a history-less source snapshot (no `.git` directory). The ADR's "git bundle" design was aspirational and unverified; this is the resolution of the "resolve before EXECUTE" prerequisite risk in this plan. The Fargate task (T1–T4) adapts: it unzips the snapshot (`latest/repo.zip`), compares file hashes against the previous manifest (snapshot-diff), and obtains the HEAD commit SHA by calling `codepipeline:GetPipelineExecution` with the `CODEPIPELINE_EXECUTION_ID` env var passed by the EventBridge `input_transformer`. The `git diff --name-status` mechanism described in AC1–AC2 becomes a snapshot-diff; those ACs are updated in T1 when the Python code is implemented.
 - **`DELETE WHERE` pattern for document deletion.** Two separate statements:
   1. Delete document triples: `DELETE WHERE { GRAPH <partition> { <doc_uri> ?p ?o } }`
   2. Delete chunk triples: `DELETE WHERE { GRAPH <partition> { ?chunk ?p ?o . ?chunk prov:wasDerivedFrom <doc_uri> } }`
@@ -237,3 +237,4 @@ packages/graphrag/tests/ingestion/
 ## Changelog
 
 - 2026-07-23: initial plan
+- 2026-07-24: T5 executing — Terraform infra shipped (CodePipeline, EventBridge, git_mirror S3 bucket, IAM roles). Resolved prerequisite risk: CodeStarSourceConnection delivers CODE_ZIP (history-less snapshot), not a git bundle. Updated S3 mirror format note; added EventBridge `input_transformer` to propagate `CODEPIPELINE_EXECUTION_ID`; added `codepipeline:GetPipelineExecution` IAM grant. AC1–AC2 `git diff` parsing will be adapted in T1 to snapshot-diff.
