@@ -114,6 +114,7 @@ shipped = [
   "docs/update-architecture-docs",
   "infra-tf/api-gateway-mcp",
   "packages/graphrag/multi-strategy-router",
+  "packages/graphrag/ingestion-extraction-cleanse",
 ]
 active  = []
 queue   = [
@@ -124,12 +125,6 @@ queue   = [
   # SHACL validation gate — shipped 2026-07-24 (PR #77)
   # Extraction + cleansing Fargate task: format router (pandoc/docling/markitdown/Textract),
   # Silver artifact write, PII flagging, quarantine graph, SHACL gate, Gold artifact (chunks + PROV-O).
-  {path = "packages/graphrag/ingestion-extraction-cleanse", needs = [
-    "work:packages/graphrag/neptune-sparql-store",
-    "work:packages/graphrag/shacl-validation",
-    "shape:spec-ingestion-extraction-cleanse",
-    "shape:spec-provenance-citations",
-  ]},
   {path = "packages/graphrag/git-ingestion-pipeline", needs = [
     "work:packages/graphrag/neptune-sparql-store",
     "work:packages/graphrag/ingestion-extraction-cleanse",
