@@ -20,7 +20,7 @@
 | [0012](0012-owl-schema-only-and-named-graph-partition.md) | OWL schema-only + named-graph partition: typed RDF corpus with asymmetric retrieval semantics | Accepted |
 | [0013](0013-multi-strategy-server-side-routing.md) | Multi-strategy server-side routing: rules-first cascade over named-graph partitions | Accepted |
 | [0014](0014-mcp-tool-server.md) | MCP tool server: generic typed tools over per-class or per-strategy tools | Accepted |
-| 0015 | OTEL observability | _(reserved — pending wave 5)_ |
+| [0015](0015-otel-observability.md) | OTEL observability: AWS ADOT Lambda layer with X-Ray traces and CloudWatch EMF metrics | Accepted |
 | [0016](0016-git-ingestion-commit-sha-delta-medallion.md) | Git ingestion: commit-SHA delta + medallion over CodePipeline/S3-mirror bronze source | Accepted |
 
 ## Adding a new ADR
