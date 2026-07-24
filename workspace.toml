@@ -107,19 +107,18 @@ shipped = [
   "docs/update-existing-specs",
   "packages/graphrag/sparql-templates",
   "packages/graphrag/text2sparql-guarded",
+  "packages/graphrag/shacl-validation",
+  "packages/graphrag/mcp-tool-server",
+  "packages/graphrag/normative-retrieval",
+  "packages/graphrag/rdf-owl-ontology-loader",
 ]
 active  = []
 queue   = [
   # Wave 1 — shipped 2026-07-23 (neptune-sparql-engine)
   # Wave 2 — neptune-sparql-store + mcp-mock-server + mcp-proxy all shipped 2026-07-24
 
-  # Wave 3 — parallel live feature implementations; all gate on neptune-sparql-store
-  {path = "packages/graphrag/rdf-owl-ontology-loader", needs = [
-    "work:packages/graphrag/neptune-sparql-store",
-    "shape:spec-rdf-owl-ontology",
-    "shape:spec-provenance-citations",
-  ]},
-  # SHACL validation gate — shipped 2026-07-23 (PR shacl-validation)
+  # Wave 3 — all shipped 2026-07-24 (PRs #77–#82)
+  # SHACL validation gate — shipped 2026-07-24 (PR #77)
   # Extraction + cleansing Fargate task: format router (pandoc/docling/markitdown/Textract),
   # Silver artifact write, PII flagging, quarantine graph, SHACL gate, Gold artifact (chunks + PROV-O).
   {path = "packages/graphrag/ingestion-extraction-cleanse", needs = [
@@ -138,10 +137,7 @@ queue   = [
   # No retrieval logic; same config schema as the mock server subprocess.
   # mcp-proxy shipped 2026-07-24 (PR #68)
   # packages/graphrag/text2sparql-guarded — shipped 2026-07-24 (PR #78)
-  {path = "packages/graphrag/normative-retrieval",    needs = [
-    "work:packages/graphrag/neptune-sparql-store",
-    "shape:spec-normative-partition",
-  ]},
+  # packages/graphrag/normative-retrieval — shipped 2026-07-24 (PR #81)
   # packages/graphrag/sparql-templates — shipped 2026-07-24 (PR #75)
   # docs/supersede-adrs-0001-0004-0008 — shipped 2026-07-24 (PR #66)
   # docs/update-existing-specs — shipped 2026-07-24 (PR #72)
