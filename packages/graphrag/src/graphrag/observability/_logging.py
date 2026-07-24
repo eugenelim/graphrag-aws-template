@@ -60,7 +60,10 @@ def configure_json_logging(level: int = logging.INFO) -> None:
         if _CONFIGURED:
             return
         try:
-            from pythonjsonlogger.jsonlogger import JsonFormatter  # noqa: PLC0415
+            try:
+                from pythonjsonlogger.json import JsonFormatter  # noqa: PLC0415
+            except ImportError:  # python-json-logger <3.x
+                from pythonjsonlogger.jsonlogger import JsonFormatter  # noqa: PLC0415
 
             root = logging.getLogger()
             root.setLevel(level)

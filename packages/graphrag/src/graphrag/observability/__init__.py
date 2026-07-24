@@ -21,6 +21,12 @@ Public API
     Emit ``mcp.tool.duration_ms`` (and optionally ``mcp.tool.error_count``)
     via ``aws_embedded_metrics``.
 
+``emit_retrieval_metrics(store, strategy, duration_ms)``
+    Emit ``retrieval.<store>.duration_ms`` (Histogram, ``strategy`` dimension).
+
+``emit_routing_fraction(bedrock_fraction)``
+    Emit ``routing.decided_by.bedrock.fraction`` (Gauge, no dimensions).
+
 ``configure_json_logging()``
     Install ``pythonjsonlogger`` structured JSON formatter on the root logger.
 
@@ -45,7 +51,11 @@ from graphrag.observability._content_filter import (
     ContentCaptureFilterExporter,
 )
 from graphrag.observability._logging import configure_json_logging
-from graphrag.observability._metrics import emit_tool_metrics
+from graphrag.observability._metrics import (
+    emit_retrieval_metrics,
+    emit_routing_fraction,
+    emit_tool_metrics,
+)
 from graphrag.observability._tracing import SPAN_KINDS, traced_leg
 
 __all__ = [
@@ -55,6 +65,8 @@ __all__ = [
     "SPAN_KINDS",
     "configure_json_logging",
     "configure_observability",
+    "emit_retrieval_metrics",
+    "emit_routing_fraction",
     "emit_tool_metrics",
     "traced_leg",
 ]

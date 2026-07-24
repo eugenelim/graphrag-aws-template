@@ -28,7 +28,6 @@ import logging
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import (
-    BatchSpanProcessor,
     ConsoleSpanExporter,
     SimpleSpanProcessor,
 )
@@ -108,20 +107,16 @@ def _install_provider(service_name: str) -> None:
     resource = Resource.create({"service.name": service_name})
     provider = TracerProvider(resource=resource)
 
-    # In test / local contexts use a no-op exporter by default (the test suite
-    # supplies its own InMemorySpanExporter wrapped in ContentCaptureFilterExporter).
-    # We register a ConsoleSpanExporter in DEBUG environments so local runs emit spans.
+    # In debug mode, register a ConsoleSpanExporter so local runs emit spans to
+    # stdout. At INFO level (CI, offline tests, ingestion-task) no exporter is
+    # registered: the TracerProvider exists for sampling decisions, but span
+    # export is a no-op. Test suites supply their own InMemorySpanExporter via
+    # TracerProvider.add_span_processor() after the fixture installs a provider.
     debug_mode = logger.isEnabledFor(logging.DEBUG)
     if debug_mode:
         console_exporter = ContentCaptureFilterExporter(ConsoleSpanExporter())
         provider.add_span_processor(SimpleSpanProcessor(console_exporter))
-    else:
-        # Default batch processor: spans are processed but console-export is low-
-        # overhead at INFO level (tests supply their own in-memory processors;
-        # ingestion uses this path for logging-only and the console sink is silent
-        # when no handler is reading stdout).
-        console_exporter = ContentCaptureFilterExporter(ConsoleSpanExporter())
-        provider.add_span_processor(BatchSpanProcessor(console_exporter))
+    # else: no processor; spans are recorded but not exported (CI / offline / ingestion)
 
     trace.set_tracer_provider(provider)
     logger.debug(
@@ -130,7 +125,7 @@ def _install_provider(service_name: str) -> None:
     )
 
 
-def _reset_for_testing() -> None:  # pragma: no cover
+def _reset_for_testing() -> None:
     """Reset the configured flag and global TracerProvider — **for tests only**.
 
     Allows tests to call ``configure_observability`` more than once in the same
@@ -140,17 +135,29 @@ def _reset_for_testing() -> None:  # pragma: no cover
     Internals: opentelemetry-api uses a ``Once`` guard (``_TRACER_PROVIDER_SET_ONCE``)
     that prevents overriding an installed provider.  This function resets it so
     the next ``set_tracer_provider`` call succeeds.
+
+    Raises
+    ------
+    RuntimeError
+        If the OTEL SDK internals have changed in a way that makes the reset
+        impossible.  Failing loud here is deliberate: a silent best-effort reset
+        leaks a global ``TracerProvider`` across tests, causing order-dependent
+        failures that are extremely hard to debug.
     """
     global _CONFIGURED  # noqa: PLW0603
     _CONFIGURED = False
-    try:
-        import opentelemetry.trace as _trace_mod
+    import opentelemetry.trace as _trace_mod
 
-        _trace_mod._TRACER_PROVIDER = None
-        _trace_mod._PROXY_TRACER_PROVIDER = None  # type: ignore[assignment]
-        # Reset the set-once guard so the next set_tracer_provider() succeeds
-        _once = getattr(_trace_mod, "_TRACER_PROVIDER_SET_ONCE", None)
-        if _once is not None and hasattr(_once, "_done"):
-            _once._done = False
-    except AttributeError:
-        pass  # SDK internals changed; best-effort reset
+    _trace_mod._TRACER_PROVIDER = None
+    # Reinstate a fresh ProxyTracerProvider (the OTEL default "no provider installed"
+    # sentinel) rather than None — this version's get_tracer_provider() returns
+    # _PROXY_TRACER_PROVIDER directly without guarding for None.
+    _trace_mod._PROXY_TRACER_PROVIDER = trace.ProxyTracerProvider()
+    # Reset the set-once guard so the next set_tracer_provider() succeeds
+    _once = getattr(_trace_mod, "_TRACER_PROVIDER_SET_ONCE", None)
+    if _once is None or not hasattr(_once, "_done"):
+        raise RuntimeError(
+            "opentelemetry-api internals changed: _TRACER_PROVIDER_SET_ONCE not found "
+            "or has no _done attribute. Update _reset_for_testing for the new SDK version."
+        )
+    _once._done = False

@@ -46,15 +46,36 @@ def test_configure_observability_idempotent() -> None:
     configure_observability("test-svc")  # second call — must not raise or re-install
 
 
-def test_no_error_log_on_configure(caplog) -> None:
-    """configure_observability emits no ERROR log during offline setup."""
-    from graphrag.observability import configure_observability
+def test_no_error_log_on_configure() -> None:
+    """configure_observability emits no ERROR log during offline setup.
 
-    with caplog.at_level(logging.ERROR, logger="graphrag.observability"):
-        configure_observability("graphrag-mcp-test")
+    Note: configure_observability calls configure_json_logging(), which removes
+    ALL root handlers (including pytest's LogCaptureHandler).  We therefore add
+    our own capture handler to the root logger AFTER setup, then trigger a
+    traced_leg span to exercise the installed provider.
+    """
+    from graphrag.observability import configure_observability, traced_leg
 
-    error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
-    assert not error_records, f"Unexpected ERROR logs: {[r.message for r in error_records]}"
+    configure_observability("graphrag-mcp-test")
+
+    # Install a capture handler AFTER configure_json_logging cleared root handlers
+    error_records: list[logging.LogRecord] = []
+
+    class _ErrorCapture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            if record.levelno >= logging.ERROR:
+                error_records.append(record)
+
+    cap = _ErrorCapture()
+    cap.setLevel(logging.ERROR)
+    logging.getLogger().addHandler(cap)
+    try:
+        with traced_leg("routing.rule_router"):
+            pass
+    finally:
+        logging.getLogger().removeHandler(cap)
+
+    assert not error_records, f"Unexpected ERROR logs: {[r.getMessage() for r in error_records]}"
 
 
 def test_import_without_boto3() -> None:

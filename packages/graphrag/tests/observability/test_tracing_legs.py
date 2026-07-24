@@ -147,11 +147,16 @@ def test_traced_leg_exception_does_not_leak_message(tracing_pair) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_offline_isolation_mock_server_six_tools(caplog) -> None:
+def test_offline_isolation_mock_server_six_tools() -> None:
     """configure_observability active + six tool calls via in-process mock → no export ERROR.
 
     Implements AC5: uses the in-process mcp.call_tool pattern (same as
     test_mock_server.py).  No subprocess, no blocking server start.
+
+    Note: configure_observability calls configure_json_logging(), which removes
+    ALL root handlers (including pytest's LogCaptureHandler).  We therefore add
+    our own capture handler AFTER setup so the assertion can actually go red on
+    a real export error.
     """
     import warnings
 
@@ -161,11 +166,23 @@ def test_offline_isolation_mock_server_six_tools(caplog) -> None:
         del os.environ[k]
 
     try:
-        with caplog.at_level(logging.ERROR, logger="graphrag"):
-            from graphrag.observability import configure_observability
+        from graphrag.observability import configure_observability
 
-            configure_observability("graphrag-mcp-test")
+        configure_observability("graphrag-mcp-test")
 
+        # Add capture handler AFTER configure_json_logging removed pytest's handler
+        export_errors: list[logging.LogRecord] = []
+
+        class _ExportErrorCapture(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                if record.levelno >= logging.ERROR and "export" in record.getMessage().lower():
+                    export_errors.append(record)
+
+        cap = _ExportErrorCapture()
+        cap.setLevel(logging.ERROR)
+        logging.getLogger().addHandler(cap)
+
+        try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 from graphrag.mcp._mock import init_mock
@@ -176,10 +193,10 @@ def test_offline_isolation_mock_server_six_tools(caplog) -> None:
             # Drive the six tools via in-process call
             tool_calls = [
                 ("ask", {"question": "What are the HR policies?"}),
-                ("search", {"query": "HR"}),
-                ("search_graph", {"query": "HR", "hops": 1}),
-                ("get_policies", {"topic": "HR"}),
-                ("query", {"sparql": "SELECT ?s WHERE { ?s ?p ?o } LIMIT 1"}),
+                ("search", {"question": "HR"}),
+                ("search_graph", {"uri": "urn:biz:policy:hr-leave", "hops": 1}),
+                ("get_policies", {"context": "HR"}),
+                ("query", {"template_name": "policies_by_domain", "params": {"domain": "hr"}}),
                 ("summarize", {"topic": "HR"}),
             ]
             for tool_name, kwargs in tool_calls:
@@ -187,18 +204,15 @@ def test_offline_isolation_mock_server_six_tools(caplog) -> None:
                     asyncio.run(mcp.call_tool(tool_name, arguments=kwargs))
                 except Exception as e:  # noqa: BLE001
                     # Tool failures (e.g. no results) are acceptable;
-                    # export errors are not.
+                    # export errors are not (they bypass the content filter).
                     if "export" in str(e).lower() or "exporter" in str(e).lower():
                         pytest.fail(f"Span export error during {tool_name}: {e}")
+        finally:
+            logging.getLogger().removeHandler(cap)
 
         # No ERROR-level span-export logs during the run
-        error_records = [
-            r
-            for r in caplog.records
-            if r.levelno >= logging.ERROR and "export" in r.message.lower()
-        ]
-        assert not error_records, (
-            f"Unexpected span-export ERROR logs: {[r.message for r in error_records]}"
+        assert not export_errors, (
+            f"Unexpected span-export ERROR logs: {[r.getMessage() for r in export_errors]}"
         )
 
     finally:

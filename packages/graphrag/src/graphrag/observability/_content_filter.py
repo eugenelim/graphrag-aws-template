@@ -62,7 +62,19 @@ AUTO_CAPTURE_KEYS: frozenset[str] = frozenset(
     }
 )
 
-_STRIP: frozenset[str] = DENY_SET | AUTO_CAPTURE_KEYS
+#: OTEL auto-exception event attributes: OTEL records these onto an "exception"
+#: span-event when ``record_exception=True`` (the SDK default).  The stacktrace
+#: and message can carry question-derived text (the exception message may echo
+#: the query).  Strip both; ``exception.type`` (the class name) is a bounded
+#: enum and is kept.
+_EXCEPTION_EVENT_KEYS: frozenset[str] = frozenset(
+    {
+        "exception.message",
+        "exception.stacktrace",
+    }
+)
+
+_STRIP: frozenset[str] = DENY_SET | AUTO_CAPTURE_KEYS | _EXCEPTION_EVENT_KEYS
 
 
 # ---------------------------------------------------------------------------
