@@ -17,7 +17,7 @@ from graphrag.provenance import ProvenanceEmitter
 BIZ = "https://graphrag-aws.demo/biz-ops/ontology#"
 
 _DOC_URI = "urn:doc:my-repo:policies/aup.md"
-_SHA = "abc1234def5678abc1234def5678abc1234def56"
+_SHA = "abc1234def5678abc1234def5678abc1234def56"  # pragma: allowlist secret
 _GIT_PATH = "policies/aup.md"
 _GIT_REPO = "my-org/my-repo"
 _EXTRACTOR = "pandoc"
