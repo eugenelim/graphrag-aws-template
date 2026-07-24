@@ -35,6 +35,13 @@ ingest = [
     "rdflib>=6.3",
     "pyshacl>=0.25,<0.27",
 ]
+server = [
+    # MCP tool server — FastMCP + Mangum Lambda adapter.
+    # Also pulled into [dev] so CI installs it via graphrag-aws-demo[server].
+    "mcp>=1.0",
+    "pydantic>=2.0",
+    "mangum>=0.21",
+]
 dev = [
     # setuptools floor pinned above the PYSEC-2026-3447 fix (83.0.0); forces pip to upgrade
     # the runner's pre-installed 79.0.1 so pip-audit stays clean.
@@ -51,6 +58,8 @@ dev = [
     "pip-audit>=2.10",
     # tests detect communities offline, so the dev env needs the ingest extra.
     "graphrag-aws-demo[ingest]",
+    # MCP server deps — pulls in mcp, pydantic, mangum for offline tests.
+    "graphrag-aws-demo[server]",
 ]
 
 [project.scripts]
@@ -108,4 +117,8 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["rdflib", "rdflib.*", "pyshacl", "pyshacl.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["mcp", "mcp.*", "mangum", "mangum.*"]
 ignore_missing_imports = true
