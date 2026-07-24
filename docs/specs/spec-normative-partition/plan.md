@@ -1,7 +1,7 @@
 # Plan: spec-normative-partition
 
 - **Spec:** [`spec.md`](spec.md)
-- **Status:** Drafting <!-- Drafting | Executing | Done -->
+- **Status:** Done <!-- Drafting | Executing | Done -->
 
 > **Plan contract:** this is the implementation strategy. Unlike the spec, this
 > document is allowed to change as you learn. When it changes substantially
@@ -40,8 +40,10 @@ No AWS credentials are needed for T1 or T2 unit tests (both use in-memory substi
 - Policy C with similarity 0.65 (below threshold) is not in the result.
 
 **T3 (response envelope):**
-- Response carries `strategy="normative_exhaustive"` and `decided_by="none"`.
+- Response carries `pii_withheld_count` in the `NormativeResponse` envelope.
 - Response items carry `uri`, `title`, `doc_type`, `domain`, `effective_date`, `scope`, `pii_flagged`, `relevance`.
+- `strategy="normative_exhaustive"` / `decided_by="none"` StrategyTrace is deferred to
+  the MCP tool handler / routing layer (owner: `graphrag.routing.route_get_policies`).
 
 ## Design (LLD)
 
@@ -83,21 +85,23 @@ SELECT ?doc ?title ?type ?domain ?effectiveDate ?scope ?hasPII ?sha ?path
 FROM NAMED <urn:graph:normative>
 WHERE {
   GRAPH <urn:graph:normative> {
-    ?doc a ?type ;
-         schema:name ?title ;
-         biz:gitCommitSHA ?sha ;
-         biz:gitPath ?path .
-    OPTIONAL { ?doc biz:hasPII ?hasPII }          -- OPTIONAL: absent hasPII treated as non-PII
+    ?doc a ?type .
+    OPTIONAL { ?doc schema:name ?title }           -- OPTIONAL: exhaustive recall even without title
+    OPTIONAL { ?doc biz:gitCommitSHA ?sha }        -- OPTIONAL: git-ingestion not yet shipped
+    OPTIONAL { ?doc biz:gitPath ?path }
+    OPTIONAL { ?doc biz:hasPII ?hasPII }           -- OPTIONAL: absent hasPII treated as non-PII
     OPTIONAL { ?doc biz:inDomain ?domain }
     OPTIONAL { ?doc biz:effectiveDate ?effectiveDate }
     OPTIONAL { ?doc biz:scope ?scope }
-    -- default PII filter: !bound(?hasPII) || ?hasPII = false; omitted when include_pii=True
-    FILTER(!bound(?hasPII) || ?hasPII = false)
+    -- NOTE: PII exclusion is applied in Python (not SPARQL) so pii_withheld_count
+    -- can be computed without a second COUNT query (see _retriever.py).
     FILTER(?type IN (biz:Policy, biz:Standard, biz:Guideline))
     -- domain filter injected here if domain != None
     -- effective-date filter injected here if include_future=False
   }
 }
+-- Results are deduplicated by ?doc URI after retrieval to handle multi-valued
+-- OPTIONAL properties (e.g. multiple biz:inDomain values).
 ```
 
 ### Component / module decomposition
