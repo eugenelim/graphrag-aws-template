@@ -104,7 +104,9 @@ shipped = [
   "packages/graphrag/neptune-sparql-store",
   "packages/graphrag/mcp-proxy",
   "packages/graphrag/mcp-mock-server",
-  "packages/graphrag/mcp-tool-server",
+  "docs/update-existing-specs",
+  "packages/graphrag/sparql-templates",
+  "packages/graphrag/text2sparql-guarded",
 ]
 active  = []
 queue   = [
@@ -140,23 +142,14 @@ queue   = [
   # Thin wrapper: translates stdio MCP frames to HTTPS + x-api-key header.
   # No retrieval logic; same config schema as the mock server subprocess.
   # mcp-proxy shipped 2026-07-24 (PR #68)
-  {path = "packages/graphrag/text2sparql-guarded",    needs = [
-    "work:packages/graphrag/neptune-sparql-store",
-    "shape:spec-text2sparql-guarded",
-  ]},
+  # packages/graphrag/text2sparql-guarded — shipped 2026-07-24 (PR #78)
   {path = "packages/graphrag/normative-retrieval",    needs = [
     "work:packages/graphrag/neptune-sparql-store",
     "shape:spec-normative-partition",
   ]},
-  {path = "packages/graphrag/sparql-templates",       needs = [
-    "work:packages/graphrag/neptune-sparql-store",
-    "shape:spec-multi-strategy-routing",
-  ]},
+  # packages/graphrag/sparql-templates — shipped 2026-07-24 (PR #75)
   # docs/supersede-adrs-0001-0004-0008 — shipped 2026-07-24 (PR #66)
-  {path = "docs/update-existing-specs",               needs = [
-    "work:packages/graphrag/neptune-sparql-store",
-    "shape:spec-rdf-owl-ontology",
-  ]},
+  # docs/update-existing-specs — shipped 2026-07-24 (PR #72)
 
   # Wave 4 — integration, observability, final infra + docs; gate on mcp-tool-server
   {path = "packages/graphrag/multi-strategy-router",  needs = [
@@ -337,19 +330,21 @@ open = [
   # Owner: apps/infra-tf/neptune.tf. Surfaced by security review of neptune-sparql-engine.
   {slug = "neptune-audit-log-export", source = "docs/specs/neptune-sparql-engine/"},
 
-  # ── graphrag.mcp deferred ACs (PR #69) ────────────────────────────────────
+  # ── text2sparql-guarded deferred ACs ───────────────────────────────────────
 
-  # AC2 deferred: confirm `python -m graphrag.mcp --mock` transport via subprocess
-  # (streamable-http client against localhost:8000). Currently tested in-process only.
-  {slug = "ac2-subprocess-transport", source = "docs/specs/spec-mcp-tool-server/"},
+  # AC8 deferred: live-smoke IAM backstop — confirm that a mcp_lambda_role-
+  # credentialed SPARQL POST of DROP GRAPH <urn:graph:normative> to the Neptune
+  # /sparql endpoint returns IAM AccessDeniedException (ADR-0011 Confirmation gate).
+  # Tagged @pytest.mark.live_aws; skipped in offline CI.
+  {slug = "text2sparql-live-smoke-iam-backstop", source = "docs/specs/spec-text2sparql-guarded/"},
+
+  # ── graphrag.mcp deferred ACs (PR #69) ────────────────────────────────────
+  # ac2-subprocess-transport — shipped PR #74 (test_mock_subprocess.py)
+  # use-rdflib-initbindings — shipped PR #74 (initBindings in _tools.py + sparql_templates)
 
   # AC3 deferred: API Gateway round-trip parity — same 6 queries against mock
   # (_mock.py in-process) and Mangum-wrapped Lambda handler (synthetic APIGW event).
   # Blocked until infra-tf/api-gateway-mcp lands.
   {slug = "ac3-api-gw-round-trip", source = "docs/specs/spec-mcp-tool-server/"},
-
-  # Use rdflib initBindings to pass SPARQL parameters safely instead of f-string
-  # interpolation in MemorySparqlStore queries — defence-in-depth for offline path.
-  {slug = "use-rdflib-initbindings", source = "docs/specs/spec-mcp-tool-server/"},
 
 ]

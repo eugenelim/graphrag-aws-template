@@ -130,6 +130,11 @@ tasks, not most — the work-loop skill covers when it's the right tool.
 <!-- Keep this short. Detailed command reference goes in docs/. These mirror the CI gate
      (.github/workflows/ci.yml) — a green local run of all of them is the merge gate. -->
 
+> **Project layout (non-obvious):** `pyproject.toml` lives at the repo root, not inside
+> `packages/graphrag/`. Source root is `packages/graphrag/src/`; tests are in
+> `packages/graphrag/tests/`. The `[dev]` extra pulls in `[ingest]` (rdflib, pyshacl,
+> networkx), so `pip install -e ".[dev,infra]"` is the full local setup.
+
 ```bash
 pip install -e ".[dev,infra]"          # one-time setup (project + dev + infra extras)
 pytest packages/graphrag/tests         # run tests for the package you're in
@@ -138,8 +143,12 @@ ruff check packages apps               # lint
 ruff format --check packages apps      # format check (ruff/mypy pinned in pyproject [dev])
 mypy                                   # typecheck
 python -m pip_audit                    # supply-chain vuln scan (honors .pip-audit-ignore)
+detect-secrets scan -r packages apps   # secrets scan (CI gate — honours .secrets.baseline)
 cd apps/infra && cdk synth --quiet     # IaC synth + cdk-nag hard gate
 ```
+
+> **detect-secrets false positives:** test fixtures with fake keys/SHAs are flagged.
+> Annotate the line with `# pragma: allowlist secret` to suppress.
 
 ## Code style
 
@@ -184,7 +193,9 @@ warrants; don't run all three by default.
 - **Route substantive `docs/CHARTER.md` edits through an RFC.** Trivial
   fixes (typos, broken links) are fine as normal PRs.
 - **Record new dependencies in the package's `AGENTS.md` or an ADR**
-  before adding them. Dependencies are forever.
+  before adding them. Dependencies are forever. Add the new group to the
+  `dev` extras list in `pyproject.toml` so `pip install -e ".[dev,infra]"`
+  (the CI install command) picks it up automatically.
 - **Grep to verify a function exists** before importing it. Imports
   that "look right" but aren't waste the time of everyone who hits the
   broken build.

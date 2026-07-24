@@ -1,6 +1,6 @@
 # Spec: spec-otel-observability
 
-- **Status:** Draft <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Approved <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** [ADR-0015](../../adr/0015-otel-observability.md) (ADOT Lambda layer; OTLP→X-Ray traces; EMF metrics; content-capture policy; span model — primary decision this spec implements); [ADR-0013](../../adr/0013-multi-strategy-server-side-routing.md) (the strategy trace the OTEL spans add timing on top of; the `routing.*` / `retrieval.*` leg spans mirror its strategy vocabulary); [ADR-0014](../../adr/0014-mcp-tool-server.md) (the MCP Lambda this module instruments); [`spec-mcp-tool-server`](../spec-mcp-tool-server/spec.md) (defines the canonical deny-set attribute names and the interim static-linter coverage — AC5 — which this spec's runtime filter complements; both remain); [`spec-multi-strategy-routing`](../spec-multi-strategy-routing/spec.md) (the router/orchestrator that may adopt this module's `traced_leg` helper — a seam, not a current dependency; see Assumptions)

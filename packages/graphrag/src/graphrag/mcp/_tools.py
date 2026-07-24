@@ -21,8 +21,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-import rdflib
 from mcp.server.fastmcp import FastMCP
+from rdflib import URIRef
 
 from graphrag.mcp._schemas import (
     AskResponse,
@@ -34,6 +34,7 @@ from graphrag.mcp._schemas import (
     SubgraphResult,
     SummaryResult,
 )
+from graphrag.sparql_templates import SPARQL_TEMPLATE_BY_ID
 
 logger = logging.getLogger(__name__)
 
@@ -47,58 +48,12 @@ mcp: FastMCP = FastMCP("biz-ops-knowledge-platform")
 # In-memory mock store — injected by _mock.py before the server starts.
 # ---------------------------------------------------------------------------
 
-_POLICIES_BY_DOMAIN_SPARQL = """
-PREFIX biz:    <https://graphrag-aws.demo/biz-ops/ontology#>
-PREFIX schema: <https://schema.org/>
-SELECT ?policy ?name ?effectiveDate ?scope WHERE {{
-    GRAPH <urn:graph:normative> {{
-        ?policy a biz:Policy ;
-                schema:name ?name ;
-                biz:scope ?scope .
-        OPTIONAL {{ ?policy biz:effectiveDate ?effectiveDate . }}
-        FILTER(?scope = "{domain}")
-    }}
-}}
-"""
-
-
-def _run_policies_by_domain(
-    graph: Any, params: dict[str, Any], mode: str = "mock"
-) -> list[dict[str, str]]:
-    domain = str(params.get("domain", ""))
-    # Security note: ``domain`` is string-interpolated into SPARQL.
-    # Acceptable ONLY in mock/offline CI and production interim path — the ``params`` dict
-    # is caller-controlled (the MCP client).  Replace with rdflib ``initBindings`` or
-    # Neptune parameterised query API.  Tracked as backlog item: use-rdflib-initbindings.
-    sparql = _POLICIES_BY_DOMAIN_SPARQL.format(domain=domain)
-    rows: list[dict[str, str]] = []
-    if mode == "production":
-        # ``graph`` is NeptuneSparqlStore when mode="production"
-        for row_dict in graph.sparql_select(sparql):
-            rows.append(
-                {
-                    "policy": row_dict.get("policy", ""),
-                    "name": row_dict.get("name", ""),
-                    "effective_date": row_dict.get("effectiveDate", ""),
-                    "scope": row_dict.get("scope", ""),
-                }
-            )
-    else:
-        for row in graph.query(sparql):
-            rows.append(
-                {
-                    "policy": str(row.policy),
-                    "name": str(row.name),
-                    "effective_date": str(row.effectiveDate) if row.effectiveDate else "",
-                    "scope": str(row.scope) if row.scope else "",
-                }
-            )
-    return rows
-
-
-# Named template registry: template_name -> callable(graph, params) -> rows
+# Named template registry: delegates to graphrag.sparql_templates registry.
+# Each entry is a bound method — closure-safe without a lambda wrapper.
+# SparqlTemplate.execute() uses rdflib initBindings= for safe parameterization;
+# no f-string interpolation of caller values.
 _TEMPLATE_RUNNERS: dict[str, Any] = {
-    "policies_by_domain": _run_policies_by_domain,
+    name: tmpl.execute for name, tmpl in SPARQL_TEMPLATE_BY_ID.items()
 }
 
 
@@ -260,6 +215,25 @@ def _sparql_rows_from_production(store: _ProductionStore, sparql: str) -> list[d
     return store.neptune.sparql_select(sparql)
 
 
+_SEARCH_GRAPH_SPARQL_PRODUCTION = """
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?s ?p ?o ?type ?label WHERE {{
+    {{
+        BIND(<{root}> AS ?s)
+        <{root}> ?p ?o .
+        OPTIONAL {{ <{root}> a ?type . }}
+        OPTIONAL {{ <{root}> rdfs:label ?label . }}
+    }}
+    UNION
+    {{
+        ?s ?p <{root}> .
+        BIND(<{root}> AS ?o)
+        OPTIONAL {{ ?s a ?type . }}
+        OPTIONAL {{ ?s rdfs:label ?label . }}
+    }}
+}}
+"""
+
 @mcp.tool()
 async def search_graph(uri: str, hops: int = 1) -> SubgraphResult:
     """Named-graph neighbourhood lookup. Returns typed subgraph (nodes + edges)."""
@@ -276,60 +250,34 @@ async def search_graph(uri: str, hops: int = 1) -> SubgraphResult:
     for _ in range(hops):
         next_frontier: list[str] = []
         for root in frontier:
-            # Security note: ``root`` is a URI interpolated into SPARQL angle-bracket
-            # notation.  Acceptable ONLY in this mock/offline path — no user input
-            # reaches ``root`` without going through the ``uri`` parameter which is
-            # caller-controlled (same caveat as ``_run_policies_by_domain``).
-            # Production code should use rdflib ``initBindings`` to prevent injection.
-            #
-            # GRAPH ?g wrapper is required: the fixture corpus uses named graphs
-            # (TriG format loaded into rdflib.Dataset without default_union=True),
-            # so the default graph is empty and unqualified triple patterns return
-            # zero results.  Wrapping in GRAPH ?g queries all named graphs.
-            sparql = f"""
-PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-SELECT ?s ?p ?o ?type ?label WHERE {{
-    GRAPH ?g {{
-        {{
-            BIND(<{root}> AS ?s)
-            <{root}> ?p ?o .
-            OPTIONAL {{ <{root}> a ?type . }}
-            OPTIONAL {{ <{root}> rdfs:label ?label . }}
-        }}
-        UNION
-        {{
-            ?s ?p <{root}> .
-            BIND(<{root}> AS ?o)
-            OPTIONAL {{ ?s a ?type . }}
-            OPTIONAL {{ ?s rdfs:label ?label . }}
-        }}
-    }}
-}}
-"""
-            if isinstance(store, _MockStore):
-                raw_rows = store.graph.query(sparql)
+            if isinstance(store, _ProductionStore):
+                raw_rows = store.neptune.sparql_select(
+                    _SEARCH_GRAPH_SPARQL_PRODUCTION.format(root=root)
+                )
+                row_iter = [
+                    {"s": r.get("s",""), "p": r.get("p",""), "o": r.get("o",""),
+                     "type": r.get("type",""), "label": r.get("label","")}
+                    for r in raw_rows
+                ]
             else:
-                # Production: use NeptuneSparqlStore.sparql_select(); result is list[dict]
-                raw_rows = _sparql_rows_from_production(store, sparql)
-            for row in raw_rows:
-                if isinstance(store, _MockStore):
-                    s_str = str(row.s)
-                    o_str = str(row.o)
-                    p_str = str(row.p)
-                    type_str = str(row.type) if row.type else ""
-                    label_str = str(row.label) if row.label else s_str.split(":")[-1]
-                    o_is_uri = isinstance(row.o, rdflib.term.URIRef)
-                else:
-                    s_str = row.get("s", "")
-                    o_str = row.get("o", "")
-                    p_str = row.get("p", "")
-                    type_str = row.get("type", "")
-                    label_str = row.get("label", "") or s_str.split(":")[-1]
-                    # Neptune returns IRIs as plain strings; treat non-empty o as URI
-                    o_is_uri = bool(o_str) and (
-                        o_str.startswith("http") or o_str.startswith("urn:")
+                row_iter = [
+                    {"s": str(row.s), "p": str(row.p), "o": str(row.o),
+                     "type": str(row.type) if row.type else "",
+                     "label": str(row.label) if row.label else "",
+                     "_o_node": row.o}
+                    for row in store.graph.query(
+                        _SEARCH_GRAPH_SPARQL, initBindings={"root": URIRef(root)}
                     )
+                ]
+            for raw in row_iter:
+                s_str = str(raw["s"])
+                o_str = str(raw["o"])
+                p_str = str(raw["p"])
                 edges.append({"subject": s_str, "predicate": p_str, "object": o_str})
+                type_str = raw["type"] if raw["type"] else ""
+                label_str = raw["label"] if raw["label"] else s_str.split(":")[-1]
+                # URIs start with http/urn; literals in Neptune rows are plain strings
+                o_is_uri = o_str.startswith(("http:", "https:", "urn:"))
 
                 # Always add the subject (always a URI per the BIND clause)
                 if s_str not in nodes:
@@ -383,21 +331,45 @@ SELECT ?policy ?name ?effectiveDate ?scope WHERE {
 }
 """
 
-# Production-only domain-filter template (f-string; see security note in get_policies).
+# GRAPH ?g wrapper is required: the fixture corpus uses named graphs (TriG format loaded
+# into rdflib.Dataset without default_union=True), so the default graph is empty and
+# unqualified triple patterns return zero results.  Wrapping in GRAPH ?g queries all
+# named graphs.  Uses initBindings to pass the root URI safely (no f-string injection).
+_SEARCH_GRAPH_SPARQL = """
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?s ?p ?o ?type ?label WHERE {
+    GRAPH ?g {
+        {
+            BIND(?root AS ?s)
+            ?root ?p ?o .
+            OPTIONAL { ?root a ?type . }
+            OPTIONAL { ?root rdfs:label ?label . }
+        }
+        UNION
+        {
+            ?s ?p ?root .
+            BIND(?root AS ?o)
+            OPTIONAL { ?s a ?type . }
+            OPTIONAL { ?s rdfs:label ?label . }
+        }
+    }
+}
+"""
+
+
 _GET_POLICIES_DOMAIN_SPARQL_TEMPLATE = """
 PREFIX biz:    <https://graphrag-aws.demo/biz-ops/ontology#>
 PREFIX schema: <https://schema.org/>
 SELECT ?policy ?name ?effectiveDate ?scope WHERE {{
     GRAPH <urn:graph:normative> {{
         ?policy a biz:Policy ;
-                schema:name ?name ;
-                biz:scope "{domain}" .
+                schema:name ?name .
         OPTIONAL {{ ?policy biz:effectiveDate ?effectiveDate . }}
-        BIND("{domain}" AS ?scope)
+        OPTIONAL {{ ?policy biz:scope ?scope . }}
+        FILTER(str(?scope) = "{domain}")
     }}
 }}
 """
-
 
 @mcp.tool()
 async def get_policies(context: str, domain: str | None = None) -> list[PolicyResult]:
@@ -463,10 +435,27 @@ async def query(template_name: str, params: dict[str, Any]) -> QueryResult:
 
     store = _require_store()
     runner = _TEMPLATE_RUNNERS[template_name]
-    if isinstance(store, _ProductionStore):
-        rows = runner(store.neptune, params, mode="production")
-    else:
-        rows = runner(store.graph, params, mode="mock")
+    try:
+        if isinstance(store, _ProductionStore):
+            # Production: substitute params into SPARQL and call sparql_select().
+            # params are already validated by SparqlTemplate.execute() param-kind logic;
+            # reuse the template object directly rather than the bound runner.
+            tmpl = SPARQL_TEMPLATE_BY_ID[template_name]
+            sparql_bound = tmpl.sparql
+            for pspec in tmpl.params:
+                val = params.get(pspec.name)
+                if val is not None:
+                    placeholder = f"?{pspec.name}"
+                    replacement = f'"{val}"' if pspec.kind == "literal" else f"<{val}>"
+                    sparql_bound = sparql_bound.replace(placeholder, replacement)
+            rows = store.neptune.sparql_select(sparql_bound)
+        else:
+            rows = runner(store.graph, params)
+    except Exception as exc:
+        # Execution errors (missing required param, backend error) return a
+        # structured error result — consistent with the unknown-template path.
+        logger.warning("query execution error", extra={"template_name": template_name})
+        return QueryResult(template_name=template_name, rows=[], row_count=0, error=str(exc))
     logger.info("query completed", extra={"template_name": template_name, "row_count": len(rows)})
     return QueryResult(template_name=template_name, rows=rows, row_count=len(rows))
 
