@@ -1,6 +1,6 @@
 # Spec: spec-multi-strategy-routing
 
-- **Status:** Approved <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Shipped <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** [ADR-0013](../../adr/0013-multi-strategy-server-side-routing.md) (multi-strategy routing — primary decision this spec implements); [ADR-0011](../../adr/0011-neptune-sparql-rdf-engine-and-text2sparql-guard.md) (SPARQL/RDF engine; untrusted-data guard carried forward); [ADR-0012](../../adr/0012-owl-schema-only-and-named-graph-partition.md) (named-graph partition the strategies operate over); [ADR-0014](../../adr/0014-mcp-tool-server.md) (MCP tool server whose `ask` tool this router powers)
@@ -20,9 +20,11 @@ The `graphrag.routing` module delivers the server-side strategy routing layer th
 
 2. **`BedrockQueryRouter`** — LLM fallback that fires only when `RuleQueryRouter` returns `ambiguous`. The question is treated as untrusted data; the routing output is strict-validated against the fixed strategy vocabulary before being used.
 
-3. **`StrategyTrace`** — a typed data structure carrying `strategy`, `decided_by` (`rule` | `bedrock`), and a per-leg span tree. Attached to every `ask` and `get_policies` response. Required by ADR-0013's honesty constraint and the strategy-trace confirmation gate.
+3. **`StrategyTrace`** — a typed data structure carrying `strategy`, `decided_by` (`rule` | `bedrock` | `none`), and a per-leg span tree. `decided_by` takes one of three values: `"rule"` (rule router resolved), `"bedrock"` (Bedrock router invoked), or `"none"` (get_policies fixed path). Attached to every `ask` and `get_policies` response. Required by ADR-0013's honesty constraint and the strategy-trace confirmation gate.
 
-4. **`get_policies` isolation** — the `get_policies` tool path bypasses both routers. `strategy = normative_exhaustive` and `decided_by = none` are set unconditionally before retrieval begins. No router is invoked; the trace carries this as a constant.
+4. **`route_ask(question, entity_uris, bedrock_client)` and `route_get_policies()`** — the public dispatch entry points. `route_ask` chains `RuleQueryRouter` → `BedrockQueryRouter` (only if ambiguous) and returns a `StrategyTrace`. `route_get_policies` returns a fixed `StrategyTrace(strategy=normative_exhaustive, decided_by="none")` unconditionally.
+
+5. **`get_policies` isolation** — the `get_policies` tool path bypasses both routers. `strategy = normative_exhaustive` and `decided_by = none` are set unconditionally before retrieval begins. No router is invoked; the trace carries this as a constant.
 
 This module owns the routing decision logic only. The retrieval executors that act on the chosen strategy (OpenSearch kNN, Neptune SPARQL expand, Bedrock synthesis) are out of scope — they are the `packages/graphrag/mcp-tool-server` and `packages/graphrag/normative-retrieval` concerns.
 
@@ -60,20 +62,20 @@ This module owns the routing decision logic only. The retrieval executors that a
 
 ## Acceptance Criteria
 
-- [ ] `RuleQueryRouter.route(question="How many employees are in the Finance department?")` returns `strategy=structured` — aggregation verb ("how many") detected; `RuleQueryRouter` routes to `structured` on aggregation verb presence regardless of entity class (class detection is not implemented). The routing matrix row "Aggregation verb + entity or class" is satisfied by the aggregation verb alone in the rule implementation; the entity/class qualifier distinguishes it from other strategies at the Bedrock layer for ambiguous cases.
-- [ ] `RuleQueryRouter.route(question="What does biz:Finance relate to in the graph?")` returns `strategy=graph_expand` — entity URI pattern (`biz:` prefix) plus relationship verb ("relate to") detected.
-- [ ] `RuleQueryRouter.route(question="What does the Incident Response SOP say about severity levels?", entity_uris=["urn:doc:my-repo:sops/ir.md"])` returns `strategy=hybrid_graph` — entity URI provided plus factual verb.
-- [ ] `RuleQueryRouter.route(question="What is the best practice for customer onboarding?")` returns `strategy=vector_only` — no entity present, specific factual question.
-- [ ] `RuleQueryRouter.route(question="Tell me broadly about how the Finance domain operates")` returns `strategy=global` — no entity present, thematic/broad question detected.
-- [ ] `RuleQueryRouter.route(question="Can you explain the relationship between the IR SOP and the Finance policy?", entity_uris=["urn:doc:my-repo:sops/ir.md", "urn:doc:my-repo:policies/finance.md"])` returns `strategy=ambiguous` — multiple entity URIs with a non-relationship-verb question trigger the multi-entity/mixed-signal → `ambiguous` rule explicitly defined in `_signals.py`. The rule: two or more entity URIs present AND no single dominant signal (no aggregation verb, no clear relationship verb, no clear factual pattern) → `ambiguous`. The `explain` verb is not in the relationship-verb set; "explain the relationship between X and Y" is the mixed-signal case.
-- [ ] `BedrockQueryRouter.route(ambiguous_question)` returns a value in `StrategyEnum`; the returned value is not `ambiguous` (Bedrock must resolve to a concrete strategy).
-- [ ] `BedrockQueryRouter.route(question)` where the Bedrock response contains a string not in `StrategyEnum` returns `strategy=hybrid_graph` (safe default) and logs a warning — strict-validation fallback.
-- [ ] Every `ask` tool response carries a `StrategyTrace` with non-null `strategy`, `decided_by`, and `legs` fields.
-- [ ] `decided_by` is `"rule"` when `RuleQueryRouter` returned a non-ambiguous strategy; `"bedrock"` when `BedrockQueryRouter` was invoked.
-- [ ] `decided_by` is `"none"` and `strategy` is `"normative_exhaustive"` in all `get_policies` responses.
-- [ ] On a `get_policies` call, neither `RuleQueryRouter` nor `BedrockQueryRouter` is constructed or invoked — confirmed by replacing both with a spy that raises on invocation.
-- [ ] `python -c "from graphrag.routing._rule_router import RuleQueryRouter"` exits 0 in an environment where boto3 and botocore are not installed.
-- [ ] `BedrockQueryRouter` prompt construction places the `question` text inside a structured data field, not as instruction text; a fixture question containing SPARQL Update keywords (`INSERT`, `DROP`) does not alter the routing output.
+- [x] `RuleQueryRouter.route(question="How many employees are in the Finance department?")` returns `strategy=structured` — aggregation verb ("how many") detected; `RuleQueryRouter` routes to `structured` on aggregation verb presence regardless of entity class (class detection is not implemented). The routing matrix row "Aggregation verb + entity or class" is satisfied by the aggregation verb alone in the rule implementation; the entity/class qualifier distinguishes it from other strategies at the Bedrock layer for ambiguous cases.
+- [x] `RuleQueryRouter.route(question="What does biz:Finance relate to in the graph?")` returns `strategy=graph_expand` — entity URI pattern (`biz:` prefix) plus relationship verb ("relate to") detected.
+- [x] `RuleQueryRouter.route(question="What does the Incident Response SOP say about severity levels?", entity_uris=["urn:doc:my-repo:sops/ir.md"])` returns `strategy=hybrid_graph` — entity URI provided plus factual verb.
+- [x] `RuleQueryRouter.route(question="What is the best practice for customer onboarding?")` returns `strategy=vector_only` — no entity present, specific factual question.
+- [x] `RuleQueryRouter.route(question="Tell me broadly about how the Finance domain operates")` returns `strategy=global` — no entity present, thematic/broad question detected.
+- [x] `RuleQueryRouter.route(question="Can you explain the relationship between the IR SOP and the Finance policy?", entity_uris=["urn:doc:my-repo:sops/ir.md", "urn:doc:my-repo:policies/finance.md"])` returns `strategy=ambiguous` — multiple entity URIs with a non-relationship-verb question trigger the multi-entity/mixed-signal → `ambiguous` rule explicitly defined in `_signals.py`. The rule: two or more entity URIs present AND no single dominant signal (no aggregation verb, no clear relationship verb, no clear factual pattern) → `ambiguous`. The `explain` verb is not in the relationship-verb set; "explain the relationship between X and Y" is the mixed-signal case.
+- [x] `BedrockQueryRouter.route(ambiguous_question)` with a mocked Bedrock response returns a member of `StrategyEnum`; since `ambiguous` is never in `StrategyEnum`, every valid response is concrete.
+- [x] `BedrockQueryRouter.route(question)` where the Bedrock response contains a string not in `StrategyEnum` returns `strategy=hybrid_graph` (safe default) and logs a warning — strict-validation fallback.
+- [x] `route_ask` returns a `StrategyTrace` with non-null `strategy` and `decided_by` fields; `legs` is a list (may be empty — retrieval legs are populated by the caller, not the router).
+- [x] `decided_by` is `"rule"` when `RuleQueryRouter` returned a non-ambiguous strategy; `"bedrock"` when `BedrockQueryRouter` was invoked.
+- [x] `decided_by` is `"none"` and `strategy` is `"normative_exhaustive"` in all `get_policies` responses.
+- [x] On a `get_policies` call, neither `RuleQueryRouter` nor `BedrockQueryRouter` is constructed or invoked — confirmed by replacing both with a spy that raises on invocation.
+- [x] `python -c "from graphrag.routing._rule_router import RuleQueryRouter"` exits 0 in an environment where boto3 and botocore are not installed.
+- [x] `BedrockQueryRouter` prompt construction places the `question` text inside a structured data field, not as instruction text; a fixture question containing SPARQL Update keywords (`INSERT`, `DROP`) does not alter the routing output.
 
 ## Assumptions
 

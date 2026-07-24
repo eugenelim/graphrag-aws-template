@@ -321,16 +321,13 @@ resource "aws_vpc_security_group_egress_rule" "query_to_sts" {
   description                  = "QuerySg egress to Sts 443"
 }
 
-# ── mcp_lambda_sg — MCP tool server Lambda (added by infra-tf/mcp-otel-lambda) ──
-# Closed egress (allow_all_outbound=False pattern); egress rules enumerate exact
-# call set: neptune (SPARQL), opensearch (kNN), Bedrock, CloudWatchLogs, Sts.
-#
-# Egress-rule totals updated:
-#   ingestion_task_sg=8, smoke_probe_sg=3, vector_smoke_sg=4,
-#   query_lambda_sg=5, mcp_lambda_sg=5 => 25 egress rules total.
+# ── mcp_lambda_sg egress (5): neptune, opensearch, Bedrock, Logs, Sts ──────────
+# Same egress profile as query_lambda_sg: the MCP tool server is VPC-resident and
+# reaches Neptune (SPARQL) + OpenSearch (kNN) + Bedrock (embed + synthesis) + VPC
+# endpoints for logs and STS.
 resource "aws_security_group" "mcp_lambda_sg" {
   name_prefix = "graphrag-mcp-"
-  description = "MCP Lambda - in-VPC compute (egress to stores + VPC endpoints)"
+  description = "MCP tool-server lambda - in-VPC compute (egress to stores + VPC endpoints)"
   vpc_id      = aws_vpc.main.id
   egress      = []
 
@@ -339,26 +336,6 @@ resource "aws_security_group" "mcp_lambda_sg" {
   tags = { Name = "graphrag-mcp" }
 }
 
-# Store-SG ingress additions: Neptune and OpenSearch accept traffic from mcp_lambda_sg.
-resource "aws_vpc_security_group_ingress_rule" "neptune_from_mcp" {
-  security_group_id            = aws_security_group.neptune_sg.id
-  ip_protocol                  = "tcp"
-  from_port                    = 8182
-  to_port                      = 8182
-  referenced_security_group_id = aws_security_group.mcp_lambda_sg.id
-  description                  = "MCP Lambda to neptune 8182"
-}
-
-resource "aws_vpc_security_group_ingress_rule" "opensearch_from_mcp" {
-  security_group_id            = aws_security_group.opensearch_sg.id
-  ip_protocol                  = "tcp"
-  from_port                    = 443
-  to_port                      = 443
-  referenced_security_group_id = aws_security_group.mcp_lambda_sg.id
-  description                  = "MCP Lambda to opensearch 443"
-}
-
-# ── mcp_lambda_sg egress (5): neptune, opensearch, Bedrock, Logs, Sts ───────────
 resource "aws_vpc_security_group_egress_rule" "mcp_to_neptune" {
   security_group_id            = aws_security_group.mcp_lambda_sg.id
   ip_protocol                  = "tcp"
@@ -402,4 +379,26 @@ resource "aws_vpc_security_group_egress_rule" "mcp_to_sts" {
   to_port                      = 443
   referenced_security_group_id = aws_security_group.endpoint["Sts"].id
   description                  = "McpSg egress to Sts 443"
+}
+
+# ── Store-SG ingress: MCP Lambda added to existing peer-SG sets ───────────────
+# Neptune and OpenSearch each gain one new ingress rule from mcp_lambda_sg.
+# neptune_sg now accepts from: ingestion, smoke, query, mcp (4 total).
+# opensearch_sg now accepts from: ingestion, vector_smoke, query, mcp (4 total).
+resource "aws_vpc_security_group_ingress_rule" "neptune_from_mcp" {
+  security_group_id            = aws_security_group.neptune_sg.id
+  ip_protocol                  = "tcp"
+  from_port                    = 8182
+  to_port                      = 8182
+  referenced_security_group_id = aws_security_group.mcp_lambda_sg.id
+  description                  = "mcp lambda to neptune 8182"
+}
+
+resource "aws_vpc_security_group_ingress_rule" "opensearch_from_mcp" {
+  security_group_id            = aws_security_group.opensearch_sg.id
+  ip_protocol                  = "tcp"
+  from_port                    = 443
+  to_port                      = 443
+  referenced_security_group_id = aws_security_group.mcp_lambda_sg.id
+  description                  = "mcp lambda to opensearch 443"
 }

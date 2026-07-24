@@ -56,12 +56,12 @@ resource "aws_iam_role_policy" "mcp_lambda_neptune_readonly" {
 }
 
 # OpenSearch kNN vector search — search-only (Get/Post/Head; no Put/Delete).
-# Uses opensearch_search_policy (not opensearch_data_policy) to avoid granting
+# Uses opensearch_readonly_policy (not opensearch_data_policy) to avoid granting
 # write access on a query-only path (ADR-0011 read-only-on-query principle).
 resource "aws_iam_role_policy" "mcp_lambda_opensearch" {
   name   = "opensearch-search"
   role   = aws_iam_role.mcp_lambda_role.id
-  policy = local.opensearch_search_policy
+  policy = local.opensearch_readonly_policy
 }
 
 # Bedrock Titan v2 embeddings (query embedding for hybrid retrieval).

@@ -111,6 +111,11 @@ shipped = [
   "packages/graphrag/mcp-tool-server",
   "packages/graphrag/normative-retrieval",
   "packages/graphrag/rdf-owl-ontology-loader",
+  "docs/update-architecture-docs",
+  "infra-tf/api-gateway-mcp",
+  "packages/graphrag/multi-strategy-router",
+  "packages/graphrag/ingestion-extraction-cleanse",
+  "infra-tf/mcp-otel-lambda",
 ]
 active  = []
 queue   = [
@@ -121,12 +126,6 @@ queue   = [
   # SHACL validation gate — shipped 2026-07-24 (PR #77)
   # Extraction + cleansing Fargate task: format router (pandoc/docling/markitdown/Textract),
   # Silver artifact write, PII flagging, quarantine graph, SHACL gate, Gold artifact (chunks + PROV-O).
-  {path = "packages/graphrag/ingestion-extraction-cleanse", needs = [
-    "work:packages/graphrag/neptune-sparql-store",
-    "work:packages/graphrag/shacl-validation",
-    "shape:spec-ingestion-extraction-cleanse",
-    "shape:spec-provenance-citations",
-  ]},
   {path = "packages/graphrag/git-ingestion-pipeline", needs = [
     "work:packages/graphrag/neptune-sparql-store",
     "work:packages/graphrag/ingestion-extraction-cleanse",
@@ -141,31 +140,15 @@ queue   = [
   # packages/graphrag/sparql-templates — shipped 2026-07-24 (PR #75)
   # docs/supersede-adrs-0001-0004-0008 — shipped 2026-07-24 (PR #66)
   # docs/update-existing-specs — shipped 2026-07-24 (PR #72)
-  # infra-tf/mcp-otel-lambda — shipped 2026-07-24 (PR #88)
 
   # Wave 4 — integration, observability, final infra + docs; gate on mcp-tool-server
-  {path = "packages/graphrag/multi-strategy-router",  needs = [
-    "work:packages/graphrag/mcp-tool-server",
-    "shape:spec-multi-strategy-routing",
-  ]},
   {path = "packages/graphrag/otel-instrumentation",   needs = [
     "work:packages/graphrag/mcp-tool-server",
     "shape:spec-otel-observability",
   ]},
-  # API Gateway HTTP API in front of the MCP Lambda — human/IDE ingress path.
-  # Usage plan + API key auth (no SigV4 on the client side).
-  # Function URL retained separately for automation + AgentCore (SigV4/IAM).
-  {path = "infra-tf/api-gateway-mcp",                 needs = [
-    "work:packages/graphrag/mcp-tool-server",
-    "shape:spec-mcp-tool-server",
-  ]},
   {path = "infra-tf/git-ingestion-trigger",           needs = [
     "work:packages/graphrag/git-ingestion-pipeline",
     "shape:spec-git-ingestion",
-  ]},
-  {path = "docs/update-architecture-docs",            needs = [
-    "work:packages/graphrag/mcp-tool-server",
-    "work:packages/graphrag/neptune-sparql-store",
   ]},
 ]
 
@@ -264,13 +247,6 @@ open = [
   # infra-secret-scan-ci (detect-secrets + shellcheck CI gate).
 
   # ── ini-002 / RFC-0004 biz-ops KG pivot follow-ups (surfaced at RFC review) ──
-
-  # ADR-0007 (silver cache) is done: superseded by ADR-0016. ADR-0005 (Louvain
-  # community detection) mechanism is superseded by ADR-0013's `global` strategy
-  # + ADR-0014's `summarize` tool. Fix: add "Superseded by ADR-0013/ADR-0014" to
-  # ADR-0005's header once ADR-0014 lands; the `summarize` tool is what fully
-  # replaces the community-detection mechanism. ADR-0016 + ADR-0013 partial.
-  {slug = "adr-0005-supersession-record", source = "docs/rfc/0004-biz-ops-kg-pivot.md"},
 
   # Verify the Neptune SPARQL IAM data-action matrix: confirm SPARQL Update forms
   # (esp. DROP GRAPH) are gated by WriteDataViaQuery/DeleteDataViaQuery so the

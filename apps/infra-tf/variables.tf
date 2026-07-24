@@ -28,6 +28,19 @@ variable "invoker_role_arn" {
   }
 }
 
+
+variable "mcp_invoker_role_arn" {
+  type        = string
+  description = "IAM role ARN permitted to invoke the MCP tool-server Function URL (SigV4 — automation and AgentCore)."
+
+  validation {
+    # Same end-anchored role-ARN validation as invoker_role_arn: rejects wildcard, root, and
+    # non-role principals. The Lambda AddPermission API also rejects wildcards at apply time —
+    # this is defence-in-depth, not a substitute for that check.
+    condition     = can(regex("^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$", var.mcp_invoker_role_arn))
+    error_message = "mcp_invoker_role_arn must be a role ARN of the form arn:aws:iam::<account-id>:role/<name>. Root, wildcard, and non-role principals are not permitted."
+  }
+}
 # NOTE: the former `s3_prefix_list_id` variable was removed by the
 # infra-terraform-network tier (SEC-2 hardening). The AWS-managed S3
 # gateway-endpoint prefix list is now resolved declaratively from the account via

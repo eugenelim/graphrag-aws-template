@@ -1,7 +1,7 @@
 # Plan: spec-multi-strategy-routing
 
 - **Spec:** [`spec.md`](spec.md)
-- **Status:** Drafting <!-- Drafting | Executing | Done -->
+- **Status:** Done <!-- Drafting | Executing | Done -->
 
 > **Plan contract:** this is the implementation strategy. Unlike the spec, this
 > document is allowed to change as you learn. When it changes substantially
@@ -53,7 +53,8 @@ No AWS credentials are needed for T1 or T2. T3 requires a mocked Bedrock client 
 - **`BedrockQueryRouter` prompt structure (data-slot pattern).** The system prompt describes the routing task and lists valid strategy values. The question is injected into a `<question>` XML tag inside the human turn — a structural separator that LLM best practices recommend for untrusted input. Output is expected as a JSON object `{"strategy": "<value>"}` — parsed with `json.loads()`, then enum-validated.
 - **Throttle fallback maps to `decided_by="bedrock"`** — not a new fourth vocabulary value. The fallback to `hybrid_graph` after Bedrock throttle exhaustion is recorded as a `LegSpan` with `store="bedrock"` and an error note in the span; `decided_by` remains `"bedrock"`. Callers observe the same vocabulary; the throttle detail is visible in the span tree.
 - **`RuleQueryRouter` returns `ambiguous` as a sentinel, not part of `StrategyEnum`.** The sentinel is an internal routing artifact, never stored in a `StrategyTrace`. The callers check `result is None` (or a dedicated `Ambiguous` singleton) to decide whether to invoke `BedrockQueryRouter`.
-- **Signal detection via compiled regex + verb lists.** Entity URI detection: `r"(urn:|https?://|biz:)\S+"`. Aggregation verbs: `{"count", "how many", "list all", "total", "sum"}`. Relationship verbs: `{"related to", "connected to", "links to", "refers to"}`. Thematic markers: `{"broadly", "in general", "overview", "tell me about"}`. These are tunable constants in `_signals.py`, separated from the routing logic in `_rule_router.py`.
+- **Routing precedence (evaluation order in `RuleQueryRouter`).** Signals are evaluated in this fixed priority order to resolve ties: (1) aggregation verb → `structured`; (2) relationship verb + any entity URI → `graph_expand`; (3) entity URIs: two or more with no dominant signal → `ambiguous`; one entity URI, no aggregation/relationship verb → `hybrid_graph`; (4) thematic marker → `global`; (5) no signal → `vector_only`. AC3 (single entity URI + factual question) routes via rule 3 (single entity, no relationship verb, no aggregation verb → `hybrid_graph`).
+- **Signal detection via compiled regex + verb lists.** Entity URI detection: `r"(urn:|https?://|biz:)\S+"`. Aggregation verbs: `{"count", "how many", "list all", "total", "sum"}`. Relationship verbs: `{"related to", "relate to", "relates to", "connected to", "links to", "refers to"}`. Thematic markers: `{"broadly", "in general", "overview", "tell me about"}`. These are tunable constants in `_signals.py`, separated from the routing logic in `_rule_router.py`.
 
 ### Data & schema
 
@@ -75,11 +76,12 @@ from dataclasses import dataclass, field
 class LegSpan:
     store: str           # "opensearch" | "neptune" | "bedrock"
     latency_ms: int | None = None
+    error: str | None = None  # e.g. "throttle-exhausted" for the retry-exhaustion path
 
 @dataclass
 class StrategyTrace:
     strategy: StrategyEnum
-    decided_by: str          # "rule" | "bedrock" | "none"
+    decided_by: Literal["rule", "bedrock", "none"]  # import from typing
     legs: list[LegSpan]      # per-leg span with store + latency_ms (ADR-0013 requirement)
     router_latency_ms: int | None = None   # routing decision latency (separate from retrieval legs)
 ```
@@ -102,9 +104,9 @@ packages/graphrag/tests/routing/
 
 ### Failure, edge cases & resilience
 
-- **Bedrock throttle on routing call.** `BedrockQueryRouter.route()` retries with exponential backoff (max 3 attempts, base 0.5 s) on `ThrottlingException`. After 3 failures, returns `hybrid_graph` with `decided_by="bedrock_fallback_on_throttle"` and logs a WARNING. This keeps the `ask` path alive under Bedrock throttle without blocking.
+- **Bedrock throttle on routing call.** `BedrockQueryRouter.route()` retries with exponential backoff (max 3 attempts, base 0.5 s) on `ThrottlingException`. After 3 failures, returns `hybrid_graph` with `decided_by="bedrock"` and a `LegSpan(store="bedrock", error="throttle-exhausted")` appended; logs a WARNING. The vocabulary stays `"rule" | "bedrock" | "none"` — throttle detail is visible in the span, not the `decided_by` field. This keeps the `ask` path alive under Bedrock throttle without blocking.
 - **Question too long for routing prompt.** If the question exceeds 4 000 characters, truncate to 4 000 chars before constructing the `BedrockQueryRouter` prompt. Log a DEBUG line with the truncation length.
-- **Empty question.** `RuleQueryRouter.route("")` returns `ambiguous` (no signals detected); `BedrockQueryRouter.route("")` is not expected to fire on an empty question (the MCP tool validates non-empty `question` — but if it does, returns `hybrid_graph`).
+- **Empty question.** `RuleQueryRouter.route("")` returns `ambiguous` (no signals detected). `route_ask` does NOT short-circuit empty input — it lets both routers run normally: `RuleQueryRouter` returns `ambiguous`, then `BedrockQueryRouter` runs and returns `hybrid_graph`. The resulting `decided_by="bedrock"` is accurate. No special guard is needed; both routers already handle the degenerate case per their own logic above. The MCP tool validates non-empty `question` so empty input never reaches `route_ask` in production.
 
 ### Quality attributes (NFRs)
 
@@ -125,15 +127,17 @@ packages/graphrag/tests/routing/
 
 **Tests:**
 - `len(StrategyEnum) == 6` and each member has the expected string value.
-- `StrategyTrace(strategy=StrategyEnum.hybrid_graph, decided_by="rule", legs=["vector"])` serialises to a dict matching the expected shape.
+- `StrategyTrace(strategy=StrategyEnum.hybrid_graph, decided_by="rule", legs=[LegSpan(store="opensearch", latency_ms=5)])` serialises to a dataclass_asdict dict matching the expected shape.
+- `str(StrategyEnum.global_) == "global"` — the Python name `global_` serialises to the JSON string `"global"` (keyword-clash footgun pinned).
 - `StrategyEnum("not_valid")` raises `ValueError` — the strict-validation mechanism works.
+- `decided_by` field is typed `Literal["rule", "bedrock", "none"]` — constructing `StrategyTrace(decided_by="unknown", …)` is flagged by mypy.
 
 **Approach:**
 1. Create `packages/graphrag/src/graphrag/routing/` with `__init__.py` stub.
 2. Implement `_types.py` with `StrategyEnum` (StrEnum) and `StrategyTrace` (dataclass).
 3. Export from `__init__.py`.
 
-**Done when:** 3 tests pass; `ruff check` and `mypy` clean.
+**Done when:** 5 tests pass; `ruff check` and `mypy` clean.
 
 ---
 
@@ -177,14 +181,15 @@ packages/graphrag/tests/routing/
 1. Mock Bedrock returns `{"strategy": "structured"}` → `StrategyEnum.structured`.
 2. Mock Bedrock returns `{"strategy": "invalid_value"}` → `StrategyEnum.hybrid_graph` + WARNING log.
 3. Injection fixture: question containing `DROP GRAPH` → output is still a valid `StrategyEnum` value (not the injected SQL).
-4. Bedrock raises `ThrottlingException` × 3 → returns `hybrid_graph` with `decided_by="bedrock_fallback_on_throttle"`.
+4. Bedrock raises `ThrottlingException` × 3 → returns `StrategyEnum.hybrid_graph` with `decided_by="bedrock"` and a `LegSpan` with `error="throttle-exhausted"` appended.
+5. Prompt structure: capture the `messages` list passed to `invoke_model`; assert the user turn contains the question text only inside `<question>…</question>` tags and that the question text does not appear outside that tag in either the system or user content.
 
 **Approach:**
-1. Write all 4 failing tests using `unittest.mock.patch` on `boto3.client`.
+1. Write all 5 failing tests using `unittest.mock.patch` on `boto3.client`.
 2. Implement `_bedrock_router.py` with the data-slot prompt, JSON parse, enum validation, and retry logic.
 3. Run tests red → green → refactor.
 
-**Done when:** all 4 tests pass; `ruff check` and `mypy` clean.
+**Done when:** all 5 tests pass; `ruff check` and `mypy` clean.
 
 ---
 
