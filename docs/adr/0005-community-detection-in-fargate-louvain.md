@@ -1,6 +1,6 @@
 # ADR-0005: Community detection runs in the Fargate ingest task (Louvain via networkx), not a standing Neptune Analytics service
 
-- **Status:** Superseded by ADR-0014 <!-- Proposed | Accepted | Rejected | Deprecated | Superseded by ADR-NNNN -->
+- **Status:** Superseded by ADR-0013 and ADR-0014 <!-- openCypher Louvain global path superseded by ADR-0013's `global` strategy and ADR-0014's `summarize` tool -->
 - **Date:** 2026-06-26
 - **Decision-makers:** eugenelim
 - **Supersedes:** none
@@ -203,3 +203,32 @@ The query Lambda's **read-only** Neptune grant (ADR-0004) already permits readin
 - [networkx `louvain_communities`](https://networkx.org/documentation/stable/reference/algorithms/generated/networkx.algorithms.community.louvain.louvain_communities.html)
 - [Microsoft GraphRAG — global search / community reports (Leiden)](https://microsoft.github.io/graphrag/)
 - [Traag, Waltman & van Eck (2019), "From Louvain to Leiden"](https://www.nature.com/articles/s41598-019-41695-z)
+
+## Supersession record
+
+**Superseded by:** [ADR-0013](0013-multi-strategy-server-side-routing.md) and
+[ADR-0014](0014-mcp-tool-server.md) (date: 2026-07-23)
+
+**What was superseded:**
+The Louvain community detection pipeline ran inside the Fargate ingest task (using
+`networkx`), wrote `Community` nodes back into Neptune, and was queried at query time
+via the `global_query` map-reduce path (`mode: "global"` on the Function URL). This
+pipeline was specific to the Kubernetes demo corpus and openCypher Neptune store; the
+`Community` node schema and the `global_query` orchestrator depended on the
+entity-graph model of the K8s corpus.
+
+**What replaces it:**
+ADR-0013 defines a multi-strategy server-side router that includes a `global` strategy
+as one of six retrieval strategies — the corpus-wide thematic answer path. ADR-0014
+defines the `summarize(topic)` MCP tool as the caller-facing interface for thematic
+corpus-wide questions, replacing the direct `mode: "global"` Function URL call. The
+`global` strategy in ADR-0013 is the server-side routing decision; the `summarize`
+tool in ADR-0014 is what the caller invokes. Community structure is one possible
+implementation of the `global` strategy — the exact detection mechanism is decoupled
+from the interface.
+
+**What carries forward:**
+The insight that corpus-wide thematic questions require a different retrieval contract
+from entity-led questions carries forward to ADR-0013's normative-first principle and
+strategy matrix. The Fargate ingest task as the location for heavy compute (not a
+standing service) carries forward to the ini-002 ingestion pipeline (ADR-0016).
