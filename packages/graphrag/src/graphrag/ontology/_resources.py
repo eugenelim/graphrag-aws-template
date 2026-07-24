@@ -1,4 +1,5 @@
 """Bundled-file resource loaders for graphrag.ontology."""
+
 from __future__ import annotations
 
 import importlib.resources
