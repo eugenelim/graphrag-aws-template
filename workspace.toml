@@ -100,21 +100,15 @@ queue   = [
 shipped = [
   "docs/archive-k8s-specific-specs",
   "infra-tf/neptune-sparql-engine",
+  "docs/supersede-adrs-0001-0004-0008",
+  "packages/graphrag/neptune-sparql-store",
+  "packages/graphrag/mcp-proxy",
+  "packages/graphrag/mcp-mock-server",
 ]
 active  = []
 queue   = [
   # Wave 1 — shipped 2026-07-23 (neptune-sparql-engine)
-  # Wave 2 — parallel: SPARQL store migration + mock MCP server (independent)
-  # neptune-sparql-store gates all live retrieval work.
-  # mcp-mock-server needs only the spec; uses rdflib + in-memory stores — no AWS dep.
-  # Build both in parallel; mock unblocks local dev and CI before infra lands.
-  {path = "packages/graphrag/neptune-sparql-store",   needs = [
-    "work:infra-tf/neptune-sparql-engine",
-    "shape:spec-rdf-owl-ontology",
-  ]},
-  {path = "packages/graphrag/mcp-mock-server",        needs = [
-    "shape:spec-mcp-tool-server",
-  ]},
+  # Wave 2 — neptune-sparql-store + mcp-mock-server + mcp-proxy all shipped 2026-07-24
 
   # Wave 3 — parallel live feature implementations; all gate on neptune-sparql-store
   {path = "packages/graphrag/rdf-owl-ontology-loader", needs = [
@@ -149,9 +143,7 @@ queue   = [
   # Local stdio→HTTPS proxy for AI IDE connections via API Gateway.
   # Thin wrapper: translates stdio MCP frames to HTTPS + x-api-key header.
   # No retrieval logic; same config schema as the mock server subprocess.
-  {path = "packages/graphrag/mcp-proxy",              needs = [
-    "shape:spec-mcp-tool-server",
-  ]},
+  # mcp-proxy shipped 2026-07-24 (PR #68)
   {path = "packages/graphrag/text2sparql-guarded",    needs = [
     "work:packages/graphrag/neptune-sparql-store",
     "shape:spec-text2sparql-guarded",
@@ -164,11 +156,7 @@ queue   = [
     "work:packages/graphrag/neptune-sparql-store",
     "shape:spec-multi-strategy-routing",
   ]},
-  {path = "docs/supersede-adrs-0001-0004-0008",       needs = [
-    "shape:adr-0011-neptune-sparql",
-    "shape:spec-text2sparql-guarded",
-    "shape:spec-multi-strategy-routing",
-  ]},
+  # docs/supersede-adrs-0001-0004-0008 — shipped 2026-07-24 (PR #66)
   {path = "docs/update-existing-specs",               needs = [
     "work:packages/graphrag/neptune-sparql-store",
     "shape:spec-rdf-owl-ontology",
@@ -352,5 +340,20 @@ open = [
   # the ephemeral teardown-first demo (ADR-0002); revisit in a regulated deployment.
   # Owner: apps/infra-tf/neptune.tf. Surfaced by security review of neptune-sparql-engine.
   {slug = "neptune-audit-log-export", source = "docs/specs/neptune-sparql-engine/"},
+
+  # ── graphrag.mcp deferred ACs (PR #69) ────────────────────────────────────
+
+  # AC2 deferred: confirm `python -m graphrag.mcp --mock` transport via subprocess
+  # (streamable-http client against localhost:8000). Currently tested in-process only.
+  {slug = "ac2-subprocess-transport", source = "docs/specs/spec-mcp-tool-server/"},
+
+  # AC3 deferred: API Gateway round-trip parity — same 6 queries against mock
+  # (_mock.py in-process) and Mangum-wrapped Lambda handler (synthetic APIGW event).
+  # Blocked until infra-tf/api-gateway-mcp lands.
+  {slug = "ac3-api-gw-round-trip", source = "docs/specs/spec-mcp-tool-server/"},
+
+  # Use rdflib initBindings to pass SPARQL parameters safely instead of f-string
+  # interpolation in MemorySparqlStore queries — defence-in-depth for offline path.
+  {slug = "use-rdflib-initbindings", source = "docs/specs/spec-mcp-tool-server/"},
 
 ]
