@@ -68,6 +68,22 @@ def _parse_quarantine_insert(sparql: str) -> Graph:
 
 
 # ---------------------------------------------------------------------------
+# Empty graph: no subjects → validate_graph returns conforms=True → passed
+# ---------------------------------------------------------------------------
+
+
+def test_empty_graph_passes_with_no_sparql_call() -> None:
+    """An empty rdflib.Graph() has no SHACL-targeted subjects -> conforms=True -> "passed"."""
+    mock_client = MagicMock()
+    gate = ShaclGate(mock_client)
+
+    result = gate.validate(Graph(), doc_uri=DOC_URI, sha=SHA)
+
+    assert result.outcome == "passed"
+    mock_client.sparql_update.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # AC1 — passed case: valid graph, no SPARQL call
 # ---------------------------------------------------------------------------
 
@@ -256,7 +272,9 @@ def test_neptune_failure_logs_error(caplog: pytest.LogCaptureFixture) -> None:
 
     error_records = [r for r in caplog.records if r.levelno == logging.ERROR]
     assert len(error_records) >= 1
-    assert any("timed out" in r.message for r in error_records)
+    # Log message carries doc_uri and sha for correlation; exception detail is in exc_info.
+    assert any("INSERT failed" in r.message for r in error_records)
+    assert any(r.exc_info is not None for r in error_records)
 
 
 # ---------------------------------------------------------------------------

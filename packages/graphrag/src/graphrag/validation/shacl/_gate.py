@@ -130,6 +130,10 @@ class ShaclGate:
             )
             violation_paths = [v.path for v in result.violations if v.path]
 
+        # Build the quarantine SPARQL in its own try/except — a URIRef ValueError
+        # (e.g. invalid doc_uri) is a caller-input error, diagnostically distinct
+        # from a Neptune network failure.  Both yield quarantine_insert_failed but
+        # the error prefix ("build: ") disambiguates for operators and retry logic.
         try:
             sparql = _build_quarantine_sparql(
                 record_uri=record_uri,
@@ -138,13 +142,25 @@ class ShaclGate:
                 timestamp=timestamp,
                 violation_paths=violation_paths,
             )
+        except Exception as exc:
+            logger.error(
+                "Quarantine record build failed; record_uri=%s doc_uri=%s sha=%s",
+                record_uri,
+                doc_uri,
+                sha,
+                exc_info=True,
+            )
+            return GateResult(outcome="quarantine_insert_failed", error="build: " + str(exc))
+
+        try:
             self._client.sparql_update(sparql)
             return GateResult(outcome="quarantined")
         except Exception as exc:
             logger.error(
-                "Quarantine INSERT failed; doc_uri=%s sha=%s error=%s",
+                "Quarantine INSERT failed; record_uri=%s doc_uri=%s sha=%s",
+                record_uri,
                 doc_uri,
                 sha,
-                exc,
+                exc_info=True,
             )
             return GateResult(outcome="quarantine_insert_failed", error=str(exc))
