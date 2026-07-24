@@ -384,8 +384,8 @@
           "values": {
             "arn": "arn:aws:ecs:us-east-1:752989493306:task-definition/graphrag-ingestion:1",
             "arn_without_revision": "arn:aws:ecs:us-east-1:752989493306:task-definition/graphrag-ingestion",
-            "container_definitions": "[{\"environment\": [{\"name\": \"CORPUS_BUCKET\", \"value\": \"graphrag-corpus-20260723075812131200000006\"}, {\"name\": \"NEPTUNE_ENDPOINT\", \"value\": \"https://graphrag-2026072307582780150000001b.cluster-cyjai808omo8.us-east-1.neptune.amazonaws.com:8182\"}, {\"name\": \"OPENSEARCH_ENDPOINT\", \"value\": \"https://vpc-graphrag-vectors-ghfc55oq3bqh66sezb3kzafpje.us-east-1.es.amazonaws.com\"}, {\"name\": \"SCHEMA_EXTRACTION\", \"value\": \"false\"}, {\"name\": \"TRANSFORMERS_OFFLINE\", \"value\": \"1\"}, {\"name\": \"HF_DATASETS_OFFLINE\", \"value\": \"1\"}], \"essential\": true, \"image\": \"752989493306.dkr.ecr.us-east-1.amazonaws.com/graphrag-ingestion:latest\", \"logConfiguration\": {\"logDriver\": \"awslogs\", \"options\": {\"awslogs-group\": \"/graphrag/ingestion\", \"awslogs-region\": \"us-east-1\", \"awslogs-stream-prefix\": \"ingestion\"}}, \"mountPoints\": [], \"name\": \"ingestion\", \"portMappings\": [], \"systemControls\": [], \"volumesFrom\": []}]",
-            "cpu": "2048",
+            "container_definitions": "[{\"environment\":[{\"name\":\"CORPUS_BUCKET\",\"value\":\"graphrag-corpus-20260723075812131200000006\"},{\"name\":\"NEPTUNE_ENDPOINT\",\"value\":\"https://graphrag-2026072307582780150000001b.cluster-cyjai808omo8.us-east-1.neptune.amazonaws.com:8182\"},{\"name\":\"OPENSEARCH_ENDPOINT\",\"value\":\"https://vpc-graphrag-vectors-ghfc55oq3bqh66sezb3kzafpje.us-east-1.es.amazonaws.com\"},{\"name\":\"SCHEMA_EXTRACTION\",\"value\":\"false\"}],\"essential\":true,\"image\":\"752989493306.dkr.ecr.us-east-1.amazonaws.com/graphrag-ingestion:latest\",\"logConfiguration\":{\"logDriver\":\"awslogs\",\"options\":{\"awslogs-group\":\"/graphrag/ingestion\",\"awslogs-region\":\"us-east-1\",\"awslogs-stream-prefix\":\"ingestion\"}},\"mountPoints\":[],\"name\":\"ingestion\",\"portMappings\":[],\"systemControls\":[],\"volumesFrom\":[]}]",
+            "cpu": "512",
             "enable_fault_injection": false,
             "ephemeral_storage": [],
             "execution_role_arn": "arn:aws:iam::752989493306:role/graphrag-ecs-exec-20260723075811648600000002",
@@ -393,7 +393,7 @@
             "id": "graphrag-ingestion",
             "inference_accelerator": [],
             "ipc_mode": "",
-            "memory": "8192",
+            "memory": "1024",
             "network_mode": "awsvpc",
             "pid_mode": "",
             "placement_constraints": [],
@@ -5133,6 +5133,786 @@
           },
           "sensitive_values": {
             "tags_all": {}
+          }
+        },
+        {
+          "address": "aws_cloudwatch_log_group.mcp_lambda",
+          "mode": "managed",
+          "type": "aws_cloudwatch_log_group",
+          "name": "mcp_lambda",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "schema_version": 0,
+          "sensitive_values": {},
+          "values": {
+            "arn": "arn:aws:logs:us-east-1:752989493306:log-group:/graphrag/mcp-tool-server",
+            "id": "/graphrag/mcp-tool-server",
+            "kms_key_id": "",
+            "log_group_class": "STANDARD",
+            "name": "/graphrag/mcp-tool-server",
+            "name_prefix": "",
+            "retention_in_days": 7,
+            "skip_destroy": false,
+            "tags": {},
+            "tags_all": {
+              "Application": "graphrag",
+              "Department": "unspecified",
+              "Environment": "demo",
+              "Project": "graphrag-aws-template",
+              "User": "unspecified"
+            }
+          }
+        },
+        {
+          "address": "aws_iam_role.mcp_lambda_role",
+          "mode": "managed",
+          "type": "aws_iam_role",
+          "name": "mcp_lambda_role",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "schema_version": 0,
+          "sensitive_values": {
+            "inline_policy": [
+              {},
+              {},
+              {},
+              {}
+            ],
+            "managed_policy_arns": [
+              false
+            ],
+            "tags": {},
+            "tags_all": {}
+          },
+          "values": {
+            "arn": "arn:aws:iam::752989493306:role/graphrag-mcp-lambda-20260724000000000000000001",
+            "assume_role_policy": "{\"Statement\":[{\"Action\":\"sts:AssumeRole\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"lambda.amazonaws.com\"}}],\"Version\":\"2012-10-17\"}",
+            "create_date": "2026-07-24T00:00:00Z",
+            "description": "",
+            "force_detach_policies": false,
+            "id": "graphrag-mcp-lambda-20260724000000000000000001",
+            "inline_policy": [
+              {},
+              {},
+              {},
+              {}
+            ],
+            "managed_policy_arns": [
+              "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+            ],
+            "max_session_duration": 3600,
+            "name": "graphrag-mcp-lambda-20260724000000000000000001",
+            "name_prefix": "graphrag-mcp-lambda-",
+            "path": "/",
+            "permissions_boundary": "",
+            "tags": {},
+            "tags_all": {
+              "Application": "graphrag",
+              "Department": "unspecified",
+              "Environment": "demo",
+              "Project": "graphrag-aws-template",
+              "User": "unspecified"
+            },
+            "unique_id": "AROA26UNL3A5MCPLAMBDA1"
+          }
+        },
+        {
+          "address": "aws_iam_role_policy_attachment.mcp_vpc_access",
+          "mode": "managed",
+          "type": "aws_iam_role_policy_attachment",
+          "name": "mcp_vpc_access",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "schema_version": 0,
+          "sensitive_values": {},
+          "values": {
+            "id": "graphrag-mcp-lambda-20260724000000000000000001/arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole",
+            "policy_arn": "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole",
+            "role": "graphrag-mcp-lambda-20260724000000000000000001"
+          }
+        },
+        {
+          "address": "aws_iam_role_policy.mcp_neptune_readonly",
+          "mode": "managed",
+          "type": "aws_iam_role_policy",
+          "name": "mcp_neptune_readonly",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "schema_version": 0,
+          "sensitive_values": {},
+          "values": {
+            "id": "graphrag-mcp-lambda-20260724000000000000000001:neptune-data-readonly",
+            "name": "neptune-data-readonly",
+            "name_prefix": "",
+            "policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Action\": [\"neptune-db:connect\", \"neptune-db:ReadDataViaQuery\"], \"Resource\": \"arn:aws:neptune-db:us-east-1:752989493306:cluster-GMYHK7L6K5ELRFA43NHWJUF6QY/*\"}]}",
+            "role": "graphrag-mcp-lambda-20260724000000000000000001"
+          }
+        },
+        {
+          "address": "aws_iam_role_policy.mcp_opensearch",
+          "mode": "managed",
+          "type": "aws_iam_role_policy",
+          "name": "mcp_opensearch",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "schema_version": 0,
+          "sensitive_values": {},
+          "values": {
+            "id": "graphrag-mcp-lambda-20260724000000000000000001:opensearch-data",
+            "name": "opensearch-data",
+            "name_prefix": "",
+            "policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Action\": [\"es:ESHttpGet\", \"es:ESHttpPost\", \"es:ESHttpHead\"], \"Resource\": \"arn:aws:es:us-east-1:752989493306:domain/graphrag-vectors/*\"}]}",
+            "role": "graphrag-mcp-lambda-20260724000000000000000001"
+          }
+        },
+        {
+          "address": "aws_iam_role_policy.mcp_bedrock_titan",
+          "mode": "managed",
+          "type": "aws_iam_role_policy",
+          "name": "mcp_bedrock_titan",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "schema_version": 0,
+          "sensitive_values": {},
+          "values": {
+            "id": "graphrag-mcp-lambda-20260724000000000000000001:bedrock-titan",
+            "name": "bedrock-titan",
+            "name_prefix": "",
+            "policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Action\": \"bedrock:InvokeModel\", \"Resource\": \"arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-embed-text-v2:0\"}]}",
+            "role": "graphrag-mcp-lambda-20260724000000000000000001"
+          }
+        },
+        {
+          "address": "aws_iam_role_policy.mcp_bedrock_synthesis",
+          "mode": "managed",
+          "type": "aws_iam_role_policy",
+          "name": "mcp_bedrock_synthesis",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "schema_version": 0,
+          "sensitive_values": {},
+          "values": {
+            "id": "graphrag-mcp-lambda-20260724000000000000000001:bedrock-synthesis",
+            "name": "bedrock-synthesis",
+            "name_prefix": "",
+            "policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Action\": [\"bedrock:InvokeModel\", \"bedrock:Converse\"], \"Resource\": [\"arn:aws:bedrock:us-east-1:752989493306:inference-profile/us.anthropic.claude-sonnet-4-6\", \"arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-6\", \"arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-sonnet-4-6\", \"arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-sonnet-4-6\"]}]}",
+            "role": "graphrag-mcp-lambda-20260724000000000000000001"
+          }
+        },
+        {
+          "address": "aws_security_group.mcp_lambda_sg",
+          "mode": "managed",
+          "type": "aws_security_group",
+          "name": "mcp_lambda_sg",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "schema_version": 0,
+          "sensitive_values": {
+            "egress": [
+              {},
+              {},
+              {},
+              {},
+              {}
+            ],
+            "ingress": [],
+            "tags": {},
+            "tags_all": {}
+          },
+          "values": {
+            "arn": "arn:aws:ec2:us-east-1:752989493306:security-group/sg-0a1b2c3d4e5f60001",
+            "description": "MCP tool-server lambda - in-VPC compute (egress to stores + VPC endpoints)",
+            "egress": [
+              {},
+              {},
+              {},
+              {},
+              {}
+            ],
+            "id": "sg-0a1b2c3d4e5f60001",
+            "ingress": [],
+            "name": "graphrag-mcp-20260724000000000000000001",
+            "name_prefix": "graphrag-mcp-",
+            "owner_id": "752989493306",
+            "revoke_rules_on_delete": false,
+            "tags": {
+              "Name": "graphrag-mcp"
+            },
+            "tags_all": {
+              "Application": "graphrag",
+              "Department": "unspecified",
+              "Environment": "demo",
+              "Project": "graphrag-aws-template",
+              "User": "unspecified",
+              "Name": "graphrag-mcp"
+            },
+            "timeouts": null,
+            "vpc_id": "vpc-0b797c63132958c05"
+          }
+        },
+        {
+          "address": "aws_vpc_security_group_egress_rule.mcp_to_neptune",
+          "mode": "managed",
+          "type": "aws_vpc_security_group_egress_rule",
+          "name": "mcp_to_neptune",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "schema_version": 0,
+          "sensitive_values": {
+            "tags_all": {}
+          },
+          "values": {
+            "arn": "arn:aws:ec2:us-east-1:752989493306:security-group-rule/sgr-mcp0001",
+            "cidr_ipv4": null,
+            "cidr_ipv6": null,
+            "description": "McpSg egress to neptune 8182",
+            "from_port": 8182,
+            "id": "sgr-mcp0001",
+            "ip_protocol": "tcp",
+            "prefix_list_id": null,
+            "referenced_security_group_id": "sg-06f65a692a1f62f9b",
+            "security_group_id": "sg-0a1b2c3d4e5f60001",
+            "security_group_rule_id": "sgr-mcp0001",
+            "tags": null,
+            "tags_all": {
+              "Application": "graphrag",
+              "Department": "unspecified",
+              "Environment": "demo",
+              "Project": "graphrag-aws-template",
+              "User": "unspecified"
+            },
+            "to_port": 8182
+          }
+        },
+        {
+          "address": "aws_vpc_security_group_egress_rule.mcp_to_opensearch",
+          "mode": "managed",
+          "type": "aws_vpc_security_group_egress_rule",
+          "name": "mcp_to_opensearch",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "schema_version": 0,
+          "sensitive_values": {
+            "tags_all": {}
+          },
+          "values": {
+            "arn": "arn:aws:ec2:us-east-1:752989493306:security-group-rule/sgr-mcp0002",
+            "cidr_ipv4": null,
+            "cidr_ipv6": null,
+            "description": "McpSg egress to opensearch 443",
+            "from_port": 443,
+            "id": "sgr-mcp0002",
+            "ip_protocol": "tcp",
+            "prefix_list_id": null,
+            "referenced_security_group_id": "sg-04142dc411dd5195f",
+            "security_group_id": "sg-0a1b2c3d4e5f60001",
+            "security_group_rule_id": "sgr-mcp0002",
+            "tags": null,
+            "tags_all": {
+              "Application": "graphrag",
+              "Department": "unspecified",
+              "Environment": "demo",
+              "Project": "graphrag-aws-template",
+              "User": "unspecified"
+            },
+            "to_port": 443
+          }
+        },
+        {
+          "address": "aws_vpc_security_group_egress_rule.mcp_to_bedrock",
+          "mode": "managed",
+          "type": "aws_vpc_security_group_egress_rule",
+          "name": "mcp_to_bedrock",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "schema_version": 0,
+          "sensitive_values": {
+            "tags_all": {}
+          },
+          "values": {
+            "arn": "arn:aws:ec2:us-east-1:752989493306:security-group-rule/sgr-mcp0003",
+            "cidr_ipv4": null,
+            "cidr_ipv6": null,
+            "description": "McpSg egress to BedrockRuntime 443",
+            "from_port": 443,
+            "id": "sgr-mcp0003",
+            "ip_protocol": "tcp",
+            "prefix_list_id": null,
+            "referenced_security_group_id": "sg-06f0b8444b4af4cee",
+            "security_group_id": "sg-0a1b2c3d4e5f60001",
+            "security_group_rule_id": "sgr-mcp0003",
+            "tags": null,
+            "tags_all": {
+              "Application": "graphrag",
+              "Department": "unspecified",
+              "Environment": "demo",
+              "Project": "graphrag-aws-template",
+              "User": "unspecified"
+            },
+            "to_port": 443
+          }
+        },
+        {
+          "address": "aws_vpc_security_group_egress_rule.mcp_to_logs",
+          "mode": "managed",
+          "type": "aws_vpc_security_group_egress_rule",
+          "name": "mcp_to_logs",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "schema_version": 0,
+          "sensitive_values": {
+            "tags_all": {}
+          },
+          "values": {
+            "arn": "arn:aws:ec2:us-east-1:752989493306:security-group-rule/sgr-mcp0004",
+            "cidr_ipv4": null,
+            "cidr_ipv6": null,
+            "description": "McpSg egress to CloudWatchLogs 443",
+            "from_port": 443,
+            "id": "sgr-mcp0004",
+            "ip_protocol": "tcp",
+            "prefix_list_id": null,
+            "referenced_security_group_id": "sg-0b8f06528567c4637",
+            "security_group_id": "sg-0a1b2c3d4e5f60001",
+            "security_group_rule_id": "sgr-mcp0004",
+            "tags": null,
+            "tags_all": {
+              "Application": "graphrag",
+              "Department": "unspecified",
+              "Environment": "demo",
+              "Project": "graphrag-aws-template",
+              "User": "unspecified"
+            },
+            "to_port": 443
+          }
+        },
+        {
+          "address": "aws_vpc_security_group_egress_rule.mcp_to_sts",
+          "mode": "managed",
+          "type": "aws_vpc_security_group_egress_rule",
+          "name": "mcp_to_sts",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "schema_version": 0,
+          "sensitive_values": {
+            "tags_all": {}
+          },
+          "values": {
+            "arn": "arn:aws:ec2:us-east-1:752989493306:security-group-rule/sgr-mcp0005",
+            "cidr_ipv4": null,
+            "cidr_ipv6": null,
+            "description": "McpSg egress to Sts 443",
+            "from_port": 443,
+            "id": "sgr-mcp0005",
+            "ip_protocol": "tcp",
+            "prefix_list_id": null,
+            "referenced_security_group_id": "sg-0d81072e3955b7bef",
+            "security_group_id": "sg-0a1b2c3d4e5f60001",
+            "security_group_rule_id": "sgr-mcp0005",
+            "tags": null,
+            "tags_all": {
+              "Application": "graphrag",
+              "Department": "unspecified",
+              "Environment": "demo",
+              "Project": "graphrag-aws-template",
+              "User": "unspecified"
+            },
+            "to_port": 443
+          }
+        },
+        {
+          "address": "aws_vpc_security_group_ingress_rule.neptune_from_mcp",
+          "mode": "managed",
+          "type": "aws_vpc_security_group_ingress_rule",
+          "name": "neptune_from_mcp",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "schema_version": 0,
+          "sensitive_values": {
+            "tags_all": {}
+          },
+          "values": {
+            "arn": "arn:aws:ec2:us-east-1:752989493306:security-group-rule/sgr-mcp-nept01",
+            "cidr_ipv4": null,
+            "cidr_ipv6": null,
+            "description": "mcp lambda to neptune 8182",
+            "from_port": 8182,
+            "id": "sgr-mcp-nept01",
+            "ip_protocol": "tcp",
+            "prefix_list_id": null,
+            "referenced_security_group_id": "sg-0a1b2c3d4e5f60001",
+            "security_group_id": "sg-06f65a692a1f62f9b",
+            "security_group_rule_id": "sgr-mcp-nept01",
+            "tags": null,
+            "tags_all": {
+              "Application": "graphrag",
+              "Department": "unspecified",
+              "Environment": "demo",
+              "Project": "graphrag-aws-template",
+              "User": "unspecified"
+            },
+            "to_port": 8182
+          }
+        },
+        {
+          "address": "aws_vpc_security_group_ingress_rule.opensearch_from_mcp",
+          "mode": "managed",
+          "type": "aws_vpc_security_group_ingress_rule",
+          "name": "opensearch_from_mcp",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "schema_version": 0,
+          "sensitive_values": {
+            "tags_all": {}
+          },
+          "values": {
+            "arn": "arn:aws:ec2:us-east-1:752989493306:security-group-rule/sgr-mcp-os01",
+            "cidr_ipv4": null,
+            "cidr_ipv6": null,
+            "description": "mcp lambda to opensearch 443",
+            "from_port": 443,
+            "id": "sgr-mcp-os01",
+            "ip_protocol": "tcp",
+            "prefix_list_id": null,
+            "referenced_security_group_id": "sg-0a1b2c3d4e5f60001",
+            "security_group_id": "sg-04142dc411dd5195f",
+            "security_group_rule_id": "sgr-mcp-os01",
+            "tags": null,
+            "tags_all": {
+              "Application": "graphrag",
+              "Department": "unspecified",
+              "Environment": "demo",
+              "Project": "graphrag-aws-template",
+              "User": "unspecified"
+            },
+            "to_port": 443
+          }
+        },
+        {
+          "address": "aws_lambda_function.mcp_lambda",
+          "mode": "managed",
+          "type": "aws_lambda_function",
+          "name": "mcp_lambda",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "schema_version": 0,
+          "sensitive_values": {
+            "environment": [
+              {
+                "variables": {}
+              }
+            ],
+            "logging_config": [
+              {}
+            ],
+            "tags": {},
+            "tags_all": {},
+            "vpc_config": [
+              {
+                "security_group_ids": [
+                  false
+                ],
+                "subnet_ids": [
+                  false,
+                  false
+                ]
+              }
+            ]
+          },
+          "values": {
+            "architectures": [
+              "x86_64"
+            ],
+            "arn": "arn:aws:lambda:us-east-1:752989493306:function:graphrag-mcp-tool-server",
+            "code_sha256": "YNPBz2tw7849L/yyg9DUdK8JUWdNjeuiyshiRqQyIYs=",
+            "code_signing_config_arn": "",
+            "dead_letter_config": [],
+            "description": "",
+            "environment": [
+              {
+                "variables": {
+                  "NEPTUNE_SPARQL_ENDPOINT": "https://cluster-GMYHK7L6K5ELRFA43NHWJUF6QY.cluster-xxxxxxxxx.us-east-1.neptune.amazonaws.com:8182",
+                  "OPENSEARCH_ENDPOINT": "https://search-graphrag-vectors-xxxxxxxxx.us-east-1.es.amazonaws.com",
+                  "SYNTHESIS_MODEL_ID": "us.anthropic.claude-sonnet-4-6"
+                }
+              }
+            ],
+            "ephemeral_storage": [
+              {
+                "size": 512
+              }
+            ],
+            "file_system_config": [],
+            "filename": "./../graphrag/dist/graphrag.zip",
+            "function_name": "graphrag-mcp-tool-server",
+            "handler": "graphrag.mcp._lambda.handler",
+            "id": "graphrag-mcp-tool-server",
+            "image_config": [],
+            "image_uri": "",
+            "invoke_arn": "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:752989493306:function:graphrag-mcp-tool-server/invocations",
+            "kms_key_arn": "",
+            "last_modified": "2026-07-24T00:00:00.000+0000",
+            "layers": [],
+            "logging_config": [
+              {
+                "application_log_level": "",
+                "log_format": "Text",
+                "log_group": "/graphrag/mcp-tool-server",
+                "system_log_level": ""
+              }
+            ],
+            "memory_size": 512,
+            "package_type": "Zip",
+            "publish": false,
+            "qualified_arn": "arn:aws:lambda:us-east-1:752989493306:function:graphrag-mcp-tool-server:$LATEST",
+            "qualified_invoke_arn": "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:752989493306:function:graphrag-mcp-tool-server:$LATEST/invocations",
+            "replace_security_groups_on_destroy": null,
+            "replacement_security_group_ids": null,
+            "reserved_concurrent_executions": 10,
+            "role": "arn:aws:iam::752989493306:role/graphrag-mcp-lambda-20260724000000000000000001",
+            "runtime": "python3.12",
+            "s3_bucket": null,
+            "s3_key": null,
+            "s3_object_version": null,
+            "signing_job_arn": "",
+            "signing_profile_version_arn": "",
+            "skip_destroy": false,
+            "snap_start": [],
+            "source_code_hash": "YNPBz2tw7849L/yyg9DUdK8JUWdNjeuiyshiRqQyIYs=",
+            "source_code_size": 180160,
+            "tags": {},
+            "tags_all": {
+              "Application": "graphrag",
+              "Department": "unspecified",
+              "Environment": "demo",
+              "Project": "graphrag-aws-template",
+              "User": "unspecified"
+            },
+            "timeout": 120,
+            "timeouts": null,
+            "tracing_config": [
+              {
+                "mode": "PassThrough"
+              }
+            ],
+            "version": "$LATEST",
+            "vpc_config": [
+              {
+                "ipv6_allowed_for_dual_stack": false,
+                "security_group_ids": [
+                  "sg-0a1b2c3d4e5f60001"
+                ],
+                "subnet_ids": [
+                  "subnet-07e972ea460cccc20",
+                  "subnet-0b6bbd792ce662fa4"
+                ],
+                "vpc_id": "vpc-0b797c63132958c05"
+              }
+            ]
+          }
+        },
+        {
+          "address": "aws_lambda_function_url.mcp_url",
+          "mode": "managed",
+          "type": "aws_lambda_function_url",
+          "name": "mcp_url",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "schema_version": 0,
+          "sensitive_values": {
+            "cors": []
+          },
+          "values": {
+            "authorization_type": "AWS_IAM",
+            "cors": [],
+            "function_arn": "arn:aws:lambda:us-east-1:752989493306:function:graphrag-mcp-tool-server",
+            "function_name": "graphrag-mcp-tool-server",
+            "function_url": "https://abcdef1234567890abcdef1234567890.lambda-url.us-east-1.on.aws/",
+            "id": "graphrag-mcp-tool-server",
+            "invoke_mode": "BUFFERED",
+            "qualifier": "",
+            "timeouts": null,
+            "url_id": "abcdef1234567890abcdef1234567890"
+          }
+        },
+        {
+          "address": "aws_lambda_permission.mcp_url_invoke",
+          "mode": "managed",
+          "type": "aws_lambda_permission",
+          "name": "mcp_url_invoke",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "schema_version": 0,
+          "sensitive_values": {},
+          "values": {
+            "action": "lambda:InvokeFunctionUrl",
+            "event_source_token": "",
+            "function_name": "graphrag-mcp-tool-server",
+            "function_url_auth_type": "AWS_IAM",
+            "id": "AllowMcpInvokerRoleFunctionUrl",
+            "principal": "arn:aws:iam::752989493306:role/mcp-invoker",
+            "principal_org_id": "",
+            "qualifier": "",
+            "source_account": "",
+            "source_arn": null,
+            "statement_id": "AllowMcpInvokerRoleFunctionUrl",
+            "statement_id_prefix": ""
+          }
+        },
+        {
+          "address": "aws_apigatewayv2_api.mcp",
+          "mode": "managed",
+          "type": "aws_apigatewayv2_api",
+          "name": "mcp",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "schema_version": 0,
+          "sensitive_values": {
+            "cors_configuration": [],
+            "tags": {},
+            "tags_all": {}
+          },
+          "values": {
+            "api_endpoint": "https://a1b2c3d4e5.execute-api.us-east-1.amazonaws.com",
+            "api_key_selection_expression": "$request.header.x-api-key",
+            "arn": "arn:aws:apigateway:us-east-1::/apis/a1b2c3d4e5",
+            "body": null,
+            "cors_configuration": [],
+            "credentials_arn": null,
+            "description": "MCP tool server \u2014 human/IDE ingress (API key identification, stage throttling)",
+            "disable_execute_api_endpoint": false,
+            "execution_arn": "arn:aws:execute-api:us-east-1:752989493306:a1b2c3d4e5",
+            "fail_on_warnings": false,
+            "id": "a1b2c3d4e5",
+            "ip_address_type": "ipv4",
+            "name": "graphrag-mcp",
+            "protocol_type": "HTTP",
+            "route_key": null,
+            "route_selection_expression": "$request.method $request.path",
+            "tags": {},
+            "tags_all": {
+              "Application": "graphrag",
+              "Department": "unspecified",
+              "Environment": "demo",
+              "Project": "graphrag-aws-template",
+              "User": "unspecified"
+            },
+            "target": null,
+            "version": ""
+          }
+        },
+        {
+          "address": "aws_apigatewayv2_stage.mcp_default",
+          "mode": "managed",
+          "type": "aws_apigatewayv2_stage",
+          "name": "mcp_default",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "schema_version": 0,
+          "sensitive_values": {
+            "access_log_settings": [],
+            "default_route_settings": [
+              {}
+            ],
+            "route_settings": [],
+            "tags": {},
+            "tags_all": {}
+          },
+          "values": {
+            "access_log_settings": [],
+            "api_id": "a1b2c3d4e5",
+            "arn": "arn:aws:apigateway:us-east-1::/apis/a1b2c3d4e5/stages/$default",
+            "auto_deploy": true,
+            "client_certificate_id": "",
+            "default_route_settings": [
+              {
+                "data_trace_enabled": false,
+                "detailed_metrics_enabled": false,
+                "logging_level": "",
+                "throttling_burst_limit": 10,
+                "throttling_rate_limit": 5.0
+              }
+            ],
+            "deployment_id": "",
+            "description": "",
+            "execution_arn": "arn:aws:execute-api:us-east-1:752989493306:a1b2c3d4e5/$default",
+            "id": "$default",
+            "invoke_url": "https://a1b2c3d4e5.execute-api.us-east-1.amazonaws.com/",
+            "name": "$default",
+            "route_settings": [],
+            "stage_variables": {},
+            "tags": {},
+            "tags_all": {
+              "Application": "graphrag",
+              "Department": "unspecified",
+              "Environment": "demo",
+              "Project": "graphrag-aws-template",
+              "User": "unspecified"
+            }
+          }
+        },
+        {
+          "address": "aws_apigatewayv2_integration.mcp_lambda",
+          "mode": "managed",
+          "type": "aws_apigatewayv2_integration",
+          "name": "mcp_lambda",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "schema_version": 0,
+          "sensitive_values": {
+            "response_parameters": [],
+            "tls_config": []
+          },
+          "values": {
+            "api_id": "a1b2c3d4e5",
+            "connection_id": "",
+            "connection_type": "INTERNET",
+            "content_handling_strategy": "",
+            "credentials_arn": "",
+            "description": "",
+            "id": "abcde12345",
+            "integration_method": "POST",
+            "integration_response_selection_expression": "",
+            "integration_subtype": "",
+            "integration_type": "AWS_PROXY",
+            "integration_uri": "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:752989493306:function:graphrag-mcp-tool-server/invocations",
+            "passthrough_behavior": "",
+            "payload_format_version": "2.0",
+            "request_parameters": {},
+            "request_templates": {},
+            "response_parameters": [],
+            "template_selection_expression": "",
+            "timeout_milliseconds": 29000,
+            "tls_config": []
+          }
+        },
+        {
+          "address": "aws_apigatewayv2_route.mcp_default",
+          "mode": "managed",
+          "type": "aws_apigatewayv2_route",
+          "name": "mcp_default",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "schema_version": 0,
+          "sensitive_values": {
+            "authorization_scopes": [],
+            "request_parameter": []
+          },
+          "values": {
+            "api_id": "a1b2c3d4e5",
+            "api_key_required": false,
+            "authorization_scopes": [],
+            "authorization_type": "NONE",
+            "authorizer_id": "",
+            "id": "route-mcp-default",
+            "model_selection_expression": "",
+            "operation_name": "",
+            "request_models": {},
+            "request_parameter": [],
+            "route_key": "$default",
+            "route_response_selection_expression": "",
+            "target": "integrations/abcde12345"
+          }
+        },
+        {
+          "address": "aws_lambda_permission.mcp_apigw_invoke",
+          "mode": "managed",
+          "type": "aws_lambda_permission",
+          "name": "mcp_apigw_invoke",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "schema_version": 0,
+          "sensitive_values": {},
+          "values": {
+            "action": "lambda:InvokeFunction",
+            "event_source_token": "",
+            "function_name": "graphrag-mcp-tool-server",
+            "function_url_auth_type": null,
+            "id": "AllowMcpApiGatewayInvoke",
+            "principal": "apigateway.amazonaws.com",
+            "principal_org_id": "",
+            "qualifier": "",
+            "source_account": "",
+            "source_arn": "arn:aws:execute-api:us-east-1:752989493306:a1b2c3d4e5/*",
+            "statement_id": "AllowMcpApiGatewayInvoke",
+            "statement_id_prefix": ""
           }
         }
       ]
@@ -19469,6 +20249,26 @@
       ],
       "before": "graphrag-vector-smoke-probe",
       "after": "graphrag-vector-smoke-probe",
+      "after_unknown": false,
+      "before_sensitive": false,
+      "after_sensitive": false
+    },
+    "mcp_function_url": {
+      "actions": [
+        "create"
+      ],
+      "before": null,
+      "after": "https://abcdef1234567890abcdef1234567890.lambda-url.us-east-1.on.aws/",
+      "after_unknown": false,
+      "before_sensitive": false,
+      "after_sensitive": false
+    },
+    "mcp_api_gateway_url": {
+      "actions": [
+        "create"
+      ],
+      "before": null,
+      "after": "https://a1b2c3d4e5.execute-api.us-east-1.amazonaws.com/",
       "after_unknown": false,
       "before_sensitive": false,
       "after_sensitive": false
