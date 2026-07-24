@@ -129,6 +129,7 @@ def test_same_model_fields_across_calls() -> None:
         "Field set must be stable across calls — same Pydantic model guarantees this"
     )
 
+
 # ---------------------------------------------------------------------------
 # Cost-guard: hops > 2 is clamped, not an error
 # ---------------------------------------------------------------------------
