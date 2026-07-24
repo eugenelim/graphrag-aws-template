@@ -111,6 +111,10 @@ shipped = [
   "packages/graphrag/mcp-tool-server",
   "packages/graphrag/normative-retrieval",
   "packages/graphrag/rdf-owl-ontology-loader",
+  "docs/update-architecture-docs",
+  "infra-tf/api-gateway-mcp",
+  "packages/graphrag/multi-strategy-router",
+  "packages/graphrag/ingestion-extraction-cleanse",
   "packages/graphrag/otel-instrumentation",
 ]
 active  = []
@@ -122,12 +126,6 @@ queue   = [
   # SHACL validation gate — shipped 2026-07-24 (PR #77)
   # Extraction + cleansing Fargate task: format router (pandoc/docling/markitdown/Textract),
   # Silver artifact write, PII flagging, quarantine graph, SHACL gate, Gold artifact (chunks + PROV-O).
-  {path = "packages/graphrag/ingestion-extraction-cleanse", needs = [
-    "work:packages/graphrag/neptune-sparql-store",
-    "work:packages/graphrag/shacl-validation",
-    "shape:spec-ingestion-extraction-cleanse",
-    "shape:spec-provenance-citations",
-  ]},
   {path = "packages/graphrag/git-ingestion-pipeline", needs = [
     "work:packages/graphrag/neptune-sparql-store",
     "work:packages/graphrag/ingestion-extraction-cleanse",
@@ -144,29 +142,13 @@ queue   = [
   # docs/update-existing-specs — shipped 2026-07-24 (PR #72)
 
   # Wave 4 — integration, observability, final infra + docs; gate on mcp-tool-server
-  {path = "packages/graphrag/multi-strategy-router",  needs = [
-    "work:packages/graphrag/mcp-tool-server",
-    "shape:spec-multi-strategy-routing",
-  ]},
-
   {path = "infra-tf/mcp-otel-lambda",                 needs = [
     "work:packages/graphrag/mcp-tool-server",
     "shape:adr-0015-otel-observability",
   ]},
-  # API Gateway HTTP API in front of the MCP Lambda — human/IDE ingress path.
-  # Usage plan + API key auth (no SigV4 on the client side).
-  # Function URL retained separately for automation + AgentCore (SigV4/IAM).
-  {path = "infra-tf/api-gateway-mcp",                 needs = [
-    "work:packages/graphrag/mcp-tool-server",
-    "shape:spec-mcp-tool-server",
-  ]},
   {path = "infra-tf/git-ingestion-trigger",           needs = [
     "work:packages/graphrag/git-ingestion-pipeline",
     "shape:spec-git-ingestion",
-  ]},
-  {path = "docs/update-architecture-docs",            needs = [
-    "work:packages/graphrag/mcp-tool-server",
-    "work:packages/graphrag/neptune-sparql-store",
   ]},
 ]
 
@@ -266,13 +248,6 @@ open = [
 
   # ── ini-002 / RFC-0004 biz-ops KG pivot follow-ups (surfaced at RFC review) ──
 
-  # ADR-0007 (silver cache) is done: superseded by ADR-0016. ADR-0005 (Louvain
-  # community detection) mechanism is superseded by ADR-0013's `global` strategy
-  # + ADR-0014's `summarize` tool. Fix: add "Superseded by ADR-0013/ADR-0014" to
-  # ADR-0005's header once ADR-0014 lands; the `summarize` tool is what fully
-  # replaces the community-detection mechanism. ADR-0016 + ADR-0013 partial.
-  {slug = "adr-0005-supersession-record", source = "docs/rfc/0004-biz-ops-kg-pivot.md"},
-
   # Verify the Neptune SPARQL IAM data-action matrix: confirm SPARQL Update forms
   # (esp. DROP GRAPH) are gated by WriteDataViaQuery/DeleteDataViaQuery so the
   # mcp_lambda_role read-only grant (ReadDataViaQuery only) actually blocks a
@@ -311,21 +286,6 @@ open = [
   # ADOT collector's export-failure metric. Owner: infra-tf/mcp-otel-lambda. Surfaced
   # by the spec-otel-observability security review (Nit 6).
   {slug = "otel-collector-export-failure-alarm", source = "docs/specs/spec-otel-observability/"},
-
-  # AC7 deferred: offline pre-deploy assertion that the MCP Lambda terraform plan
-  # contains the ADOT collector attributes processor delete-set (DENY_SET ∪
-  # AUTO_CAPTURE_KEYS), capture-off env vars, and AWSXRayDaemonWriteAccess grant.
-  # Owner: infra-tf/mcp-otel-lambda (apps/infra-tf/tests/test_plan.py).
-  # Unblock: when infra-tf/mcp-otel-lambda is implemented.
-  {slug = "infra-otel-lambda-offline-ac7", source = "docs/specs/spec-otel-observability/"},
-
-  # AC8 deferred: live end-to-end trace assertion — invoke ask via Function URL,
-  # confirm X-Ray trace with mcp.ask root + retrieval.* subsegments, no DENY_SET or
-  # AUTO_CAPTURE_KEYS attributes, mcp.tool.duration_ms EMF metric in CloudWatch.
-  # @pytest.mark.live_aws; requires both otel-instrumentation and infra-tf/mcp-otel-lambda
-  # deployed. Owner: the spec-otel-observability live gate.
-  # Unblock: when infra-tf/mcp-otel-lambda ships and a live deploy is available.
-  {slug = "otel-live-ac8-e2e", source = "docs/specs/spec-otel-observability/"},
 
   # Neptune CloudWatch audit-log export for detective control (neptune-sparql-engine AC-DEFER-2).
   # No `enable_cloudwatch_logs_exports = ["audit"]` means an escaped SPARQL Update mutation

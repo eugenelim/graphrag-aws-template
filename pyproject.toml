@@ -34,6 +34,25 @@ ingest = [
     "networkx>=3.0",
     "rdflib>=6.3",
     "pyshacl>=0.25,<0.27",
+    # Format extraction — lighter deps (no PyTorch stack).
+    # pypandoc wraps the pandoc binary (baked into the Fargate image).
+    # markitdown handles .pptx and .xlsx.
+    "pypandoc>=1.5",
+    "markitdown>=0.0.1",
+    # pillow floor: markitdown→python-pptx→Pillow; 12.3.0 patches PYSEC-2026-{3451,3452,3453,3454,2253,2254,2255,2256,3493,3494,3495,3496}
+    "pillow>=12.3.0",
+]
+# Full ingestion extra: includes docling (PyTorch, ~2.4 GB model weights).
+# NOT added to [dev] — too heavy for general development.
+# The Fargate image installs graphrag-aws-demo[ingest-full].
+"ingest-full" = [
+    "graphrag-aws-demo[ingest]",
+    # docling: MIT/Apache-2.0 licensed digital PDF extractor.
+    # MUST NOT use pymupdf4llm — AGPL; closed-source use requires a commercial licence.
+    "docling>=2.0",
+    # pdfminer.six: scanned-PDF detection heuristic in DoclingExtractor.
+    # Also a transitive dependency of docling.
+    "pdfminer.six>=20221105",
 ]
 server = [
     # MCP tool server — FastMCP + Mangum Lambda adapter.
@@ -136,6 +155,10 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["rdflib", "rdflib.*", "pyshacl", "pyshacl.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["pypandoc", "markitdown", "markitdown.*", "docling", "docling.*", "pdfminer", "pdfminer.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
