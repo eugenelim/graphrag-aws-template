@@ -141,7 +141,7 @@ queue   = [
   # packages/graphrag/sparql-templates — shipped 2026-07-24 (PR #75)
   # docs/supersede-adrs-0001-0004-0008 — shipped 2026-07-24 (PR #66)
   # docs/update-existing-specs — shipped 2026-07-24 (PR #72)
-  # infra-tf/mcp-otel-lambda — shipped 2026-07-24 (PR TBD)
+  # infra-tf/mcp-otel-lambda — shipped 2026-07-24 (PR #88)
 
   # Wave 4 — integration, observability, final infra + docs; gate on mcp-tool-server
   {path = "packages/graphrag/multi-strategy-router",  needs = [
