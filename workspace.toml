@@ -74,6 +74,12 @@ shipped = [
   "spec-normative-partition",
   "spec-git-ingestion",
   "spec-ingestion-extraction-cleanse",
+  # Wave 4 (remaining) + Wave 5 — authored 2026-07-23
+  "spec-text2sparql-guarded",
+  "spec-provenance-citations",
+  "spec-shacl-validation",
+  "adr-0015-otel-observability",
+  "spec-mcp-tool-server",
 ]
 active  = []
 queue   = [
@@ -81,18 +87,7 @@ queue   = [
   # Wave 2 — ADR-0011 + ADR-0012 written and committed (cbac0e1); moved to shipped 2026-07-23
   # Wave 3 — ADR-0013 + ADR-0016 written 2026-07-23; moved to shipped
   # Wave 4 — ADR-0014 + 4 feature specs written 2026-07-23; moved to shipped
-
-  # Wave 4 (remaining) — not yet authored
-  {slug = "spec-text2sparql-guarded",        needs = ["shape:adr-0011-neptune-sparql", "shape:adr-0012-owl-schema-only"]},
-  # Provenance + citations spec — PROV-O model, Silver/Gold artifact metadata, MCP citation format
-  {slug = "spec-provenance-citations",       needs = ["shape:adr-0012-owl-schema-only", "shape:spec-rdf-owl-ontology"]},
-  # SHACL shapes library — machine-readable data contract for RDF triple emission;
-  # pyshacl gate (inference="none") before Neptune LOAD; shapes colocated with OWL ontology; CI-safe (rdflib)
-  {slug = "spec-shacl-validation",           needs = ["shape:spec-rdf-owl-ontology"]},
-
-  # Wave 5 — interface + observability decisions; depend on ADR-0014
-  {slug = "adr-0015-otel-observability",     needs = ["shape:adr-0014-mcp-tool-server"]},
-  {slug = "spec-mcp-tool-server",            needs = ["shape:adr-0014-mcp-tool-server"]},
+  # Wave 4 (remaining) + Wave 5 — 5 design artifacts authored 2026-07-23; moved to shipped
 
   # Wave 6 — final observability spec; depends on ADR-0015
   {slug = "spec-otel-observability",         needs = ["shape:adr-0015-otel-observability"]},
