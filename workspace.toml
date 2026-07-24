@@ -80,6 +80,8 @@ shipped = [
   "spec-shacl-validation",
   "adr-0015-otel-observability",
   "spec-mcp-tool-server",
+  # Wave 6 — final observability spec; authored 2026-07-23
+  "spec-otel-observability",
 ]
 active  = []
 queue   = [
@@ -88,9 +90,8 @@ queue   = [
   # Wave 3 — ADR-0013 + ADR-0016 written 2026-07-23; moved to shipped
   # Wave 4 — ADR-0014 + 4 feature specs written 2026-07-23; moved to shipped
   # Wave 4 (remaining) + Wave 5 — 5 design artifacts authored 2026-07-23; moved to shipped
-
-  # Wave 6 — final observability spec; depends on ADR-0015
-  {slug = "spec-otel-observability",         needs = ["shape:adr-0015-otel-observability"]},
+  # Wave 6 — spec-otel-observability authored 2026-07-23; moved to shipped
+  # Shaping queue now empty — all ini-002 design artifacts agreed; work queue remains.
 ]
 
 ["ini-002".work]
