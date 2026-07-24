@@ -346,6 +346,14 @@ open = [
   # Owner: packages/graphrag/ingestion-extraction-cleanse.
   {slug = "shacl-gate-ingestion-seam", source = "docs/specs/spec-shacl-validation/spec.md"},
 
+  # Cap quarantine reason string and violationPath triples emitted in
+  # _build_quarantine_sparql to avoid unbounded INSERT size when pyshacl emits
+  # many violations with large messages. Neptune rejects oversized requests (fail-
+  # closed), but the string is materialized in process first. Cap reason at ~4 KB
+  # with ellipsis; cap violationPath triples at ~50.
+  # Owner: packages/graphrag/src/graphrag/validation/shacl/_gate.py.
+  {slug = "shacl-gate-quarantine-size-cap", source = "docs/specs/spec-shacl-validation/spec.md"},
+
   # ── graphrag.mcp deferred ACs (PR #69) ────────────────────────────────────
 
   # AC2 deferred: confirm `python -m graphrag.mcp --mock` transport via subprocess
