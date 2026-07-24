@@ -1,7 +1,7 @@
 # Plan: spec-mcp-tool-server
 
 - **Spec:** [`spec.md`](spec.md)
-- **Status:** Drafting <!-- Drafting | Executing | Done -->
+- **Status:** Executing <!-- Drafting | Executing | Done -->
 
 > **Plan contract:** this is the implementation strategy. Unlike the spec, this
 > document is allowed to change as you learn. When it changes substantially
@@ -44,7 +44,7 @@ No AWS credentials are needed for T1–T4. The `ask` timing gate (T4) uses wall-
 - `ask(question="What are the HR policies?")` → `AskResponse` with `answer` non-empty, `citations` non-empty, `strategy_trace.strategy` is a valid strategy enum value.
 - `search(question="approval workflow", k=5)` → list of up to 5 `SearchResult` objects.
 - `search_graph(uri=fixture_policy_uri, hops=1)` → `SubgraphResult` with `nodes` non-empty.
-- `get_policies(context="workflow approval required")` → list of exactly 3 `PolicyResult` objects (all 3 fixture policies).
+- `get_policies(context="workflow approval required", domain=None)` → list of exactly 3 `PolicyResult` objects (all 3 fixture policies). With `domain="hr"`, returns exactly 1 (the HR Leave Policy with `biz:scope="hr"`).
 - `query(template_name="policies_by_domain", params={"domain": "hr"})` → `QueryResult(rows=[...], row_count=1)`.
 - `query(template_name="unknown_template", params={})` → `QueryResult(rows=[], row_count=0, error="template not found")` (no exception).
 - `summarize(topic="HR governance")` → `SummaryResult` with `summary` non-empty.
@@ -65,7 +65,7 @@ No AWS credentials are needed for T1–T4. The `ask` timing gate (T4) uses wall-
 - **Tool stubs first, mock wiring second.** T1 creates stub tool bodies that return `NotImplementedError`; T2 replaces those bodies with the mock-wired implementations. This order lets the FastMCP schema test (AC1) pass before any store wiring exists, confirming the type annotation-driven schema generation works independently of the store layer.
 - **`FastMCP` instance is a module-level singleton in `_tools.py`.** `mcp = FastMCP("biz-ops-knowledge-platform")` at module level; all six `@mcp.tool()` decorators apply to this instance. `_mock.py` and `_lambda.py` both import `mcp` from `_tools` — they do not create a second instance.
 - **Mock store injection via module-level dependency.** `_mock.py` sets module-level store references (`_tools._store = MockStore()`) before starting the server. This avoids dependency injection through each tool function signature (which would change the MCP schema) while keeping the mock substitution clean.
-- **`TemplateSynthesizer` for mock `ask` + `summarize`.** The synthesizer returns `f"[MOCK] Answer for: {truncated_question}"` — deterministic and never calls Bedrock. The `truncated_question` is the first 30 chars of the question. This does NOT violate the content-capture policy: the policy governs OTEL span attributes and log lines above DEBUG — the `answer` field in `AskResponse` is the tool's response surface returned to the caller, which is expected to address the question. The caller receives an answer that echoes the question topic; no span attribute or INFO-level log contains the question text.
+- **Fixed placeholder for mock `ask` + `summarize`.** The mock returns a fixed string `"[MOCK] No live synthesis — mock server returned this placeholder."` — deterministic and never calls Bedrock. Question/topic text is NOT echoed into the response field. The spec §Boundaries Never-do explicitly forbids "Return question text in any field of `AskResponse`, `PolicyResult`, or any other response schema" — the mock complies by using a static placeholder. Citations are populated from the vector store search results (seeded from the fixture corpus).
 - **`query` named templates registry.** A `dict[str, str]` of template name → SPARQL SELECT string in `_tools.py` (or `_templates.py`). For ini-002: one template `"policies_by_domain"`. Unknown template names return `QueryResult(rows=[], row_count=0, error="template not found")` without exception.
 - **`hops` max-2 guard.** `search_graph(uri, hops)` clamps `hops = min(hops, 2)` before the graph traversal. A `hops > 2` request does not raise — it is silently clamped. This is a cost guard, not a protocol error.
 - **`get_policies` uses `NormativeRetriever` in production, direct SPARQL in mock.** In the mock, `get_policies` issues a SPARQL `SELECT * WHERE { GRAPH <urn:graph:normative> { ?doc a ?type . } }` directly against the fixture rdflib store — no router, no Bedrock. In production, the `NormativeRetriever` (`spec-normative-partition`) is called directly (bypassing the router per ADR-0013).
@@ -76,8 +76,10 @@ No AWS credentials are needed for T1–T4. The `ask` timing gate (T4) uses wall-
 # graphrag/mcp/_schemas.py
 
 from pydantic import BaseModel
-from graphrag.provenance import Citation       # from spec-provenance-citations
-from graphrag.routing import StrategyTrace     # from spec-multi-strategy-routing
+# Citation and StrategyTrace are locally stubbed in _schemas.py for ini-002.
+# When spec-provenance-citations and spec-multi-strategy-routing ship, replace:
+#   from graphrag.provenance import Citation
+#   from graphrag.routing import StrategyTrace
 
 class AskResponse(BaseModel):
     answer: str
@@ -135,8 +137,7 @@ packages/graphrag/tests/mcp/
 └── test_content_capture_conventions.py  # static linter (AC5)
 
 packages/graphrag/tests/fixtures/
-├── fixture_corpus.ttl   # 3 biz:Policy + 2 biz:SOP + 1 biz:OrgRole + PROV-O provenance
-└── fixture_vectors.json # pre-computed HashEmbedder vectors for fixture corpus
+└── biz_ops_fixture.ttl  # 3 biz:Policy + 2 biz:SOP + 1 skos:Concept (HR domain) + PROV-O provenance
 ```
 
 ### Failure cases & resilience
@@ -179,8 +180,7 @@ packages/graphrag/tests/fixtures/
 **Touches:**
 - `packages/graphrag/src/graphrag/mcp/_mock.py`
 - `packages/graphrag/src/graphrag/mcp/__main__.py`
-- `packages/graphrag/tests/fixtures/fixture_corpus.ttl`
-- `packages/graphrag/tests/fixtures/fixture_vectors.json`
+- `packages/graphrag/tests/fixtures/biz_ops_fixture.ttl`
 - `packages/graphrag/tests/mcp/test_mock_server.py`
 
 **Tests (TDD):** mock starts without AWS env vars; all 6 tools return HTTP 200 + schema-valid JSON; `get_policies` returns all 3 fixture policies; `query` returns 1 hr-domain policy; unknown template returns `error="template not found"`.
@@ -231,3 +231,4 @@ packages/graphrag/tests/fixtures/
 ## Changelog
 
 - 2026-07-23: initial plan
+- 2026-07-23: post-adversarial-review corrections — remove fixture_vectors.json (not generated), rename corpus to biz_ops_fixture.ttl, update design decision (mock returns fixed placeholder, not echoed question), fix fixture description (skos:Concept not biz:OrgRole), update domain filter AC, note Citation/StrategyTrace local stubs
