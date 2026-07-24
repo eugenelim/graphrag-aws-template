@@ -342,6 +342,43 @@ def test_injection_guard_reason_safely_escaped() -> None:
 
 
 # ---------------------------------------------------------------------------
+# URI-position security: invalid URI in doc_uri/sha → quarantine_insert_failed
+# ---------------------------------------------------------------------------
+
+
+def test_invalid_doc_uri_returns_quarantine_insert_failed() -> None:
+    """doc_uri containing a URI-invalid char (space) -> quarantine_insert_failed, not raise.
+
+    rdflib raises ValueError for invalid URIRefs; the gate's try/except must catch
+    this so the caller always receives a GateResult, never a propagated exception.
+    """
+    mock_client = MagicMock()
+
+    fake_result = ValidationResult(
+        conforms=False,
+        violations=[
+            ShapeViolation(
+                focus_node="urn:doc:test",
+                path="https://graphrag-aws.demo/biz-ops/ontology#effectiveDate",
+                message="missing",
+                source_shape="",
+            )
+        ],
+    )
+
+    # A doc_uri with a space is invalid per IRI grammar; rdflib raises on serialize.
+    bad_doc_uri = "urn:doc:has a space"
+
+    with patch("graphrag.validation.shacl._gate.validate_graph", return_value=fake_result):
+        gate = ShaclGate(mock_client)
+        result = gate.validate(Graph(), doc_uri=bad_doc_uri, sha=SHA)
+
+    # Must not propagate — gate returns quarantine_insert_failed gracefully.
+    assert result.outcome == "quarantine_insert_failed"
+    assert result.error is not None
+
+
+# ---------------------------------------------------------------------------
 # AC6 — import isolation: ShaclGate and GateResult importable without boto3
 # ---------------------------------------------------------------------------
 

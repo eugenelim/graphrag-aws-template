@@ -130,15 +130,14 @@ class ShaclGate:
             )
             violation_paths = [v.path for v in result.violations if v.path]
 
-        sparql = _build_quarantine_sparql(
-            record_uri=record_uri,
-            doc_uri=doc_uri,
-            reason=reason,
-            timestamp=timestamp,
-            violation_paths=violation_paths,
-        )
-
         try:
+            sparql = _build_quarantine_sparql(
+                record_uri=record_uri,
+                doc_uri=doc_uri,
+                reason=reason,
+                timestamp=timestamp,
+                violation_paths=violation_paths,
+            )
             self._client.sparql_update(sparql)
             return GateResult(outcome="quarantined")
         except Exception as exc:
