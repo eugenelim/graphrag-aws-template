@@ -1,0 +1,96 @@
+# Fixture corpus for graphrag.mcp offline tests.
+# Format: TriG (named graphs; superset of Turtle).
+# Load with: rdflib.Dataset().parse(path, format="trig")
+#
+# Contents:
+#   urn:graph:normative    — 3 biz:Policy resources
+#   urn:graph:descriptive  — 2 biz:SOP + 1 skos:Concept (HR domain) + PROV-O provenance
+
+@prefix biz:    <https://graphrag-aws.demo/biz-ops/ontology#> .
+@prefix schema: <https://schema.org/> .
+@prefix skos:   <http://www.w3.org/2004/02/skos/core#> .
+@prefix prov:   <http://www.w3.org/ns/prov#> .
+@prefix xsd:    <http://www.w3.org/2001/XMLSchema#> .
+@prefix rdfs:   <http://www.w3.org/2000/01/rdf-schema#> .
+
+# ---------------------------------------------------------------------------
+# Normative graph — compliance-enforcing Policy resources (exhaustive retrieval)
+# ---------------------------------------------------------------------------
+
+GRAPH <urn:graph:normative> {
+    <urn:biz:policy:hr-leave>
+        a biz:Policy ;
+        schema:name "HR Leave Policy" ;
+        biz:effectiveDate "2024-01-01" ;
+        biz:scope "hr" ;
+        biz:hasPII false ;
+        biz:gitCommitSHA "abc123def456" ;
+        rdfs:label "HR Leave Policy"@en .
+
+    <urn:biz:policy:expense-reimbursement>
+        a biz:Policy ;
+        schema:name "Expense Reimbursement Policy" ;
+        biz:effectiveDate "2024-03-15" ;
+        biz:scope "finance" ;
+        biz:hasPII false ;
+        biz:gitCommitSHA "789012abc345" ;
+        rdfs:label "Expense Reimbursement Policy"@en .
+
+    <urn:biz:policy:data-handling>
+        a biz:Policy ;
+        schema:name "Data Handling Policy" ;
+        biz:effectiveDate "2024-06-01" ;
+        biz:scope "all" ;
+        biz:hasPII true ;
+        biz:gitCommitSHA "cdef012345678" ;
+        rdfs:label "Data Handling Policy"@en .
+}
+
+# ---------------------------------------------------------------------------
+# Descriptive graph — SOPs, skos:Concept (HR domain), relationships, PROV-O provenance
+# ---------------------------------------------------------------------------
+
+GRAPH <urn:graph:descriptive> {
+    <urn:biz:sop:employee-onboarding>
+        a biz:SOP ;
+        schema:name "Employee Onboarding SOP" ;
+        biz:gitCommitSHA "111aaa222bbb" ;
+        rdfs:label "Employee Onboarding SOP"@en .
+
+    <urn:biz:sop:expense-submission>
+        a biz:SOP ;
+        schema:name "Expense Submission SOP" ;
+        biz:gitCommitSHA "333ccc444ddd" ;
+        rdfs:label "Expense Submission SOP"@en .
+
+    <urn:biz:domain:hr>
+        a skos:Concept ;
+        skos:prefLabel "Human Resources"@en ;
+        skos:notation "hr" .
+
+    # Relationships: HR domain owns the HR Leave Policy and Onboarding SOP
+    <urn:biz:domain:hr>
+        schema:hasPart <urn:biz:policy:hr-leave> ;
+        schema:hasPart <urn:biz:sop:employee-onboarding> .
+
+    # PROV-O provenance — git-ingestion attribution
+    <urn:biz:policy:hr-leave>
+        prov:wasAttributedTo <urn:biz:agent:git-ingestor> ;
+        prov:generatedAtTime "2024-01-01T00:00:00Z"^^xsd:dateTime .
+
+    <urn:biz:policy:expense-reimbursement>
+        prov:wasAttributedTo <urn:biz:agent:git-ingestor> ;
+        prov:generatedAtTime "2024-03-15T00:00:00Z"^^xsd:dateTime .
+
+    <urn:biz:policy:data-handling>
+        prov:wasAttributedTo <urn:biz:agent:git-ingestor> ;
+        prov:generatedAtTime "2024-06-01T00:00:00Z"^^xsd:dateTime .
+
+    <urn:biz:sop:employee-onboarding>
+        prov:wasAttributedTo <urn:biz:agent:git-ingestor> ;
+        prov:generatedAtTime "2024-01-15T00:00:00Z"^^xsd:dateTime .
+
+    <urn:biz:sop:expense-submission>
+        prov:wasAttributedTo <urn:biz:agent:git-ingestor> ;
+        prov:generatedAtTime "2024-03-20T00:00:00Z"^^xsd:dateTime .
+}
