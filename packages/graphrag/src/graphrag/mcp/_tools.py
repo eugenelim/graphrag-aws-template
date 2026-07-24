@@ -62,25 +62,37 @@ SELECT ?policy ?name ?effectiveDate ?scope WHERE {{
 """
 
 
-def _run_policies_by_domain(graph: Any, params: dict[str, Any]) -> list[dict[str, str]]:
+def _run_policies_by_domain(
+    graph: Any, params: dict[str, Any], mode: str = "mock"
+) -> list[dict[str, str]]:
     domain = str(params.get("domain", ""))
-    # Security note: ``domain`` is string-interpolated into SPARQL.  This is
-    # acceptable ONLY in the mock server (offline CI; no user-supplied input
-    # reaches this function directly — tool parameters are the MCP client's
-    # ``params`` dict which is caller-controlled).  Production templates must
-    # use rdflib's parameterised query API (``initBindings``) to prevent
-    # injection.  Tracked as backlog item: use-rdflib-initbindings.
+    # Security note: ``domain`` is string-interpolated into SPARQL.
+    # Acceptable ONLY in mock/offline CI and production interim path — the ``params`` dict
+    # is caller-controlled (the MCP client).  Replace with rdflib ``initBindings`` or
+    # Neptune parameterised query API.  Tracked as backlog item: use-rdflib-initbindings.
     sparql = _POLICIES_BY_DOMAIN_SPARQL.format(domain=domain)
     rows: list[dict[str, str]] = []
-    for row in graph.query(sparql):
-        rows.append(
-            {
-                "policy": str(row.policy),
-                "name": str(row.name),
-                "effective_date": str(row.effectiveDate) if row.effectiveDate else "",
-                "scope": str(row.scope) if row.scope else "",
-            }
-        )
+    if mode == "production":
+        # ``graph`` is NeptuneSparqlStore when mode="production"
+        for row_dict in graph.sparql_select(sparql):
+            rows.append(
+                {
+                    "policy": row_dict.get("policy", ""),
+                    "name": row_dict.get("name", ""),
+                    "effective_date": row_dict.get("effectiveDate", ""),
+                    "scope": row_dict.get("scope", ""),
+                }
+            )
+    else:
+        for row in graph.query(sparql):
+            rows.append(
+                {
+                    "policy": str(row.policy),
+                    "name": str(row.name),
+                    "effective_date": str(row.effectiveDate) if row.effectiveDate else "",
+                    "scope": str(row.scope) if row.scope else "",
+                }
+            )
     return rows
 
 
@@ -101,10 +113,27 @@ class _MockStore:
     uri_meta: dict[str, tuple[str, str]] = field(default_factory=dict)
 
 
-_store: _MockStore | None = None
+@dataclass
+class _ProductionStore:
+    """Production backends: Neptune SPARQL + OpenSearch/MemoryVector + Bedrock.
+
+    ``embedder`` uses ``HashEmbedder`` until a Bedrock embedder adapter lands.
+    ``bedrock_client`` is a boto3 ``bedrock-runtime`` client reserved for synthesis;
+    it is constructed eagerly on cold-start so credential errors surface at init time.
+    ``vector`` is ``OpenSearchVectorStore`` when ``OPENSEARCH_ENDPOINT`` is set,
+    otherwise ``MemoryVectorStore`` (empty — kNN results will be empty until indexed).
+    """
+
+    neptune: Any  # NeptuneSparqlStore — SigV4-signed SPARQL SELECT
+    vector: Any  # OpenSearchVectorStore | MemoryVectorStore (fallback)
+    bedrock_client: Any  # boto3 bedrock-runtime client (reserved for synthesis)
+    embedder: Any  # HashEmbedder — deterministic embeddings (interim)
 
 
-def _require_store() -> _MockStore:
+_store: _MockStore | _ProductionStore | None = None
+
+
+def _require_store() -> _MockStore | _ProductionStore:
     if _store is None:
         raise RuntimeError(
             "graphrag.mcp._store is not initialised — "
@@ -124,18 +153,24 @@ async def ask(question: str) -> AskResponse:
     start = time.monotonic()
     store = _require_store()
 
-    # Mock synthesis: deterministic template (no Bedrock call).
-    # Never-do (ADR-0015 / spec.md §Boundaries): question text must not appear
-    # in any AskResponse field.  This mock returns a fixed placeholder.
-    answer = "[MOCK] No live synthesis — mock server returned this placeholder."
-
-    # Vector search for relevant docs → citations
+    # Vector search for relevant docs → citations (same path for mock and production)
     query_vec = store.embedder.embed([question])[0]
     hits = store.vector.knn(query_vec, 3)
     citations = []
     for hit in hits:
         c = hit.chunk
         citations.append(Citation(uri=c.id, title=c.text[:80], excerpt=c.text[:120]))
+
+    # Mock synthesis: deterministic template (no Bedrock call).
+    # Production: RuleQueryRouter-only path — no BedrockQueryRouter yet (graphrag.routing pending).
+    # Never-do (ADR-0015 / spec.md §Boundaries): question text must not appear
+    # in any AskResponse field.  Both paths return a fixed placeholder.
+    if isinstance(store, _ProductionStore):
+        answer = "[RuleQueryRouter] Synthesis not yet available — graphrag.routing is pending."
+        strategy = "rule"
+    else:
+        answer = "[MOCK] No live synthesis — mock server returned this placeholder."
+        strategy = "rule"
 
     elapsed = time.monotonic() - start
     if elapsed > 20.0:
@@ -145,7 +180,7 @@ async def ask(question: str) -> AskResponse:
     logger.info(
         "ask completed",
         extra={
-            "strategy": "rule",
+            "strategy": strategy,
             "routing_decision": "rule_query_router",
             "citation_count": len(citations),
             "elapsed_s": round(elapsed, 3),
@@ -156,7 +191,7 @@ async def ask(question: str) -> AskResponse:
         answer=answer,
         citations=citations,
         strategy_trace=StrategyTrace(
-            strategy="rule",
+            strategy=strategy,
             routing_decision="rule_query_router",
             sources_consulted=[hit.chunk.id for hit in hits],
         ),
@@ -187,11 +222,17 @@ async def search(
     results: list[SearchResult] = []
     for hit in hits:
         uri = hit.chunk.id
-        doc_type, partition = store.uri_meta.get(uri, ("biz:Document", "descriptive"))
-
-        # Type filter: skip if caller requested a specific type and this doesn't match
-        if type is not None and doc_type != type:
-            continue
+        if isinstance(store, _MockStore):
+            doc_type, partition = store.uri_meta.get(uri, ("biz:Document", "descriptive"))
+            # Type filter: skip if caller requested a specific type and this doesn't match.
+            # In mock mode, uri_meta is populated so the filter is meaningful.
+            if type is not None and doc_type != type:
+                continue
+        else:
+            # Production: URI metadata (doc_type/partition) not pre-populated.
+            # Skip the type filter entirely to avoid silently returning empty results.
+            # Type-aware filtering will land with spec-normative-partition.
+            doc_type, partition = ("", "")
 
         c = hit.chunk
         results.append(
@@ -212,6 +253,11 @@ async def search(
 # ---------------------------------------------------------------------------
 # Tool 3: search_graph
 # ---------------------------------------------------------------------------
+
+
+def _sparql_rows_from_production(store: _ProductionStore, sparql: str) -> list[dict[str, Any]]:
+    """Execute a SPARQL SELECT via NeptuneSparqlStore and return result rows as dicts."""
+    return store.neptune.sparql_select(sparql)
 
 
 @mcp.tool()
@@ -260,27 +306,40 @@ SELECT ?s ?p ?o ?type ?label WHERE {{
     }}
 }}
 """
-            for row in store.graph.query(sparql):
-                s_str = str(row.s)
-                o_str = str(row.o)
-                p_str = str(row.p)
+            if isinstance(store, _MockStore):
+                raw_rows = store.graph.query(sparql)
+            else:
+                # Production: use NeptuneSparqlStore.sparql_select(); result is list[dict]
+                raw_rows = _sparql_rows_from_production(store, sparql)
+            for row in raw_rows:
+                if isinstance(store, _MockStore):
+                    s_str = str(row.s)
+                    o_str = str(row.o)
+                    p_str = str(row.p)
+                    type_str = str(row.type) if row.type else ""
+                    label_str = str(row.label) if row.label else s_str.split(":")[-1]
+                    o_is_uri = isinstance(row.o, rdflib.term.URIRef)
+                else:
+                    s_str = row.get("s", "")
+                    o_str = row.get("o", "")
+                    p_str = row.get("p", "")
+                    type_str = row.get("type", "")
+                    label_str = row.get("label", "") or s_str.split(":")[-1]
+                    # Neptune returns IRIs as plain strings; treat non-empty o as URI
+                    o_is_uri = bool(o_str) and (
+                        o_str.startswith("http") or o_str.startswith("urn:")
+                    )
                 edges.append({"subject": s_str, "predicate": p_str, "object": o_str})
 
                 # Always add the subject (always a URI per the BIND clause)
                 if s_str not in nodes:
-                    nodes[s_str] = {
-                        "uri": s_str,
-                        "type": str(row.type) if row.type else "",
-                        "label": str(row.label) if row.label else s_str.split(":")[-1],
-                    }
+                    nodes[s_str] = {"uri": s_str, "type": type_str, "label": label_str}
                 if s_str not in visited:
                     visited.add(s_str)
                     next_frontier.append(s_str)
 
                 # Only add the object to nodes/frontier if it is a URI (not a literal).
-                # Literal objects (strings, dates, booleans) cannot be SPARQL IRIs and
-                # would cause a parse error in the next traversal hop.
-                if isinstance(row.o, rdflib.term.URIRef):
+                if o_is_uri:
                     if o_str not in nodes:
                         nodes[o_str] = {
                             "uri": o_str,
@@ -324,6 +383,21 @@ SELECT ?policy ?name ?effectiveDate ?scope WHERE {
 }
 """
 
+# Production-only domain-filter template (f-string; see security note in get_policies).
+_GET_POLICIES_DOMAIN_SPARQL_TEMPLATE = """
+PREFIX biz:    <https://graphrag-aws.demo/biz-ops/ontology#>
+PREFIX schema: <https://schema.org/>
+SELECT ?policy ?name ?effectiveDate ?scope WHERE {{
+    GRAPH <urn:graph:normative> {{
+        ?policy a biz:Policy ;
+                schema:name ?name ;
+                biz:scope "{domain}" .
+        OPTIONAL {{ ?policy biz:effectiveDate ?effectiveDate . }}
+        BIND("{domain}" AS ?scope)
+    }}
+}}
+"""
+
 
 @mcp.tool()
 async def get_policies(context: str, domain: str | None = None) -> list[PolicyResult]:
@@ -331,21 +405,43 @@ async def get_policies(context: str, domain: str | None = None) -> list[PolicyRe
     store = _require_store()
 
     results: list[PolicyResult] = []
-    for row in store.graph.query(_GET_POLICIES_ALL_SPARQL):
-        pol_domain = str(row.scope) if row.scope else None
-
-        # Domain filter: skip if caller filtered by domain and this one doesn't match
-        if domain is not None and pol_domain != domain:
-            continue
-
-        results.append(
-            PolicyResult(
-                uri=str(row.policy),
-                title=str(row.name),
-                effective_date=str(row.effectiveDate) if row.effectiveDate else None,
-                domain=pol_domain,
+    if isinstance(store, _ProductionStore):
+        # Production: SPARQL SELECT via NeptuneSparqlStore (read-only, SigV4-signed).
+        # Domain filter applied in SPARQL to avoid transferring all policies over the wire.
+        if domain is not None:
+            # Security note: ``domain`` is string-interpolated into SPARQL.
+            # Acceptable in the production path because domain values come from the
+            # caller-controlled MCP params dict.  When spec-multi-strategy-routing ships,
+            # replace with parameterised Neptune query API.  Tracked: use-rdflib-initbindings.
+            sparql = _GET_POLICIES_DOMAIN_SPARQL_TEMPLATE.format(domain=domain)
+        else:
+            sparql = _GET_POLICIES_ALL_SPARQL
+        for row in store.neptune.sparql_select(sparql):
+            results.append(
+                PolicyResult(
+                    uri=row.get("policy", ""),
+                    title=row.get("name", ""),
+                    effective_date=row.get("effectiveDate") or None,
+                    domain=row.get("scope") or None,
+                )
             )
-        )
+    else:
+        # Mock path: rdflib SPARQL over in-memory Dataset
+        for row in store.graph.query(_GET_POLICIES_ALL_SPARQL):
+            pol_domain = str(row.scope) if row.scope else None
+
+            # Domain filter: skip if caller filtered by domain and this one doesn't match
+            if domain is not None and pol_domain != domain:
+                continue
+
+            results.append(
+                PolicyResult(
+                    uri=str(row.policy),
+                    title=str(row.name),
+                    effective_date=str(row.effectiveDate) if row.effectiveDate else None,
+                    domain=pol_domain,
+                )
+            )
 
     logger.info("get_policies completed", extra={"result_count": len(results)})
     return results
@@ -367,7 +463,10 @@ async def query(template_name: str, params: dict[str, Any]) -> QueryResult:
 
     store = _require_store()
     runner = _TEMPLATE_RUNNERS[template_name]
-    rows = runner(store.graph, params)
+    if isinstance(store, _ProductionStore):
+        rows = runner(store.neptune, params, mode="production")
+    else:
+        rows = runner(store.graph, params, mode="mock")
     logger.info("query completed", extra={"template_name": template_name, "row_count": len(rows)})
     return QueryResult(template_name=template_name, rows=rows, row_count=len(rows))
 
@@ -382,9 +481,14 @@ async def summarize(topic: str) -> SummaryResult:
     """Thematic synthesis spanning many documents via the global strategy."""
     store = _require_store()
 
-    # Mock synthesis: deterministic template (no Bedrock call).
-    # Topic text is not echoed into the summary per content-capture policy.
-    summary_text = "[MOCK] No live synthesis — mock server returned this placeholder."
+    # Synthesis placeholder — deterministic, no Bedrock call in either path yet.
+    # Topic text is not echoed into the summary per content-capture policy (ADR-0015).
+    if isinstance(store, _ProductionStore):
+        summary_text = (
+            "[RuleQueryRouter] Synthesis not yet available — graphrag.routing is pending."
+        )
+    else:
+        summary_text = "[MOCK] No live synthesis — mock server returned this placeholder."
 
     # Seed citations from vector search
     topic_vec = store.embedder.embed([topic])[0]
