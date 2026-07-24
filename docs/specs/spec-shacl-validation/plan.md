@@ -1,7 +1,7 @@
 # Plan: spec-shacl-validation
 
 - **Spec:** [`spec.md`](spec.md)
-- **Status:** Drafting <!-- Drafting | Executing | Done -->
+- **Status:** Done <!-- Drafting | Executing | Done -->
 
 > **Plan contract:** this is the implementation strategy. Unlike the spec, this
 > document is allowed to change as you learn. When it changes substantially
@@ -140,7 +140,7 @@ packages/graphrag/tests/validation/
 - `packages/graphrag/src/graphrag/validation/shacl/_types.py`
 - `packages/graphrag/src/graphrag/validation/shacl/_gate.py`
 - `packages/graphrag/tests/validation/test_shacl_gate.py`
-- `packages/graphrag/src/graphrag/ingestion/cleanse/_gate_integration.py` (new thin adapter replacing the inline `validate_graph()` + quarantine INSERT in `spec-ingestion-extraction-cleanse/plan.md`) — see Integration seam note in spec.md. The ingestion cleanse pipeline's `RDFEmitter` must call `ShaclGate.validate()` via this adapter; the inline `validate_graph()` + quarantine logic is removed from `_emitter.py` / `_provenance.py`.
+- `packages/graphrag/src/graphrag/ingestion/cleanse/_gate_integration.py` — deferred to `spec-ingestion-extraction-cleanse` (deferred: shacl-gate-ingestion-seam); that spec's implementation task owns replacing its inline quarantine INSERT with `ShaclGate.validate()`.
 
 **Tests (TDD):** passed case (no Neptune call); single-violation quarantine INSERT (SPARQL string assertions); multi-violation quarantine INSERT (two `biz:violationPath` triples); Neptune failure → `quarantine_insert_failed` with no exception propagation and ERROR log.
 
