@@ -1,6 +1,6 @@
 # Spec: spec-provenance-citations
 
-- **Status:** Draft <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Shipped <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** [ADR-0012](../../adr/0012-owl-schema-only-and-named-graph-partition.md) (PROV-O is part of the W3C standard stack unlocked by SPARQL/RDF; `biz:gitCommitSHA` required by SHACL shapes); [ADR-0016](../../adr/0016-git-ingestion-commit-sha-delta-medallion.md) (Bronze/Silver/Gold artifact keying scheme; the commit SHA is the provenance anchor); [`spec-rdf-owl-ontology`](../rdf-owl-ontology/spec.md) (`biz:Chunk` has `prov:wasDerivedFrom` as a required SHACL property — this spec expands that to the full PROV-O model)
@@ -52,26 +52,26 @@ This module owns provenance emission (data structure) and citation resolution (S
 - **TDD** — `ProvenanceEmitter` Bronze entity (AC1): `emit_provenance(doc_uri, sha, git_path, git_repo, extractor, timestamps)` returns an `rdflib.Graph`; SPARQL SELECT confirms the Bronze entity URI follows the `urn:entity:bronze:{repo}:{path}:{sha}` pattern; `biz:gitCommitSHA`, `biz:gitPath`, `biz:gitRepo` are present.
 - **TDD** — full PROV-O chain (AC2): SPARQL on the emitted graph confirms all 5 subject types present: Bronze entity, extraction activity, Silver entity, Gold emission activity, document entity; each with the expected `rdf:type` and provenance properties.
 - **TDD** — chunk provenance (AC3): `emit_chunk_provenance(chunk_uri, doc_uri, chunk_index)` adds a triple with `prov:wasDerivedFrom <doc_uri>` and `biz:chunkIndex <i>`; SPARQL SELECT on the graph confirms both. Fixture with 3 chunks: all 3 have correct parent references.
-- **TDD** — `CitationResolver.resolve(result_uris, neptune_client)` (AC4–AC5): fixture `rdflib` ConjunctiveGraph with provenance triples; assert each resolved `Citation` carries `uri`, `title`, `doc_type`, `partition`, `commit_sha`, `git_path`, `git_repo`, `extractor`; assert a URI with no provenance triples produces `Citation.commit_sha=None` (graceful partial resolution, not an exception).
+- **TDD** — `CitationResolver(store).resolve(result_uris)` (AC4–AC5): fixture `MemorySparqlStore` pre-loaded with provenance triples; assert each resolved `Citation` carries `uri`, `title`, `doc_type`, `partition`, `commit_sha`, `git_path`, `git_repo`, `extractor`; assert a URI with no provenance triples produces `Citation.commit_sha=None` (graceful partial resolution, not an exception). Store is injected at construction — no neptune_client in the method signature.
 - **TDD** — excerpt extraction (AC5): fixture chunk body stored as `biz:chunkText`; `resolve()` returns `Citation.excerpt` = first 200 chars of the body; a body shorter than 200 chars returns the full body.
 - **Goal-based check** — import isolation (AC6): `python -c "import graphrag.provenance"` exits 0 without boto3 or botocore installed.
 
 ## Acceptance Criteria
 
-- [ ] `ProvenanceEmitter.emit_provenance(doc_uri, sha, git_path, git_repo, extractor, started_at, ended_at)` returns an `rdflib.Graph` containing:
+- [x] `ProvenanceEmitter.emit_provenance(doc_uri, sha, git_path, git_repo, extractor, started_at, ended_at)` returns an `rdflib.Graph` containing:
   - `<urn:entity:bronze:{git_repo}:{git_path}:{sha}> a prov:Entity` with `biz:gitCommitSHA`, `biz:gitPath`, `biz:gitRepo` asserted.
   - `<urn:activity:extract:{doc_uri}:{sha}> a prov:Activity` with `prov:used <bronze_uri>`, `prov:wasAssociatedWith <urn:agent:{extractor}>`, `prov:startedAtTime`, `prov:endedAtTime`.
   - `<urn:entity:silver:{doc_uri}:{sha}> a prov:Entity` with `prov:wasGeneratedBy <extract_activity>` and `prov:wasDerivedFrom <bronze_uri>`.
   - `<urn:activity:emit:{doc_uri}:{sha}> a prov:Activity` with `prov:used <silver_uri>`, `prov:wasAssociatedWith <urn:agent:rdf-emitter>`.
   - `<{doc_uri}> prov:wasGeneratedBy <emit_activity>` and `prov:wasDerivedFrom <silver_uri>`.
   Confirmed by SPARQL SELECT on the returned graph.
-- [ ] `ProvenanceEmitter.emit_chunk_provenance(chunk_uri, doc_uri, chunk_index)` returns an `rdflib.Graph` with `<chunk_uri> prov:wasDerivedFrom <doc_uri>` and `<chunk_uri> biz:chunkIndex <chunk_index>`. For a fixture document with 3 chunks (indices 0, 1, 2), all three have the correct `prov:wasDerivedFrom` and `biz:chunkIndex` assertions.
-- [ ] The provenance graph returned by `emit_provenance()` merges cleanly with the document's own RDF triple graph (no blank-node collision, no namespace conflicts) when parsed together as a single `rdflib.Graph`. Confirmed by parsing the combined Turtle string and running a SPARQL SELECT that returns both a document-class triple (`?doc a biz:Policy`) and a provenance triple (`?doc prov:wasGeneratedBy ?act`).
-- [ ] `CitationResolver.resolve(result_uris, neptune_client)` returns a list of `Citation` dataclasses with fields: `uri` (str), `title` (str), `doc_type` (str), `partition` (str: `urn:graph:normative` or `urn:graph:descriptive`), `commit_sha` (str | None), `git_path` (str | None), `git_repo` (str | None), `extractor` (str | None), `excerpt` (str | None), `relevance` (float | None), `effective_date` (str | None). All fields are populated from fixture provenance triples in the `rdflib` store.
-- [ ] A result URI whose provenance triples are absent from Neptune (e.g. a freshly added document whose provenance emission failed) produces a `Citation` with `commit_sha=None` and `extractor=None` — graceful partial resolution; no exception raised.
-- [ ] `Citation.excerpt` is the first 200 characters of the `biz:chunkText` property on the matching chunk URI, resolved by SPARQL. For a chunk whose body is < 200 chars, `excerpt` is the full body. For a document URI (not a chunk URI), `excerpt` is `None`.
-- [ ] `python -c "import graphrag.provenance"` exits 0 in an environment where boto3 and botocore are not installed. `ProvenanceEmitter` uses only `rdflib` and `datetime`; it is importable and usable without any AWS SDK.
-- [ ] `ruff check` and `mypy` pass on `packages/graphrag/src/graphrag/provenance/` with zero errors.
+- [x] `ProvenanceEmitter.emit_chunk_provenance(chunk_uri, doc_uri, chunk_index)` returns an `rdflib.Graph` with `<chunk_uri> prov:wasDerivedFrom <doc_uri>` and `<chunk_uri> biz:chunkIndex <chunk_index>`. For a fixture document with 3 chunks (indices 0, 1, 2), all three have the correct `prov:wasDerivedFrom` and `biz:chunkIndex` assertions.
+- [x] The provenance graph returned by `emit_provenance()` merges cleanly with the document's own RDF triple graph (no blank-node collision, no namespace conflicts) when parsed together as a single `rdflib.Graph`. Confirmed by parsing the combined Turtle string and running a SPARQL SELECT that returns both a document-class triple (`?doc a biz:Policy`) and a provenance triple (`?doc prov:wasGeneratedBy ?act`).
+- [x] `CitationResolver(store).resolve(result_uris)` returns a list of `Citation` dataclasses with fields: `uri` (str), `title` (str), `doc_type` (str), `partition` (str: `urn:graph:normative` or `urn:graph:descriptive`), `commit_sha` (str | None), `git_path` (str | None), `git_repo` (str | None), `extractor` (str | None), `excerpt` (str | None), `relevance` (float | None), `effective_date` (str | None). Store is injected at construction; `relevance` is an optional keyword argument. All fields are populated from fixture provenance triples in the `MemorySparqlStore`.
+- [x] A result URI whose provenance triples are absent from Neptune (e.g. a freshly added document whose provenance emission failed) produces a `Citation` with `commit_sha=None` and `extractor=None` — graceful partial resolution; no exception raised.
+- [x] `Citation.excerpt` is the first 200 characters of the `biz:chunkText` property on the matching chunk URI, resolved by SPARQL. For a chunk whose body is < 200 chars, `excerpt` is the full body. For a document URI (not a chunk URI), `excerpt` is `None`.
+- [x] `python -c "import graphrag.provenance"` exits 0 in an environment where boto3 and botocore are not installed. `ProvenanceEmitter` uses only `rdflib` and `datetime`; it is importable and usable without any AWS SDK.
+- [x] `ruff check` and `mypy` pass on `packages/graphrag/src/graphrag/provenance/` with zero errors.
 
 ## Assumptions
 
