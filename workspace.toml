@@ -111,6 +111,7 @@ shipped = [
   "packages/graphrag/mcp-tool-server",
   "packages/graphrag/normative-retrieval",
   "packages/graphrag/rdf-owl-ontology-loader",
+  "docs/update-architecture-docs",
   "packages/graphrag/multi-strategy-router",
 ]
 active  = []
@@ -144,7 +145,6 @@ queue   = [
   # docs/update-existing-specs — shipped 2026-07-24 (PR #72)
 
   # Wave 4 — integration, observability, final infra + docs; gate on mcp-tool-server
-  # packages/graphrag/multi-strategy-router — shipped (PR pending)
   {path = "packages/graphrag/otel-instrumentation",   needs = [
     "work:packages/graphrag/mcp-tool-server",
     "shape:spec-otel-observability",
@@ -163,10 +163,6 @@ queue   = [
   {path = "infra-tf/git-ingestion-trigger",           needs = [
     "work:packages/graphrag/git-ingestion-pipeline",
     "shape:spec-git-ingestion",
-  ]},
-  {path = "docs/update-architecture-docs",            needs = [
-    "work:packages/graphrag/mcp-tool-server",
-    "work:packages/graphrag/neptune-sparql-store",
   ]},
 ]
 
@@ -265,13 +261,6 @@ open = [
   # infra-secret-scan-ci (detect-secrets + shellcheck CI gate).
 
   # ── ini-002 / RFC-0004 biz-ops KG pivot follow-ups (surfaced at RFC review) ──
-
-  # ADR-0007 (silver cache) is done: superseded by ADR-0016. ADR-0005 (Louvain
-  # community detection) mechanism is superseded by ADR-0013's `global` strategy
-  # + ADR-0014's `summarize` tool. Fix: add "Superseded by ADR-0013/ADR-0014" to
-  # ADR-0005's header once ADR-0014 lands; the `summarize` tool is what fully
-  # replaces the community-detection mechanism. ADR-0016 + ADR-0013 partial.
-  {slug = "adr-0005-supersession-record", source = "docs/rfc/0004-biz-ops-kg-pivot.md"},
 
   # Verify the Neptune SPARQL IAM data-action matrix: confirm SPARQL Update forms
   # (esp. DROP GRAPH) are gated by WriteDataViaQuery/DeleteDataViaQuery so the

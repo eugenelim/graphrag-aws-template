@@ -28,10 +28,8 @@ The full platform design in three views. (30–45 min)
 
 ### 3 · Security posture — [`security.md`](security.md)
 
-Trust boundaries, IAM roles, and network segmentation per implementation slice. Read
-this before touching any IAM or infrastructure code.
-
-> Partially current — being updated for ini-002 SPARQL/MCP trust boundaries.
+Trust boundaries, IAM roles, and network segmentation for the ini-002
+SPARQL/MCP platform. Read this before touching any IAM or infrastructure code.
 
 ---
 
@@ -58,17 +56,15 @@ deploy to AWS — not before.
 
 ## Implementation sequence
 
-Work is coordinated by `workspace.toml` (ini-002 initiative, status: shaping).
-Shape artifacts (ADRs and specs) gate implementation work across two queues:
+Work is coordinated by `workspace.toml` (ini-002 initiative).
 
-- **Shape queue — 16 items across 6 waves.** Waves 1–2: pivot rationale and core
-  technology decisions (Neptune SPARQL, OWL schema-only). Waves 3–4: data model,
-  routing, ingestion, and feature specs. Waves 5–6: MCP interface and observability.
-- **Work queue — 20 items across 4 waves.** Nothing in Wave 2+ starts until its
-  named shape dependencies are agreed. Wave 2 builds the SPARQL store and mock MCP
-  server in parallel (mock has no store dependency). Wave 3 is the live feature
-  implementations (extraction, ontology loader, git ingestion, MCP tool server,
-  mcp-proxy). Wave 4 is integration, OTEL, and API Gateway infra.
+- **Shape queue — 16 items across 6 waves — fully shipped.** All ADRs (0011–0016)
+  and feature specs are agreed. The shaping queue is empty.
+- **Work queue — wave 1–3 shipped; wave 4 in-flight.** Wave 1–3: Neptune Terraform,
+  NeptuneSparqlStore, MCP mock server, MCP proxy, SPARQL templates, Text2SPARQL,
+  SHACL validation, MCP tool server, NormativeRetriever, RDF/OWL ontology loader
+  (PRs #65–#83). Wave 4: multi-strategy router, OTEL instrumentation, MCP Lambda
+  infra, API Gateway, git ingestion trigger.
 
 Run `workspace-status` to see ready, blocked, and active items.
 
