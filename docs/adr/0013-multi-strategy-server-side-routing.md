@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-07-23
 - **Decision-makers:** eugenelim
-- **Supersedes:** none — RFC-0004 reversed ADR-0008; this ADR records the replacement routing decision for the SPARQL/RDF platform
+- **Supersedes:** [ADR-0001](0001-hybrid-orchestration-seed-and-expand.md), [ADR-0008](0008-automatic-engine-routing-local-vs-global.md) — RFC-0004 reversed both; this ADR records the replacement routing decision for the SPARQL/RDF platform
 - **Related:** [RFC-0004 §D3](../rfc/0004-biz-ops-kg-pivot.md); [ADR-0008](0008-automatic-engine-routing-local-vs-global.md) (superseded routing decision — reversed by RFC-0004); [ADR-0011](0011-neptune-sparql-rdf-engine-and-text2sparql-guard.md) (SPARQL/RDF engine); [ADR-0012](0012-owl-schema-only-and-named-graph-partition.md) (named-graph partition the strategies operate over); `spec-multi-strategy-routing`; `spec-normative-partition`
 
 ## Decision summary

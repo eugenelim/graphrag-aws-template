@@ -89,3 +89,16 @@ orchestration.
 
 - Design doc D1: [`graphrag-aws-architecture/design.md`](../architecture/graphrag-aws-architecture/design.md)
 - De-risk verdicts (cross-source resolution; tri-modal fitness): [`intents/graphrag-aws-demo.md`](../product/intents/graphrag-aws-demo.md)
+
+## Supersession record
+
+**Superseded by:** [RFC-0004](../rfc/0004-biz-ops-kg-pivot.md) and [ADR-0013](0013-multi-strategy-server-side-routing.md) (date: 2026-07-23)
+
+**What was superseded:**
+The seed-and-expand orchestration pattern using openCypher over Neptune was the core hybrid retrieval strategy: vector k-NN seeds and question-linked entity seeds expanded 1-2 hops in Neptune, merged with vector chunks, and synthesized with a Bedrock Claude model. This strategy was designed for the Kubernetes demo corpus with a controlled-vocabulary entity set (SIG slugs, GitHub handles).
+
+**What replaces it:**
+The biz-ops KG pivot (RFC-0004) replaced the Kubernetes demo corpus and openCypher engine with a SPARQL/RDF knowledge platform. ADR-0013 defines the replacement: a multi-strategy server-side router using a rules-first cascade over six retrieval strategies (`hybrid_graph`, `structured`, `graph_expand`, `vector_only`, `global`, `normative_exhaustive`) operating over named-graph partitions (ADR-0012). The named-graph model separates normative (exhaustive recall) from descriptive (best-match) retrieval, which is architecturally distinct from seed-and-expand's single-mode orchestration.
+
+**What carries forward:**
+The insight of combining vector search with graph expansion is preserved in ADR-0013's `hybrid_graph` strategy. The transparent strategy trace in ADR-0013 continues the narratability requirement (charter principle 1) that drove ADR-0001's visible seed/hop trace.
