@@ -1,6 +1,6 @@
 # Spec: spec-git-ingestion
 
-- **Status:** Draft <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Approved <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** [ADR-0016](../../adr/0016-git-ingestion-commit-sha-delta-medallion.md) (git commit-SHA delta + medallion — primary decision this spec implements); [ADR-0002](../../adr/0002-ephemeral-vpc-store-topology.md) (no-NAT egress posture — CodePipeline/S3-mirror is a hard constraint, not a preference); [ADR-0011](../../adr/0011-neptune-sparql-rdf-engine-and-text2sparql-guard.md) (`ingestion_task_role` WriteDataViaQuery grant; SPARQL DROP logic on delete); [ADR-0012](../../adr/0012-owl-schema-only-and-named-graph-partition.md) (named-graph partition the Gold layer loads into; `biz:gitCommitSHA` required by SHACL shapes); `spec-ingestion-extraction-cleanse` (Silver + Gold production is out of scope for this spec)
