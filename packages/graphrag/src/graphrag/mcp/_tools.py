@@ -23,7 +23,7 @@ from typing import Any
 
 import rdflib
 from mcp.server.fastmcp import FastMCP
-from rdflib import Literal, URIRef
+from rdflib import URIRef
 
 from graphrag.mcp._schemas import (
     AskResponse,
@@ -35,6 +35,7 @@ from graphrag.mcp._schemas import (
     SubgraphResult,
     SummaryResult,
 )
+from graphrag.sparql_templates import SPARQL_TEMPLATE_BY_ID
 
 logger = logging.getLogger(__name__)
 
@@ -48,39 +49,12 @@ mcp: FastMCP = FastMCP("biz-ops-knowledge-platform")
 # In-memory mock store — injected by _mock.py before the server starts.
 # ---------------------------------------------------------------------------
 
-_POLICIES_BY_DOMAIN_SPARQL = """
-PREFIX biz:    <https://graphrag-aws.demo/biz-ops/ontology#>
-PREFIX schema: <https://schema.org/>
-SELECT ?policy ?name ?effectiveDate ?scope WHERE {
-    GRAPH <urn:graph:normative> {
-        ?policy a biz:Policy ;
-                schema:name ?name ;
-                biz:scope ?scope .
-        OPTIONAL { ?policy biz:effectiveDate ?effectiveDate . }
-        FILTER(?scope = ?domain)
-    }
-}
-"""
-
-
-def _run_policies_by_domain(graph: Any, params: dict[str, Any]) -> list[dict[str, str]]:
-    domain = str(params.get("domain", ""))
-    rows: list[dict[str, str]] = []
-    for row in graph.query(_POLICIES_BY_DOMAIN_SPARQL, initBindings={"domain": Literal(domain)}):
-        rows.append(
-            {
-                "policy": str(row.policy),
-                "name": str(row.name),
-                "effective_date": str(row.effectiveDate) if row.effectiveDate else "",
-                "scope": str(row.scope) if row.scope else "",
-            }
-        )
-    return rows
-
-
-# Named template registry: template_name -> callable(graph, params) -> rows
+# Named template registry: delegates to graphrag.sparql_templates registry.
+# Each entry is a bound method — closure-safe without a lambda wrapper.
+# SparqlTemplate.execute() uses rdflib initBindings= for safe parameterization;
+# no f-string interpolation of caller values.
 _TEMPLATE_RUNNERS: dict[str, Any] = {
-    "policies_by_domain": _run_policies_by_domain,
+    name: tmpl.execute for name, tmpl in SPARQL_TEMPLATE_BY_ID.items()
 }
 
 
@@ -356,7 +330,13 @@ async def query(template_name: str, params: dict[str, Any]) -> QueryResult:
 
     store = _require_store()
     runner = _TEMPLATE_RUNNERS[template_name]
-    rows = runner(store.graph, params)
+    try:
+        rows = runner(store.graph, params)
+    except Exception as exc:
+        # Execution errors (missing required param, backend error) return a
+        # structured error result — consistent with the unknown-template path.
+        logger.warning("query execution error", extra={"template_name": template_name})
+        return QueryResult(template_name=template_name, rows=[], row_count=0, error=str(exc))
     logger.info("query completed", extra={"template_name": template_name, "row_count": len(rows)})
     return QueryResult(template_name=template_name, rows=rows, row_count=len(rows))
 
