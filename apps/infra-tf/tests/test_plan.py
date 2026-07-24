@@ -900,3 +900,74 @@ def test_mcp_lambda_concurrency_cap(tfplan):
         f"mcp_lambda must have reserved_concurrent_executions > 0, got {cap!r}"
     )
     assert cap == 10, f"expected concurrency cap of 10, got {cap}"
+
+
+# ── git-ingestion pipeline (spec-git-ingestion T5) ────────────────────────────
+
+
+def test_ingestion_subnet_route_tables_have_no_default_route(tfplan):
+    """spec-git-ingestion AC11: no 0.0.0.0/0 default route on any private (ingestion) route table.
+
+    The Fargate ingestion task runs in a private subnet with no NAT gateway.  All
+    external traffic must flow via VPC endpoints (S3 gateway + interface endpoints).
+    A 0.0.0.0/0 route to an internet gateway or NAT gateway would violate ADR-0002.
+    """
+    route_tables = _pv_by_type(tfplan, "aws_route_table")
+    for rt in route_tables:
+        routes = _vals(rt).get("route", [])
+        for route in routes:
+            cidr = route.get("cidr_block", "")
+            assert cidr != "0.0.0.0/0", (
+                f"{rt['address']} has a 0.0.0.0/0 default route — "
+                "violates ADR-0002 no-NAT egress posture"
+            )
+
+
+def test_ingestion_task_definition_cpu_and_memory(tfplan):
+    """spec-git-ingestion T5 + spec-ingestion-extraction-cleanse AC10:
+    ECS Fargate task definition has cpu=2048 and memory=8192 for docling model weights.
+    """
+    tasks = _pv_by_type(tfplan, "aws_ecs_task_definition")
+    ingestion_tasks = [t for t in tasks if t["name"] == "ingestion"]
+    assert len(ingestion_tasks) == 1, "expected exactly one ingestion ECS task definition"
+    v = _vals(ingestion_tasks[0])
+    # Terraform stores cpu/memory as integers in planned_values.
+    cpu = v.get("cpu")
+    memory = v.get("memory")
+    assert int(cpu) == 2048, f"ingestion task must have cpu=2048 (docling requires it), got {cpu!r}"
+    assert int(memory) == 8192, (
+        f"ingestion task must have memory=8192 (docling requires it), got {memory!r}"
+    )
+
+
+def test_ingestion_task_definition_offline_env_vars(tfplan):
+    """spec-git-ingestion T5 + spec-ingestion-extraction-cleanse AC11:
+    ECS task definition container has TRANSFORMERS_OFFLINE=1 and HF_DATASETS_OFFLINE=1.
+
+    These env vars prevent docling from downloading model weights at runtime — weights
+    must be baked into the Docker image at build time.
+    """
+    import json as _json
+
+    tasks = _pv_by_type(tfplan, "aws_ecs_task_definition")
+    ingestion_tasks = [t for t in tasks if t["name"] == "ingestion"]
+    assert len(ingestion_tasks) == 1
+    v = _vals(ingestion_tasks[0])
+    container_def_str = v.get("container_definitions", "")
+    if not container_def_str:
+        # Fresh plan: container_definitions is computed when image is not yet pushed.
+        # Skip explicitly rather than silently passing — the fixture always populates this.
+        import pytest as _pytest
+
+        _pytest.skip(
+            "container_definitions computed-at-apply; fixture missing — use TFPLAN_JSON_PATH"
+        )
+    containers = _json.loads(container_def_str)
+    assert containers, "expected at least one container definition"
+    env_vars = {e["name"]: e["value"] for e in containers[0].get("environment", [])}
+    assert env_vars.get("TRANSFORMERS_OFFLINE") == "1", (
+        "TRANSFORMERS_OFFLINE must be '1' to prevent runtime model downloads (AC11)"
+    )
+    assert env_vars.get("HF_DATASETS_OFFLINE") == "1", (
+        "HF_DATASETS_OFFLINE must be '1' to prevent runtime model downloads (AC11)"
+    )

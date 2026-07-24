@@ -1,7 +1,7 @@
 # Plan: spec-git-ingestion
 
 - **Spec:** [`spec.md`](spec.md)
-- **Status:** Drafting <!-- Drafting | Executing | Done -->
+- **Status:** Done <!-- Drafting | Executing | Done -->
 
 > **Plan contract:** this is the implementation strategy. Unlike the spec, this
 > document is allowed to change as you learn. When it changes substantially
@@ -31,7 +31,7 @@ No AWS credentials are needed for T1–T4 unit tests. The no-NAT fitness test in
 
 **T1 (delta reader + manifest):**
 - `--name-status` fixture strings (A/M/D/R100) parse to correct sets.
-- Missing manifest → `last_sha = "4b825dc42b"`.
+- Missing manifest → `last_sha = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"`. <!-- pragma: allowlist secret -->
 - Unchanged file (not in diff) produces zero store operations.
 
 **T2 (Neptune SPARQL write client):**
@@ -141,7 +141,7 @@ packages/graphrag/tests/ingestion/
 2. `M path/to/file.docx` → modified.
 3. `D path/to/file.docx` → deleted.
 4. `R100 old.docx new.docx` → two entries: deleted `old.docx`, added `new.docx`.
-5. S3 raises `NoSuchKey` on manifest read → `last_sha = "4b825dc42b"`.
+5. S3 raises `NoSuchKey` on manifest read → `last_sha = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"`. <!-- pragma: allowlist secret -->
 6. Full delta string (multiple lines) → correct sets.
 
 **Done when:** 6 tests pass; `ruff check` and `mypy` clean.
