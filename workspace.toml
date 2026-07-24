@@ -117,6 +117,7 @@ shipped = [
   "packages/graphrag/ingestion-extraction-cleanse",
   "infra-tf/mcp-otel-lambda",
   "packages/graphrag/otel-instrumentation",
+  "packages/graphrag/git-ingestion-pipeline",
 ]
 active  = []
 queue   = [
@@ -127,11 +128,6 @@ queue   = [
   # SHACL validation gate — shipped 2026-07-24 (PR #77)
   # Extraction + cleansing Fargate task: format router (pandoc/docling/markitdown/Textract),
   # Silver artifact write, PII flagging, quarantine graph, SHACL gate, Gold artifact (chunks + PROV-O).
-  {path = "packages/graphrag/git-ingestion-pipeline", needs = [
-    "work:packages/graphrag/neptune-sparql-store",
-    "work:packages/graphrag/ingestion-extraction-cleanse",
-    "shape:spec-git-ingestion",
-  ]},
   # Local stdio→HTTPS proxy for AI IDE connections via API Gateway.
   # Thin wrapper: translates stdio MCP frames to HTTPS + x-api-key header.
   # No retrieval logic; same config schema as the mock server subprocess.
