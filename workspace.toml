@@ -119,12 +119,7 @@ queue   = [
     "shape:spec-rdf-owl-ontology",
     "shape:spec-provenance-citations",
   ]},
-  # SHACL validation gate — pyshacl wrapper; fires between RDF triple emit and Neptune LOAD;
-  # on violation routes to quarantine graph with structured violation report; CI-safe (rdflib, no AWS)
-  {path = "packages/graphrag/shacl-validation",            needs = [
-    "work:packages/graphrag/neptune-sparql-store",
-    "shape:spec-shacl-validation",
-  ]},
+  # SHACL validation gate — shipped 2026-07-23 (PR shacl-validation)
   # Extraction + cleansing Fargate task: format router (pandoc/docling/markitdown/Textract),
   # Silver artifact write, PII flagging, quarantine graph, SHACL gate, Gold artifact (chunks + PROV-O).
   {path = "packages/graphrag/ingestion-extraction-cleanse", needs = [
