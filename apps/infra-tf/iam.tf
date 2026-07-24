@@ -9,7 +9,7 @@
 # grant_put calls (:568-575).
 #
 # Load-bearing invariants (spec AC6-AC8):
-#   - QueryRole Neptune grant is READ-ONLY: connect + ReadDataViaQuery only (ADR-0004).
+#   - QueryRole Neptune grant is READ-ONLY: connect + ReadDataViaQuery only (ADR-0011).
 #     IAM is allow-union, so QueryRole gets NO policy carrying Write/DeleteDataViaQuery.
 #   - No data-plane action carries Resource = "*". ARNs are constructed from the fixed
 #     names + account id so no role policy self-references the domain/cluster (which
@@ -74,7 +74,7 @@ locals {
     }]
   })
 
-  # ADR-0004 backstop: connect + ReadDataViaQuery only, never Write/Delete.
+  # ADR-0011 backstop (carries forward the proven read-only control): connect + ReadDataViaQuery only, never Write/Delete.
   neptune_readonly_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -270,7 +270,7 @@ resource "aws_iam_role_policy" "vector_probe_bedrock_titan" {
 }
 
 # ── QueryRole inline policies (4): Neptune READ-ONLY, OpenSearch, Bedrock Titan + ──
-# synthesis. No Write/Delete Neptune action on this role (ADR-0004).
+# synthesis. No Write/Delete Neptune action on this role (ADR-0011).
 resource "aws_iam_role_policy" "query_neptune_readonly" {
   name   = "neptune-data-readonly"
   role   = aws_iam_role.query_role.id
