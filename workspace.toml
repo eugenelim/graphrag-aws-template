@@ -118,6 +118,7 @@ shipped = [
   "infra-tf/mcp-otel-lambda",
   "packages/graphrag/otel-instrumentation",
   "packages/graphrag/git-ingestion-pipeline",
+  "infra-tf/git-ingestion-trigger",
 ]
 active  = []
 queue   = [
@@ -143,10 +144,7 @@ queue   = [
     "work:packages/graphrag/mcp-tool-server",
     "shape:spec-otel-observability",
   ]},
-  {path = "infra-tf/git-ingestion-trigger",           needs = [
-    "work:packages/graphrag/git-ingestion-pipeline",
-    "shape:spec-git-ingestion",
-  ]},
+  # infra-tf/git-ingestion-trigger — shipped 2026-07-24 (PR #91)
 ]
 
 [backlog]

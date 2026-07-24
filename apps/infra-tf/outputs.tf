@@ -73,3 +73,13 @@ output "mcp_api_gateway_url" {
   description = "HTTP API Gateway URL for the MCP tool-server (human / IDE ingress — rate-limited, x-api-key not enforced at edge)."
   value       = aws_apigatewayv2_stage.mcp_default.invoke_url
 }
+
+output "git_mirror_bucket_name" {
+  description = "Name of the S3 bucket used as the CodePipeline git mirror artifact store (GIT_MIRROR_BUCKET env var for the Fargate ingestion task)."
+  value       = aws_s3_bucket.git_mirror.id
+}
+
+output "git_mirror_pipeline_name" {
+  description = "Name of the CodePipeline pipeline that mirrors the GitHub repository to S3 on each push."
+  value       = aws_codepipeline.git_mirror.name
+}

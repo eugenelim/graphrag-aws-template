@@ -63,7 +63,7 @@ resource "aws_cloudwatch_log_group" "ingestion" {
 # (:590) — self-configured so `aws ecs run-task` needs no env overrides; AWS_REGION is
 # injected by the Fargate agent, not set here.
 resource "aws_ecs_task_definition" "ingestion" {
-  family                   = "graphrag-ingestion"
+  family = "graphrag-ingestion"
   # 2048 CPU / 8192 MiB required for docling model weights (~2.4 GB PyTorch stack).
   # spec-ingestion-extraction-cleanse AC10.
   cpu                      = "2048"
@@ -82,10 +82,14 @@ resource "aws_ecs_task_definition" "ingestion" {
       { name = "OPENSEARCH_ENDPOINT", value = local.opensearch_endpoint_url },
       { name = "CORPUS_BUCKET", value = aws_s3_bucket.corpus.id },
       { name = "SCHEMA_EXTRACTION", value = "false" },
+      # S3 bucket containing the CodePipeline git mirror artifact (ADR-0016).
+      # The ingestion task reads repository content from this bucket via the S3 gateway
+      # VPC endpoint — no NAT gateway required (ADR-0002 no-NAT posture).
+      { name = "GIT_MIRROR_BUCKET", value = aws_s3_bucket.git_mirror.id },
       # Prevent docling from downloading model weights at runtime — weights are baked
       # into the Docker image at build time. spec-ingestion-extraction-cleanse AC11.
       { name = "TRANSFORMERS_OFFLINE", value = "1" },
-      { name = "HF_DATASETS_OFFLINE",  value = "1" },
+      { name = "HF_DATASETS_OFFLINE", value = "1" },
     ]
     logConfiguration = {
       logDriver = "awslogs"
