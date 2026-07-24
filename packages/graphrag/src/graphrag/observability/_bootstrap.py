@@ -130,7 +130,7 @@ def _install_provider(service_name: str) -> None:
     )
 
 
-def reset_for_testing() -> None:  # pragma: no cover
+def _reset_for_testing() -> None:  # pragma: no cover
     """Reset the configured flag and global TracerProvider — **for tests only**.
 
     Allows tests to call ``configure_observability`` more than once in the same

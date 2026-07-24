@@ -35,7 +35,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from opentelemetry import trace
-from opentelemetry.trace import Span, SpanKind
+from opentelemetry.trace import Span, SpanKind, Status, StatusCode
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +105,23 @@ def traced_leg(
     full_name = f"{name}.{strategy}" if strategy is not None else name
     kind = _resolve_kind(name)
     tracer = trace.get_tracer(__name__)
-    with tracer.start_as_current_span(full_name, kind=kind) as span:
+    # record_exception=False / set_status_on_exception=False: OTEL's defaults
+    # auto-attach exception.message + exception.stacktrace to a span-event and
+    # copy str(exc) into the status description — both can carry question-derived
+    # text (content-capture violation, ADR-0015).  We record a content-free error
+    # status manually (error.type = class name only, a bounded enum).
+    with tracer.start_as_current_span(
+        full_name,
+        kind=kind,
+        record_exception=False,
+        set_status_on_exception=False,
+    ) as span:
         for k, v in attrs.items():
             span.set_attribute(k, v)
-        yield span
+        try:
+            yield span
+        except Exception as exc:
+            # Content-free error signal: class name only, never str(exc)
+            span.set_status(Status(StatusCode.ERROR))
+            span.set_attribute("error.type", type(exc).__name__)
+            raise

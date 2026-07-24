@@ -16,11 +16,11 @@ import pytest
 @pytest.fixture(autouse=True)
 def reset_bootstrap():
     """Reset bootstrap state before/after each test."""
-    from graphrag.observability._bootstrap import reset_for_testing
+    from graphrag.observability._bootstrap import _reset_for_testing
 
-    reset_for_testing()
+    _reset_for_testing()
     yield
-    reset_for_testing()
+    _reset_for_testing()
 
 
 def test_configure_observability_no_aws_creds_no_raise() -> None:

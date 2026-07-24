@@ -22,15 +22,15 @@ from graphrag.observability import (
     ContentCaptureFilterExporter,
     traced_leg,
 )
-from graphrag.observability._bootstrap import reset_for_testing
+from graphrag.observability._bootstrap import _reset_for_testing
 
 
 @pytest.fixture(autouse=True)
 def reset_provider():
     """Reset the global TracerProvider before and after each test."""
-    reset_for_testing()
+    _reset_for_testing()
     yield
-    reset_for_testing()
+    _reset_for_testing()
 
 
 @pytest.fixture()
@@ -103,6 +103,43 @@ def test_deny_set_attrs_stripped_on_leg_span(tracing_pair) -> None:
     exported_attrs = dict(spans[0].attributes or {})
     assert "question.text" not in exported_attrs
     assert exported_attrs.get("result_count") == 5
+
+
+def test_traced_leg_exception_does_not_leak_message(tracing_pair) -> None:
+    """When an exception propagates through traced_leg, exception.message is absent.
+
+    ADR-0015 content-capture policy: str(exc) may contain question-derived text;
+    only the bounded class name (error.type) is recorded.
+    """
+    provider, inner = tracing_pair
+    inner.clear()
+
+    class _TestError(RuntimeError):
+        pass
+
+    with pytest.raises(_TestError):
+        with traced_leg("retrieval", strategy="hybrid"):
+            raise _TestError("sensitive question text goes here")
+
+    provider.force_flush()
+    spans = inner.get_finished_spans()
+    assert len(spans) == 1
+    s = spans[0]
+
+    # error.type is the class name only — bounded, no content leak
+    attrs = dict(s.attributes or {})
+    assert attrs.get("error.type") == "_TestError"
+
+    # exception.message must NOT be present (would carry str(exc))
+    event_attr_keys: set[str] = set()
+    for ev in s.events or []:
+        event_attr_keys.update(ev.attributes or {})
+    assert "exception.message" not in event_attr_keys, (
+        "exception.message found in span events — content-capture bypass"
+    )
+    assert "exception.stacktrace" not in event_attr_keys, (
+        "exception.stacktrace found in span events — content-capture bypass"
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -26,6 +26,7 @@ when a ``JsonFormatter`` is already installed.
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import threading
 import uuid
@@ -35,9 +36,15 @@ logger = logging.getLogger(__name__)
 _CONFIGURED = False
 _lock = threading.Lock()
 
-# Thread-local request ID (updated per Lambda invocation or per-request in
-# long-lived processes).
-_request_id_local: threading.local = threading.local()
+# Per-context request ID (updated per Lambda invocation or per-request in
+# long-lived processes).  ``contextvars.ContextVar`` is the correct primitive
+# for async ASGI handlers (e.g. Mangum + FastMCP): each asyncio Task gets its
+# own copy, avoiding cross-request leakage under concurrent coroutines that
+# share one OS thread.  Wire via ``set_request_id(context.aws_request_id)``
+# at Lambda handler entry per invocation.
+_request_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "graphrag_request_id", default=None
+)
 
 
 def configure_json_logging(level: int = logging.INFO) -> None:
@@ -80,20 +87,26 @@ def configure_json_logging(level: int = logging.INFO) -> None:
 
 
 def set_request_id(request_id: str) -> None:
-    """Set the request ID for the current thread (call at Lambda handler entry)."""
-    _request_id_local.value = request_id
+    """Set the request ID for the current context (call at Lambda handler entry).
+
+    Under the Mangum/FastMCP async ASGI model, call this at the start of each
+    Lambda invocation so every log record within that invocation carries the
+    same ``request_id`` (= ``context.aws_request_id``), enabling trace
+    correlation in CloudWatch Logs Insights.
+    """
+    _request_id_var.set(request_id)
 
 
 def get_request_id() -> str:
     """Return the current request ID, generating one if absent."""
-    value = getattr(_request_id_local, "value", None)
+    value = _request_id_var.get()
     if value is None:
         value = str(uuid.uuid4())
-        _request_id_local.value = value
+        _request_id_var.set(value)
     return value
 
 
-def reset_for_testing() -> None:
+def _reset_for_testing() -> None:
     """Reset the configured flag — **for tests only**."""
     global _CONFIGURED  # noqa: PLW0603
     with _lock:

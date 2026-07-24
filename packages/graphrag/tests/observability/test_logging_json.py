@@ -19,11 +19,11 @@ import pytest
 @pytest.fixture(autouse=True)
 def reset_logging():
     """Reset JSON-logging state between tests."""
-    from graphrag.observability._logging import reset_for_testing
+    from graphrag.observability._logging import _reset_for_testing
 
-    reset_for_testing()
+    _reset_for_testing()
     yield
-    reset_for_testing()
+    _reset_for_testing()
 
 
 def _capture_record(logger_name: str, message: str, **extra) -> dict:
