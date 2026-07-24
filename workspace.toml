@@ -104,6 +104,7 @@ shipped = [
   "packages/graphrag/neptune-sparql-store",
   "packages/graphrag/mcp-proxy",
   "packages/graphrag/mcp-mock-server",
+  "packages/graphrag/mcp-tool-server",
 ]
 active  = []
 queue   = [
@@ -134,11 +135,6 @@ queue   = [
     "work:packages/graphrag/neptune-sparql-store",
     "work:packages/graphrag/ingestion-extraction-cleanse",
     "shape:spec-git-ingestion",
-  ]},
-  {path = "packages/graphrag/mcp-tool-server",        needs = [
-    "work:packages/graphrag/neptune-sparql-store",
-    "shape:spec-mcp-tool-server",
-    "work:packages/graphrag/mcp-mock-server",
   ]},
   # Local stdio→HTTPS proxy for AI IDE connections via API Gateway.
   # Thin wrapper: translates stdio MCP frames to HTTPS + x-api-key header.
