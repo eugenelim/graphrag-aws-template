@@ -2,7 +2,7 @@
 # outputs (corpus_bucket_name, neptune_endpoint, opensearch_endpoint) are wired by the
 # data + IAM tier; the network tier wired ingestion_security_group_id + private_subnet_id;
 # the compute tier (infra-terraform-compute) wired the remaining ECS/ECR/Lambda outputs.
-# All 12 outputs now reference live resource attributes — no null stubs remain.
+# All 14 outputs reference live resource attributes — no null stubs remain.
 
 output "corpus_bucket_name" {
   description = "Name of the S3 corpus bucket."
@@ -62,4 +62,14 @@ output "query_function_url" {
 output "query_lambda_name" {
   description = "Name of the query Lambda function."
   value       = aws_lambda_function.query_lambda.function_name
+}
+
+output "mcp_function_url" {
+  description = "IAM-auth Function URL for the MCP tool-server Lambda (automation + AgentCore ingress — SigV4)."
+  value       = aws_lambda_function_url.mcp_url.function_url
+}
+
+output "mcp_api_gateway_url" {
+  description = "HTTP API Gateway URL for the MCP tool-server (human / IDE ingress — rate-limited, x-api-key not enforced at edge)."
+  value       = aws_apigatewayv2_stage.mcp_default.invoke_url
 }

@@ -204,8 +204,8 @@ def test_smoke_probe_is_in_vpc_with_no_public_url(tfplan):
     smoke = [f for f in fns if f["values"].get("handler") == "graphrag.smoke_lambda.lambda_handler"]
     assert len(smoke) == 1, "expected exactly one Neptune smoke Lambda"
     assert smoke[0]["values"].get("vpc_config"), "smoke Lambda must be VPC-attached"
-    # Exactly one Function URL in the stack (the IAM-auth query URL; smoke has none).
-    assert len(_pv_by_type(tfplan, "aws_lambda_function_url")) == 1
+    # Two Function URLs in the stack: query URL (IAM-auth) + MCP URL (IAM-auth); smoke has none.
+    assert len(_pv_by_type(tfplan, "aws_lambda_function_url")) == 2
 
 
 # ── security and IAM invariant tests (T3) ──────────────────────────────────
@@ -261,6 +261,13 @@ _TF_COMPUTE_SG_EGRESS: dict[str, set[tuple[str, int]]] = {
         ("endpoint_CloudWatchLogs", 443),
         ("endpoint_Sts", 443),
     },
+    "mcp_lambda_sg": {
+        ("neptune_sg", 8182),
+        ("opensearch_sg", 443),
+        ("endpoint_BedrockRuntime", 443),
+        ("endpoint_CloudWatchLogs", 443),
+        ("endpoint_Sts", 443),
+    },
 }
 
 # Resource name suffix → target label (matches the egress rule Terraform resource names).
@@ -281,6 +288,7 @@ _EGRESS_SG_FROM_PREFIX = {
     "smoke": "smoke_probe_sg",
     "vector_smoke": "vector_smoke_sg",
     "query": "query_lambda_sg",
+    "mcp": "mcp_lambda_sg",
 }
 
 
@@ -413,11 +421,13 @@ def test_store_sg_ingress_rules_exact(tfplan):
         for r in _pv_by_type(tfplan, "aws_vpc_security_group_ingress_rule")
         if "opensearch_from" in r["name"]
     ]
-    assert len(neptune_ingress) == 3, (
-        f"neptune_sg must have exactly 3 ingress rules, found {len(neptune_ingress)}"
+    assert len(neptune_ingress) == 4, (
+        "neptune_sg must have exactly 4 ingress rules"
+        f" (ingestion + smoke + query + mcp), found {len(neptune_ingress)}"
     )
-    assert len(opensearch_ingress) == 3, (
-        f"opensearch_sg must have exactly 3 ingress rules, found {len(opensearch_ingress)}"
+    assert len(opensearch_ingress) == 4, (
+        "opensearch_sg must have exactly 4 ingress rules"
+        f" (ingestion + vector_smoke + query + mcp), found {len(opensearch_ingress)}"
     )
     for r in neptune_ingress:
         assert r["values"].get("from_port") == 8182
@@ -425,12 +435,18 @@ def test_store_sg_ingress_rules_exact(tfplan):
         assert r["values"].get("from_port") == 443
     # Verify expected source names (no public CIDR — all are referenced_security_group_id)
     neptune_names = {r["name"] for r in neptune_ingress}
-    assert neptune_names == {"neptune_from_ingestion", "neptune_from_smoke", "neptune_from_query"}
+    assert neptune_names == {
+        "neptune_from_ingestion",
+        "neptune_from_smoke",
+        "neptune_from_query",
+        "neptune_from_mcp",
+    }
     opensearch_names = {r["name"] for r in opensearch_ingress}
     assert opensearch_names == {
         "opensearch_from_ingestion",
         "opensearch_from_vector_smoke",
         "opensearch_from_query",
+        "opensearch_from_mcp",
     }
 
 
@@ -559,12 +575,13 @@ def test_ingestion_task_can_write_manifest_scoped_to_manifest_key(tfplan):
 
 
 def test_function_url_is_iam_auth(tfplan):
-    """CDK: test_function_url_is_iam_auth"""
+    """CDK: test_function_url_is_iam_auth — both query and MCP Function URLs must be AWS_IAM."""
     urls = _pv_by_type(tfplan, "aws_lambda_function_url")
-    assert len(urls) == 1, "expected exactly one Function URL"
-    assert urls[0]["values"].get("authorization_type") == "AWS_IAM", (
-        "Function URL must be AWS_IAM, never NONE"
-    )
+    assert len(urls) == 2, "expected exactly two Function URLs (query + mcp)"
+    for url in urls:
+        assert url["values"].get("authorization_type") == "AWS_IAM", (
+            f"{url['name']} Function URL must be AWS_IAM, never NONE"
+        )
 
 
 def test_function_url_invoke_permission_scoped_to_named_principal(tfplan):
@@ -620,3 +637,168 @@ def test_query_lambda_concurrency_cap(tfplan):
         f"query_lambda must have reserved_concurrent_executions > 0, got {cap!r}"
     )
     assert cap == 10, f"expected concurrency cap of 10, got {cap}"
+
+
+# ── MCP tool-server resource tests (infra-tf/api-gateway-mcp) ─────────────────
+
+
+def test_mcp_lambda_present(tfplan):
+    """AC1: MCP Lambda exists with correct handler, runtime, VPC config, and concurrency cap."""
+    fns = _pv_by_type(tfplan, "aws_lambda_function")
+    mcp = [f for f in fns if f["values"].get("handler") == "graphrag.mcp._lambda.handler"]
+    assert len(mcp) == 1, "expected exactly one MCP Lambda (graphrag.mcp._lambda.handler)"
+    v = mcp[0]["values"]
+    assert v.get("runtime") == "python3.12"
+    assert v.get("memory_size") == 512
+    assert v.get("timeout") == 120
+    cap = v.get("reserved_concurrent_executions")
+    assert cap == 10, f"mcp_lambda must have reserved_concurrent_executions=10, got {cap}"
+    assert v.get("vpc_config"), "mcp_lambda must be VPC-attached"
+    log_cfg = v.get("logging_config") or []
+    log_group = log_cfg[0].get("log_group") if log_cfg else None
+    assert log_group == "/graphrag/mcp-tool-server", (
+        f"mcp_lambda logging_config.log_group must be /graphrag/mcp-tool-server, got {log_group!r}"
+    )
+    # Required environment variables: the production init reads these at cold-start.
+    env_blocks = v.get("environment") or []
+    env_vars = env_blocks[0].get("variables", {}) if env_blocks else {}
+    required_env = {"NEPTUNE_SPARQL_ENDPOINT", "OPENSEARCH_ENDPOINT", "SYNTHESIS_MODEL_ID"}
+    missing = required_env - set(env_vars)
+    assert not missing, f"mcp_lambda missing required env vars: {missing}"
+
+
+def test_mcp_role_opensearch_readonly(tfplan):
+    """mcp_lambda_role OpenSearch grant is read-only (Get + Post + Head only; no Put/Delete)."""
+    mcp_os_policies = [
+        r for r in _pv_by_type(tfplan, "aws_iam_role_policy") if r["name"] == "mcp_opensearch"
+    ]
+    assert len(mcp_os_policies) == 1, "expected exactly one mcp_opensearch policy"
+    policy_str = mcp_os_policies[0]["values"].get("policy")
+    if policy_str is None:
+        # Fresh plan: resource name is the proxy.
+        assert mcp_os_policies[0]["values"].get("name") == "opensearch-data"
+        return
+    policy = json.loads(policy_str)
+    actions = set(_as_list(policy["Statement"][0]["Action"]))
+    allowed = {"es:ESHttpGet", "es:ESHttpPost", "es:ESHttpHead"}
+    forbidden = {"es:ESHttpPut", "es:ESHttpDelete"}
+    assert actions <= allowed, (
+        f"mcp_opensearch policy contains unexpected verbs: {actions - allowed}"
+    )
+    assert not (actions & forbidden), (
+        f"mcp_opensearch policy must not contain write/delete verbs: {actions & forbidden}"
+    )
+
+
+def test_mcp_role_neptune_readonly(tfplan):
+    """AC2: mcp_lambda_role Neptune grant is READ-ONLY (ADR-0011 backstop)."""
+    mcp_policies = [
+        r for r in _pv_by_type(tfplan, "aws_iam_role_policy") if r["name"].startswith("mcp_neptune")
+    ]
+    assert len(mcp_policies) == 1, (
+        f"expected exactly 1 neptune policy on mcp_lambda_role, found {len(mcp_policies)}"
+    )
+    policy_str = mcp_policies[0]["values"].get("policy")
+    if policy_str is None:
+        # Fresh plan: neptune ARN is computed. Assert by resource name (proxy).
+        assert mcp_policies[0]["values"].get("name") == "neptune-data-readonly", (
+            "mcp_lambda_role Neptune policy must be named 'neptune-data-readonly'"
+        )
+        # Confirm no Write/Delete policy exists for mcp role
+        write_policies = [
+            r
+            for r in _pv_by_type(tfplan, "aws_iam_role_policy")
+            if r["name"].startswith("mcp_") and "rw" in r["name"].lower()
+        ]
+        assert not write_policies, f"mcp_lambda_role must not hold a Write policy: {write_policies}"
+        return
+    policy = json.loads(policy_str)
+    actions = set(_as_list(policy["Statement"][0]["Action"]))
+    assert "neptune-db:ReadDataViaQuery" in actions
+    assert "neptune-db:connect" in actions
+    assert "neptune-db:WriteDataViaQuery" not in actions, (
+        "mcp_lambda_role must not have WriteDataViaQuery (ADR-0011)"
+    )
+    assert "neptune-db:DeleteDataViaQuery" not in actions, (
+        "mcp_lambda_role must not have DeleteDataViaQuery (ADR-0011)"
+    )
+
+
+def test_mcp_function_url_iam_auth(tfplan):
+    """AC3: MCP Function URL is IAM-auth; invoke permission principal is a named role."""
+    urls = _pv_by_type(tfplan, "aws_lambda_function_url")
+    mcp_urls = [u for u in urls if u["name"] == "mcp_url"]
+    assert len(mcp_urls) == 1, "expected aws_lambda_function_url.mcp_url"
+    assert mcp_urls[0]["values"].get("authorization_type") == "AWS_IAM", (
+        "mcp_url Function URL must be AWS_IAM, never NONE"
+    )
+
+    perms = _pv_by_type(tfplan, "aws_lambda_permission")
+    mcp_url_perms = [p for p in perms if p["name"] == "mcp_url_invoke"]
+    assert mcp_url_perms, "expected aws_lambda_permission.mcp_url_invoke"
+    principal = mcp_url_perms[0]["values"].get("principal")
+    assert principal not in ("*", None), (
+        f"mcp_url_invoke principal must be a named role ARN, got {principal!r}"
+    )
+    assert mcp_url_perms[0]["values"].get("action") == "lambda:InvokeFunctionUrl"
+
+
+def test_mcp_api_gateway_present(tfplan):
+    """AC4: HTTP API with protocol_type=HTTP, auto-deploy stage, integration timeout <= 29000."""
+    apis = _pv_by_type(tfplan, "aws_apigatewayv2_api")
+    mcp_apis = [a for a in apis if a["name"] == "mcp"]
+    assert len(mcp_apis) == 1, "expected aws_apigatewayv2_api.mcp"
+    assert mcp_apis[0]["values"].get("protocol_type") == "HTTP", (
+        "MCP API Gateway must use protocol_type=HTTP (v2 HTTP API, not REST API)"
+    )
+
+    stages = _pv_by_type(tfplan, "aws_apigatewayv2_stage")
+    mcp_stages = [s for s in stages if s["name"] == "mcp_default"]
+    assert len(mcp_stages) == 1, "expected aws_apigatewayv2_stage.mcp_default"
+    assert mcp_stages[0]["values"].get("auto_deploy") is True, (
+        "mcp_default stage must have auto_deploy=true"
+    )
+    # Pin throttle values precisely — these are the blast-radius / cost ceilings.
+    route_settings = mcp_stages[0]["values"].get("default_route_settings") or []
+    assert route_settings, "mcp_default stage must have default_route_settings"
+    burst = route_settings[0].get("throttling_burst_limit")
+    rate = route_settings[0].get("throttling_rate_limit")
+    assert burst == 10, f"throttling_burst_limit must be 10, got {burst}"
+    assert rate == 5 or rate == 5.0, f"throttling_rate_limit must be 5, got {rate}"
+
+    integrations = _pv_by_type(tfplan, "aws_apigatewayv2_integration")
+    mcp_integ = [i for i in integrations if i["name"] == "mcp_lambda"]
+    assert len(mcp_integ) == 1, "expected aws_apigatewayv2_integration.mcp_lambda"
+    timeout_ms = mcp_integ[0]["values"].get("timeout_milliseconds")
+    assert timeout_ms is not None and timeout_ms <= 29000, (
+        f"mcp_lambda integration timeout must be <= 29000 ms, got {timeout_ms}"
+    )
+    assert mcp_integ[0]["values"].get("integration_type") == "AWS_PROXY"
+
+    # The $default route is the wiring that actually connects API → Lambda.
+    # Without it the API returns 404 for every request.
+    routes = _pv_by_type(tfplan, "aws_apigatewayv2_route")
+    mcp_routes = [r for r in routes if r["name"] == "mcp_default"]
+    assert len(mcp_routes) == 1, "expected aws_apigatewayv2_route.mcp_default"
+    assert mcp_routes[0]["values"].get("route_key") == "$default", (
+        "mcp_default route must have route_key=$default"
+    )
+    # target must reference the integration (format: integrations/<id>)
+    target = mcp_routes[0]["values"].get("target") or ""
+    assert target.startswith("integrations/"), (
+        f"mcp_default route target must be integrations/<id>, got {target!r}"
+    )
+
+    # Lambda invoke permission for API Gateway — prevents APIGW 403 on invocation.
+    perms = _pv_by_type(tfplan, "aws_lambda_permission")
+    apigw_perms = [p for p in perms if p["name"] == "mcp_apigw_invoke"]
+    assert len(apigw_perms) == 1, "expected aws_lambda_permission.mcp_apigw_invoke"
+    perm_vals = apigw_perms[0]["values"]
+    assert perm_vals.get("principal") == "apigateway.amazonaws.com", (
+        "mcp_apigw_invoke must be granted to apigateway.amazonaws.com"
+    )
+    source_arn = perm_vals.get("source_arn") or ""
+    assert "execute-api" in source_arn and source_arn.endswith("/*"), (
+        "mcp_apigw_invoke source_arn must be scoped to this API"
+        f" (execute-api ARN/*), got {source_arn!r}"
+    )

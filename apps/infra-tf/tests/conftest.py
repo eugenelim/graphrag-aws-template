@@ -52,6 +52,7 @@ def tfplan(tmp_path_factory):
                 "-input=false",
                 "-var=budget_alarm_email=test@example.com",
                 "-var=invoker_role_arn=arn:aws:iam::123456789012:role/invoker",
+                "-var=mcp_invoker_role_arn=arn:aws:iam::123456789012:role/mcp-invoker",
             ],
             cwd=infra_dir,
             check=True,

@@ -93,6 +93,18 @@ locals {
     }]
   })
 
+  # Read-only OpenSearch policy for the MCP tool server (retrieval-only path).
+  # Excludes ESHttpPut and ESHttpDelete — the MCP Lambda never writes to the vector index.
+  # ESHttpPost is retained: kNN _search queries use POST.
+  opensearch_readonly_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["es:ESHttpGet", "es:ESHttpPost", "es:ESHttpHead"]
+      Resource = local.opensearch_domain_arn
+    }]
+  })
+
   bedrock_titan_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
