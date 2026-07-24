@@ -765,15 +765,12 @@ def test_mcp_lambda_capture_off_env_vars(tfplan):
 def test_mcp_lambda_otel_collector_deny_set_complete(tfplan):  # noqa: ARG001
     """spec-otel-observability AC7: the ADOT collector config (otel-collector-config.yaml)
     covers every DENY_SET ∪ AUTO_CAPTURE_KEYS key, pinned to the ADR-0015 item 6 literals.
-    Parses the YAML to verify: every required key appears as {key: <k>, action: delete}
-    in the attributes/deny_content processor, and that processor is wired into the
-    traces pipeline. Canonical source: packages/graphrag/src/graphrag/otel-collector-config.yaml
-    (deployed as Python package data at /var/task/graphrag/otel-collector-config.yaml).
+    Verifies via raw-text regex (avoids pyyaml dep in the tf-gates job): every required key
+    appears as {key: "<k>", action: delete} on a single line, the deny_content processor is
+    wired into the traces pipeline, and awsxray uses local_mode.
+    Canonical source: packages/graphrag/src/graphrag/otel-collector-config.yaml
     """
-    import yaml  # stdlib-safe: only used here; pyyaml is a project dependency
-
-    # ADR-0015 item 6 DENY_SET — canonical names (same literals as DENY_SET constant
-    # in graphrag.observability and spec-mcp-tool-server AC5 static linter).
+    # ADR-0015 item 6 DENY_SET — canonical names.
     deny_set = {
         "question.text",
         "query.text",
@@ -807,35 +804,32 @@ def test_mcp_lambda_otel_collector_deny_set_complete(tfplan):  # noqa: ARG001
         "this file must be present as Python package data (ADR-0015 item 6)"
     )
 
-    cfg = yaml.safe_load(config_path.read_text())
+    text = config_path.read_text()
 
-    # 1. Processor must exist in the config.
-    processors = cfg.get("processors", {})
-    deny_proc = processors.get("attributes/deny_content")
-    assert deny_proc is not None, (
+    # 1. Processor section must exist.
+    assert "attributes/deny_content" in text, (
         "otel-collector-config.yaml must have an 'attributes/deny_content' processor"
     )
 
-    # 2. Every required key must appear as an explicit delete action.
-    actions = deny_proc.get("actions", [])
-    deleted_keys = {a["key"] for a in actions if a.get("action") == "delete" and "key" in a}
-    missing = required_keys - deleted_keys
+    # 2. Every required key must appear as `key: "<k>"` with `action: delete` on same line.
+    missing = []
+    for k in sorted(required_keys):
+        pattern = r'key:\s*"' + re.escape(k) + r'".*action:\s*delete'
+        if not re.search(pattern, text):
+            missing.append(k)
     assert not missing, (
-        f"attributes/deny_content processor is missing delete actions for: {sorted(missing)}. "
+        f"attributes/deny_content processor is missing delete actions for: {missing}. "
         "All DENY_SET ∪ AUTO_CAPTURE_KEYS keys must be deleted (ADR-0015 item 6)."
     )
 
     # 3. The deny_content processor must be wired into the traces pipeline.
-    traces_processors = (
-        cfg.get("service", {}).get("pipelines", {}).get("traces", {}).get("processors", [])
-    )
-    assert "attributes/deny_content" in traces_processors, (
+    traces_match = re.search(r"traces:\s*\n.*?processors:\s*\[([^\]]+)\]", text, re.DOTALL)
+    assert traces_match and "attributes/deny_content" in traces_match.group(1), (
         "attributes/deny_content must appear in service.pipelines.traces.processors"
     )
 
     # 4. The awsxray exporter must use local_mode to avoid requiring a VPC endpoint.
-    awsxray = cfg.get("exporters", {}).get("awsxray", {})
-    assert awsxray.get("local_mode") is True, (
+    assert re.search(r"local_mode:\s*true", text), (
         "awsxray exporter must have local_mode: true to route via the Lambda X-Ray daemon "
         "(avoids needing a com.amazonaws.<region>.xray VPC endpoint — no NAT gateway in VPC)"
     )
