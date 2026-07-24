@@ -1,7 +1,7 @@
 # Plan: spec-text2sparql-guarded
 
 - **Spec:** [`spec.md`](spec.md)
-- **Status:** Drafting <!-- Drafting | Executing | Done -->
+- **Status:** Executing <!-- Drafting | Executing | Done -->
 
 > **Plan contract:** this is the implementation strategy. Unlike the spec, this
 > document is allowed to change as you learn. When it changes substantially
@@ -121,7 +121,7 @@ packages/graphrag/tests/text2sparql/
 - **First and second attempts both fail validation.** Return `Text2SparqlResult(executed_query=None, rows=[], refusal_reason="max heal attempts reached")`. No exception raised.
 - **Bedrock `ThrottlingException` during re-generation.** Propagate the exception upward — this is not a self-heal case. The orchestrator catches `ValidationResult(valid=False)` and Neptune execution errors; it does not catch Bedrock availability errors.
 - **Empty SPARQL result from Neptune.** Legitimate — return `Text2SparqlResult(rows=[], executed_query=..., refusal_reason=None)`. Not a failure.
-- **False-positive mutation denylist (keyword in string literal).** Return `Text2SparqlResult(executed_query=None, refusal_reason="mutation_keyword detected")`. The caller receives a refusal; the IAM backstop would have blocked execution anyway. Conservative tradeoff accepted per ADR-0011.
+- **False-positive mutation denylist (keyword in string literal).** The keyword is caught at validation; the query feeds the self-heal loop (retry once). After the cap, returns `Text2SparqlResult(executed_query=None, refusal_reason="max heal attempts reached")`. The caller receives a refusal; the IAM backstop would have blocked execution anyway. Conservative tradeoff accepted per ADR-0011.
 
 ### Quality attributes (NFRs)
 
