@@ -81,7 +81,7 @@ dev = [
     # identically — a floating `ruff>=0.5` would flag drift the moment ruff's formatter
     # changes. Bump in lockstep with a one-time `ruff format packages apps` re-run.
     "ruff==0.15.17",
-    "mypy==2.1.0",
+    "mypy==2.3.0",
     # pip-audit: supply-chain vulnerability scan over the dependency closure (AC3). The CI
     # job fails on a known vuln; accepted exceptions live in .pip-audit-ignore with a reason.
     "pip-audit>=2.10",
