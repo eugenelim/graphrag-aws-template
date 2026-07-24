@@ -1,6 +1,6 @@
 # Spec: spec-text2sparql-guarded
 
-- **Status:** Draft <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Approved <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** [ADR-0011](../../adr/0011-neptune-sparql-rdf-engine-and-text2sparql-guard.md) (SPARQL/RDF engine; read-only guard re-ratified for SPARQL grammar — primary decision this spec implements); [ADR-0012](../../adr/0012-owl-schema-only-and-named-graph-partition.md) (named-graph scope — generated SPARQL must target a specific partition graph); [ADR-0013](../../adr/0013-multi-strategy-server-side-routing.md) (`text2sparql` is called by the `structured`, `hybrid_graph`, and `graph_expand` strategy executors); [ADR-0014](../../adr/0014-mcp-tool-server.md) (content-capture policy — question text never in spans or responses)

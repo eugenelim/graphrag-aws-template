@@ -1,6 +1,6 @@
 # Spec: spec-normative-partition
 
-- **Status:** Draft <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Approved <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** [ADR-0012](../../adr/0012-owl-schema-only-and-named-graph-partition.md) (named-graph partition and asymmetric retrieval semantics — primary decision); [ADR-0011](../../adr/0011-neptune-sparql-rdf-engine-and-text2sparql-guard.md) (SPARQL/RDF engine; `mcp_lambda_role` read-only IAM grant); [ADR-0013](../../adr/0013-multi-strategy-server-side-routing.md) (`get_policies` is always `normative_exhaustive` — no routing step); [ADR-0014](../../adr/0014-mcp-tool-server.md) (`get_policies` tool contract)
