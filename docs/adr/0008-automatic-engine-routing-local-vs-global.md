@@ -242,3 +242,16 @@ unchanged (ADR-0002).
 - `packages/graphrag/src/graphrag/query_lambda.py` — the `mode` dispatch `auto` extends
 - [Microsoft GraphRAG — local vs. global search](https://microsoft.github.io/graphrag/)
 - [OWASP LLM Top 10:2025 — LLM01 Prompt Injection](https://genai.owasp.org/)
+
+## Supersession record
+
+**Superseded by:** [RFC-0004](../rfc/0004-biz-ops-kg-pivot.md) and [ADR-0013](0013-multi-strategy-server-side-routing.md) (date: 2026-07-23)
+
+**What was superseded:**
+The `mode="auto"` selector was an additive dispatch path in `query_lambda.py` that routed between two retrieval engines — Local (seed-and-expand hybrid, ADR-0001) and Global (community map-reduce, ADR-0005) — using a rules-first (deterministic `RuleQueryRouter`) and Bedrock fallback (`BedrockQueryRouter`) cascade, with the routing decision surfaced in the response trace. Routing was caller-initiated: the caller supplied `mode="auto"` to trigger engine selection.
+
+**What replaces it:**
+The biz-ops KG pivot (RFC-0004) replaced both the Local and Global engines with the SPARQL/RDF knowledge platform. ADR-0013 defines the replacement: caller-opaque, server-side multi-strategy routing inside the MCP tool server, using the same rules-first cascade shape now selecting among six retrieval strategies (`hybrid_graph`, `structured`, `graph_expand`, `vector_only`, `global`, `normative_exhaustive`) based on detected query signals. Routing is no longer mode-based (caller-supplied) but server-inferred and caller-opaque.
+
+**What carries forward:**
+The rules-first (deterministic) then Bedrock fallback cascade shape, the transparent strategy trace (satisfying charter principle 1), the untrusted-data posture at the Bedrock routing call, and the principle of defaulting to a graceful-degrade strategy under ambiguity all carry forward in ADR-0013.
