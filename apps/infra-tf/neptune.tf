@@ -2,10 +2,10 @@
 # IAM-auth, encrypted, with the pinned query-timeout parameter group.
 #
 # Translated from apps/infra/stacks/graphrag_stack.py `_neptune()` (:489). Engine
-# version 1.3.5.0 and parameter-group family neptune1.3 are PINNED per ADR-0004 (the
-# read-cost backstop); auto_minor_version_upgrade=false prevents a silent minor bump
-# from drifting the pinned pair. skip_final_snapshot=true + no prevent_destroy make the
-# cluster destroyable (teardown-first, ADR-0002).
+# version 1.3.5.0 and parameter-group family neptune1.3 are PINNED per ADR-0011 (SPARQL
+# read-cost backstop; ADR-0011 supersedes ADR-0004); auto_minor_version_upgrade=false
+# prevents a silent minor bump from drifting the pinned pair. skip_final_snapshot=true +
+# no prevent_destroy make the cluster destroyable (teardown-first, ADR-0002).
 
 resource "aws_neptune_subnet_group" "main" {
   name_prefix = "graphrag-neptune-"
@@ -13,13 +13,13 @@ resource "aws_neptune_subnet_group" "main" {
   subnet_ids  = aws_subnet.private[*].id # >=2 AZs — a Neptune subnet group requires it
 }
 
-# The engine read-cost backstop (ADR-0004): pins neptune_query_timeout so a runaway
-# model-authored traversal is killed by the engine. The family MUST match the engine
-# version below.
+# The SPARQL read-cost backstop (ADR-0011): pins neptune_query_timeout so a runaway
+# model-authored SPARQL traversal is killed by the engine. The family MUST match the
+# engine version below.
 resource "aws_neptune_cluster_parameter_group" "main" {
   name_prefix = "graphrag-neptune-"
   family      = "neptune1.3"
-  description = "graphrag neptune - read-cost backstop (query timeout) for text2cypher"
+  description = "graphrag neptune - read-cost backstop (query timeout) for text2sparql (ADR-0011)"
 
   parameter {
     name  = "neptune_query_timeout"
@@ -34,7 +34,7 @@ resource "aws_neptune_cluster" "main" {
 
   neptune_subnet_group_name = aws_neptune_subnet_group.main.name
   # Load-bearing: without this the cluster uses the default parameter group and the
-  # ADR-0004 20s query-timeout backstop is inert (defaults to 120s).
+  # ADR-0011 SPARQL query-timeout backstop is inert (defaults to 120s).
   neptune_cluster_parameter_group_name = aws_neptune_cluster_parameter_group.main.name
   vpc_security_group_ids               = [aws_security_group.neptune_sg.id]
 

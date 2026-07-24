@@ -101,7 +101,7 @@ def test_neptune_serverless_vpc_resident(tfplan):
 
 
 def test_neptune_query_timeout_backstop_is_set(tfplan):
-    """ADR-0004 read-cost backstop: neptune_query_timeout pinned to 20s."""
+    """ADR-0011 SPARQL read-cost backstop: neptune_query_timeout pinned to 20s."""
     param_groups = _pv_by_type(tfplan, "aws_neptune_cluster_parameter_group")
     assert len(param_groups) == 1
     params = param_groups[0]["values"].get("parameter", [])
@@ -367,7 +367,7 @@ def test_neptune_data_access_actions_present_and_scoped(tfplan):
 
 
 def test_query_role_neptune_grant_is_read_only(tfplan):
-    """CDK: test_query_lambda_neptune_grant_is_read_only (ADR-0004 backstop)."""
+    """CDK: test_query_lambda_neptune_grant_is_read_only (ADR-0011 backstop)."""
     # Find all aws_iam_role_policy resources attached to query_role
     query_policies = [
         r
@@ -435,7 +435,7 @@ def test_store_sg_ingress_rules_exact(tfplan):
 
 
 def test_ingestion_and_smoke_roles_retain_neptune_rw(tfplan):
-    """CDK: test_ingestion_and_smoke_roles_retain_read_write (ADR-0004: two roles keep full RW)."""
+    """CDK: test_ingestion_and_smoke_roles_retain_read_write (ADR-0011: two roles keep full RW)."""
     ingestion_rw = _pv_by_address(tfplan, "aws_iam_role_policy.ingestion_neptune_rw")
     assert ingestion_rw is not None, "aws_iam_role_policy.ingestion_neptune_rw must exist"
     smoke_rw = _pv_by_address(tfplan, "aws_iam_role_policy.smoke_probe_neptune")

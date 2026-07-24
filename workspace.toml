@@ -20,7 +20,7 @@
 ["ini-001"]
 name      = "Terraform Migration"
 milestone = "M1 · CDK → Terraform parity (5-tier build + verification)"
-status    = "active"
+status    = "closed"
 
 # The CDK→Terraform migration (ADR-0010): a 5-tier build (scaffold → network →
 # data+IAM → compute → verification) that reproduces the CDK stack in apps/infra-tf/.
@@ -99,12 +99,11 @@ queue   = [
 # Wave ordering mirrors the shape queue; items within a wave run in parallel.
 shipped = [
   "docs/archive-k8s-specific-specs",
+  "infra-tf/neptune-sparql-engine",
 ]
 active  = []
 queue   = [
-  # Wave 1 — infrastructure; unblocked once relevant shape items agreed
-  {path = "infra-tf/neptune-sparql-engine",           needs = ["shape:adr-0011-neptune-sparql"]},
-
+  # Wave 1 — shipped 2026-07-23 (neptune-sparql-engine)
   # Wave 2 — parallel: SPARQL store migration + mock MCP server (independent)
   # neptune-sparql-store gates all live retrieval work.
   # mcp-mock-server needs only the spec; uses rdflib + in-memory stores — no AWS dep.
@@ -346,5 +345,12 @@ open = [
   # ADOT collector's export-failure metric. Owner: infra-tf/mcp-otel-lambda. Surfaced
   # by the spec-otel-observability security review (Nit 6).
   {slug = "otel-collector-export-failure-alarm", source = "docs/specs/spec-otel-observability/"},
+
+  # Neptune CloudWatch audit-log export for detective control (neptune-sparql-engine AC-DEFER-2).
+  # No `enable_cloudwatch_logs_exports = ["audit"]` means an escaped SPARQL Update mutation
+  # (e.g. DROP GRAPH) under a future misconfigured grant would be non-repudiable. Accepted for
+  # the ephemeral teardown-first demo (ADR-0002); revisit in a regulated deployment.
+  # Owner: apps/infra-tf/neptune.tf. Surfaced by security review of neptune-sparql-engine.
+  {slug = "neptune-audit-log-export", source = "docs/specs/neptune-sparql-engine/"},
 
 ]
