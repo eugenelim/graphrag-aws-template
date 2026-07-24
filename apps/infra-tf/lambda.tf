@@ -12,7 +12,7 @@
 #   - Invoke permission principal = var.invoker_role_arn (never "*"); the var is regex-guarded
 #     in variables.tf (end-anchored role ARN, rejects wildcard/root/non-role — AC11).
 #   - SmokeProbe gets full Neptune R/W (local.neptune_rw_policy — insert+retrieve+cleanup);
-#     query_role stays read-only (ADR-0004, defined in iam.tf, untouched here).
+#     query_role stays read-only (ADR-0011 backstop, defined in iam.tf).
 #   - All functions are VPC-attached (private isolated subnets) with the network tier's
 #     per-compute SGs; each points logging_config at a stack-managed log group so
 #     `terraform destroy` removes it (no auto-created /aws/lambda/<fn> group survives).
@@ -138,9 +138,9 @@ resource "aws_lambda_function" "vector_smoke_probe" {
   depends_on = [aws_iam_role_policy_attachment.vector_probe_vpc_access]
 }
 
-# ── QueryLambda: hybrid + text2cypher query path behind the IAM-auth Function URL.
+# ── QueryLambda: hybrid + SPARQL query path behind the IAM-auth Function URL.
 # py3.12, 120s, memory 512, VPC (query_lambda_sg). role=query_role (Neptune READ-ONLY per
-# ADR-0004 + OpenSearch + Bedrock, data+IAM tier). ──
+# ADR-0011 + OpenSearch + Bedrock, data+IAM tier). ──
 resource "aws_lambda_function" "query_lambda" {
   function_name = "graphrag-query-lambda"
   runtime       = "python3.12"
