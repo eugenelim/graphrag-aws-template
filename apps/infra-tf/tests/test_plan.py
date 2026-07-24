@@ -620,3 +620,31 @@ def test_query_lambda_concurrency_cap(tfplan):
         f"query_lambda must have reserved_concurrent_executions > 0, got {cap!r}"
     )
     assert cap == 10, f"expected concurrency cap of 10, got {cap}"
+
+
+# ── T6: Fargate task sizing for docling (spec-ingestion-extraction-cleanse) ──
+
+
+def test_ingestion_task_docling_cpu_and_memory(tfplan):
+    """AC10: ECS task def must be cpu=2048, memory=8192 for docling model weights (~2.4 GB)."""
+    task_defs = _pv_by_type(tfplan, "aws_ecs_task_definition")
+    assert len(task_defs) == 1
+    v = task_defs[0]["values"]
+    assert v.get("cpu") == "2048", f"expected cpu=2048 for docling, got {v.get('cpu')!r}"
+    assert v.get("memory") == "8192", f"expected memory=8192 for docling, got {v.get('memory')!r}"
+
+
+def test_ingestion_task_has_offline_env_vars(tfplan):
+    """AC11: ECS container env must include TRANSFORMERS_OFFLINE=1 and HF_DATASETS_OFFLINE=1."""
+    task_defs = _pv_by_type(tfplan, "aws_ecs_task_definition")
+    assert len(task_defs) == 1
+    container_defs_raw = task_defs[0]["values"].get("container_definitions", "[]")
+    container_defs = json.loads(container_defs_raw)
+    assert container_defs, "expected at least one container definition"
+    env_vars = {e["name"]: e["value"] for e in container_defs[0].get("environment", [])}
+    assert env_vars.get("TRANSFORMERS_OFFLINE") == "1", (
+        "TRANSFORMERS_OFFLINE=1 required to prevent docling runtime weight download"
+    )
+    assert env_vars.get("HF_DATASETS_OFFLINE") == "1", (
+        "HF_DATASETS_OFFLINE=1 required to prevent docling runtime dataset download"
+    )

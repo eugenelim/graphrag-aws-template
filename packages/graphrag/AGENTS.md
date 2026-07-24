@@ -148,6 +148,29 @@ must never enter the Lambda graph. Corpus-wide community summaries blend visibil
 summary is gated **whole** by its composed (most-restrictive) member tier, fail-closed, before
 the map step (a teaching stand-in for an ACL, not real authz — charter principle 5).
 
+**ingestion-extraction-cleanse added four ingest-only deps — three in `[ingest]`, one in
+`[ingest-full]`; none enter the query Lambda bundle.**
+
+- **`pypandoc`** (>=1.5, `[ingest]`) — thin Python wrapper around the `pandoc` binary (baked into
+  the Fargate image). Converts `.docx` and any other pandoc-supported format to Markdown.
+  Imported lazily inside `PandocExtractor.extract()` — never loaded at FormatRouter import time.
+
+- **`markitdown`** (>=0.0.1, `[ingest]`) — Microsoft MIT-licensed library for `.pptx` and `.xlsx`
+  to Markdown conversion. Pulls in `python-pptx` (via `Pillow`); `Pillow>=12.3.0` is pinned as an
+  explicit floor in `[ingest]` to stay clear of PYSEC-2026 pillow CVEs. Imported lazily inside
+  `MarkitdownExtractor.extract()`.
+
+- **`pillow`** (>=12.3.0, `[ingest]`) — transitive via markitdown → python-pptx; pinned explicitly
+  as a floor so pip resolves the CVE-patched release. Never imported directly by graphrag code.
+
+- **`docling`** (>=2.0, `[ingest-full]` only — **NOT** in `[dev]` or the Lambda bundle) — MIT-/
+  Apache-2.0-licensed digital PDF extractor backed by a PyTorch model (~2.4 GB). **pymupdf4llm
+  was explicitly declined** (AGPL licence; closed-source use requires a commercial licence — a
+  forever-dependency risk). Imported lazily inside `DoclingExtractor.extract()`.
+
+- **`pdfminer.six`** (>=20221105, `[ingest-full]`) — PDF text-layer extraction for the scanned-PDF
+  heuristic in `DoclingExtractor.is_scanned()`. Also a transitive dep of docling. Imported lazily.
+
 **Pure-Python Lambda / PyYAML-free import graph.** `query_lambda.py` is bundled via
 `Code.from_asset` over the package source (boto3/botocore from the runtime, **no
 pyyaml**). It and its transitive imports (`hybrid`, `synthesize`, `entity_link`,
