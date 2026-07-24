@@ -44,7 +44,7 @@ queue = []
 ["ini-002"]
 name      = "Business Operations Knowledge Graph"
 milestone = "M2 · RDF/OWL knowledge platform — ontology, SPARQL, MCP, git ingestion, OTEL"
-status    = "shaping"
+status    = "complete"
 
 # Breaking pivot from the Kubernetes demo corpus to a generic business-operations
 # knowledge platform. Core changes: Neptune → SPARQL/RDF engine; OWL schema-only
@@ -140,10 +140,7 @@ queue   = [
   # docs/update-existing-specs — shipped 2026-07-24 (PR #72)
 
   # Wave 4 — integration, observability, final infra + docs; gate on mcp-tool-server
-  {path = "packages/graphrag/otel-instrumentation",   needs = [
-    "work:packages/graphrag/mcp-tool-server",
-    "shape:spec-otel-observability",
-  ]},
+  # packages/graphrag/otel-instrumentation — shipped 2026-07-24 (PR #89)
   # infra-tf/git-ingestion-trigger — shipped 2026-07-24 (PR #91)
 ]
 
