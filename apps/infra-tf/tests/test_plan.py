@@ -974,6 +974,7 @@ def test_ingestion_task_def_offline_env_vars(tfplan):
         # Fresh plan with unresolved container image — skip env check.
         return
     import json as _json
+
     containers = _json.loads(cd_str)
     assert containers, "container_definitions must have at least one container"
     env_map = {e["name"]: e["value"] for e in containers[0].get("environment", [])}
@@ -1005,6 +1006,7 @@ def test_git_ingestion_trigger_rule_present(tfplan):
     pattern_str = v.get("event_pattern")
     if pattern_str:
         import json as _json
+
         pattern = _json.loads(pattern_str)
         assert pattern.get("source") == ["aws.codepipeline"], (
             "git_ingestion_trigger rule must filter on source=aws.codepipeline"
@@ -1094,6 +1096,7 @@ def test_eventbridge_ecs_trigger_role_has_run_task_and_pass_role(tfplan):
         assert eb_policies[0]["values"].get("name") == "ecs-run-task"
         return
     import json as _json
+
     policy = _json.loads(policy_str)
     actions_seen = set()
     for stmt in policy.get("Statement", []):
@@ -1125,7 +1128,7 @@ def test_git_mirror_bucket_is_private_encrypted_versioned(tfplan):
     versioning = _pv_by_type(tfplan, "aws_s3_bucket_versioning")
     assert len(versioning) >= 1, "git_mirror bucket must have versioning configured"
     for ver in versioning:
-        cfg = (ver["values"].get("versioning_configuration") or [{}])
+        cfg = ver["values"].get("versioning_configuration") or [{}]
         cfg_item = cfg[0] if isinstance(cfg, list) else cfg
         assert cfg_item.get("status") == "Enabled", (
             f"{ver['address']} versioning must be Enabled (required by CodePipeline)"
@@ -1150,7 +1153,7 @@ def test_git_mirror_bucket_is_private_encrypted_versioned(tfplan):
     eb_targets = [t for t in ingestion_targets if "git_ingestion_task" in t["name"]]
     assert len(eb_targets) == 1, "expected exactly one git_ingestion_task EventBridge target"
     target_v = eb_targets[0]["values"]
-    transformer = (target_v.get("input_transformer") or [])
+    transformer = target_v.get("input_transformer") or []
     transformer_cfg = transformer[0] if isinstance(transformer, list) and transformer else None
     assert transformer_cfg is not None, (
         "git_ingestion_task target must have an input_transformer to propagate executionId"
