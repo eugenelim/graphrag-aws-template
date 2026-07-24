@@ -24,10 +24,6 @@ from __future__ import annotations
 
 import logging
 import warnings
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -75,29 +71,41 @@ def _emit_sync(
     duration_ms: float,
     exc: BaseException | None,
 ) -> None:
-    """Synchronous emit path using MetricsContext directly (no async needed)."""
+    """Synchronous emit path using MetricsContext directly (no async needed).
+
+    Each metric is emitted from its own ``MetricsContext`` so its dimensions are
+    exactly those contracted by ADR-0015 item 3.  Sharing a single context with
+    multiple ``put_dimensions`` calls would produce a dimension cross-product
+    (EMF applies every metric to every dimension set in the directive), putting
+    ``mcp.tool.duration_ms`` under an ``error_type`` dimension it should not have.
+    """
     # Defer aws_embedded_metrics import so the module loads without it installed
     from aws_embedded_metrics.logger.metrics_context import MetricsContext  # noqa: PLC0415
     from aws_embedded_metrics.serializers.log_serializer import LogSerializer  # noqa: PLC0415
 
-    ctx = MetricsContext()
-    ctx.namespace = METRIC_NAMESPACE
-    ctx.put_dimensions({"tool_name": tool_name})
-    ctx.put_metric("mcp.tool.duration_ms", duration_ms, "Milliseconds")
-
-    if exc is not None:
-        # error_type is the exception class name — bounded enum, no content leak
-        ctx.put_dimensions({"tool_name": tool_name, "error_type": type(exc).__name__})
-        ctx.put_metric("mcp.tool.error_count", 1, "Count")
-
     serializer = LogSerializer()
+
+    # mcp.tool.duration_ms — dimensions: {tool_name}
+    ctx_dur = MetricsContext()
+    ctx_dur.namespace = METRIC_NAMESPACE
+    ctx_dur.put_dimensions({"tool_name": tool_name})
+    ctx_dur.put_metric("mcp.tool.duration_ms", duration_ms, "Milliseconds")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        lines = serializer.serialize(ctx)
+        for line in serializer.serialize(ctx_dur):
+            logger.info(line)
 
-    for line in lines:
-        # EMF output goes to stdout (Lambda log stream); log at INFO for local sinks
-        logger.info(line)
+    if exc is not None:
+        # mcp.tool.error_count — dimensions: {tool_name, error_type}
+        # error_type is the exception class name — bounded enum, no content leak
+        ctx_err = MetricsContext()
+        ctx_err.namespace = METRIC_NAMESPACE
+        ctx_err.put_dimensions({"tool_name": tool_name, "error_type": type(exc).__name__})
+        ctx_err.put_metric("mcp.tool.error_count", 1, "Count")
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            for line in serializer.serialize(ctx_err):
+                logger.info(line)
 
 
 def emit_retrieval_metrics(

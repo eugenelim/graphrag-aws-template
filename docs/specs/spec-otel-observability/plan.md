@@ -1,7 +1,7 @@
 # Plan: spec-otel-observability
 
 - **Spec:** [`spec.md`](spec.md)
-- **Status:** Drafting <!-- Drafting | Executing | Done -->
+- **Status:** Executing <!-- Drafting | Executing | Done -->
 
 > **Plan contract:** this is the implementation strategy. Unlike the spec, this
 > document is allowed to change as you learn. When it changes substantially
@@ -16,7 +16,7 @@ The riskiest part is the content filter's mechanism. ADR-0015 item 6 says "SpanP
 
 The second risk is the export-path ownership split. **In Lambda the ADOT layer owns the global `TracerProvider` and the OTLP→collector pipeline** (installed by `AWS_LAMBDA_EXEC_WRAPPER` before the handler runs); a module `set_tracer_provider()` is a no-op, so the module's `ContentCaptureFilterExporter` is not on the Lambda export path. Content-capture enforcement in Lambda is therefore the ADOT collector's attribute processor (owned by `infra-tf/mcp-otel-lambda`, verified by spec AC8). The module registers and filters exporters only where it owns the provider — tests, local/console, and the ingestion task — and there `configure_observability()` must not raise when no OTLP endpoint is reachable and must import without boto3. No AWS credentials are needed for T1–T4; the live X-Ray trace (spec AC8) is a deploy-time gate owned jointly with `infra-tf/mcp-otel-lambda`.
 
-This is a spec-authoring deliverable for the ini-002 shape queue: the tasks below define the contract for the `packages/graphrag/otel-instrumentation` work item, which is built later via `work-loop`. No `graphrag.observability` code lands in this PR.
+This plan has been executed. The `graphrag.observability` module is implemented at `packages/graphrag/src/graphrag/observability/` with 27 TDD tests covering AC1-AC6 and AC9 offline. AC7 (infra-tf/mcp-otel-lambda plan assertion) and AC8 (live X-Ray trace) are deferred to the infra work item.
 
 ## Constraints
 

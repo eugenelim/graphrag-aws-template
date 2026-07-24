@@ -34,6 +34,7 @@ from opentelemetry.sdk.trace.export import (
 )
 
 from graphrag.observability._content_filter import ContentCaptureFilterExporter
+from graphrag.observability._logging import configure_json_logging
 
 logger = logging.getLogger(__name__)
 
@@ -41,15 +42,20 @@ _CONFIGURED = False
 
 
 def configure_observability(service_name: str) -> None:
-    """Configure OTEL tracing and structured logging for *service_name*.
+    """Configure structured JSON logging and OTEL tracing for *service_name*.
+
+    Always installs structured JSON logging (``configure_json_logging``).  If no
+    non-default ``TracerProvider`` is installed, also installs one with a
+    ``ContentCaptureFilterExporter``-wrapped exporter.
 
     Safe to call multiple times; subsequent calls after the first are no-ops
-    when a non-default provider is already installed.  Raises no exception when
-    the OTLP endpoint is unreachable or AWS credentials are absent.
+    for the provider setup (logging is idempotent via ``configure_json_logging``).
+    Raises no exception when the OTLP endpoint is unreachable or AWS credentials
+    are absent.
 
     In Lambda the ADOT-installed provider is already active before this runs;
-    the function skips provider installation and configures only logging +
-    metrics (which do not depend on the provider).
+    the function skips provider installation (the ADOT collector processor is
+    the enforcement point there) while still configuring the log format.
 
     Parameters
     ----------
@@ -66,6 +72,11 @@ def configure_observability(service_name: str) -> None:
         current,
         trace.ProxyTracerProvider,
     )
+
+    # Always configure structured JSON logging, regardless of provider state.
+    # This handles the ingestion-task path (logging-only, no tracer) and the Lambda
+    # path (ADOT owns the provider, but this module owns the log format).
+    configure_json_logging()
 
     if already_configured:
         logger.debug(
@@ -105,10 +116,12 @@ def _install_provider(service_name: str) -> None:
         console_exporter = ContentCaptureFilterExporter(ConsoleSpanExporter())
         provider.add_span_processor(SimpleSpanProcessor(console_exporter))
     else:
-        # No-op batch processor — spans are processed but not exported (tests
-        # supply their own processors; ingestion uses this path for logging-only).
-        noop_exporter = ContentCaptureFilterExporter(ConsoleSpanExporter())
-        provider.add_span_processor(BatchSpanProcessor(noop_exporter))
+        # Default batch processor: spans are processed but console-export is low-
+        # overhead at INFO level (tests supply their own in-memory processors;
+        # ingestion uses this path for logging-only and the console sink is silent
+        # when no handler is reading stdout).
+        console_exporter = ContentCaptureFilterExporter(ConsoleSpanExporter())
+        provider.add_span_processor(BatchSpanProcessor(console_exporter))
 
     trace.set_tracer_provider(provider)
     logger.debug(
@@ -117,7 +130,7 @@ def _install_provider(service_name: str) -> None:
     )
 
 
-def reset_for_testing() -> None:
+def reset_for_testing() -> None:  # pragma: no cover
     """Reset the configured flag and global TracerProvider — **for tests only**.
 
     Allows tests to call ``configure_observability`` more than once in the same

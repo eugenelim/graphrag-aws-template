@@ -111,6 +111,7 @@ shipped = [
   "packages/graphrag/mcp-tool-server",
   "packages/graphrag/normative-retrieval",
   "packages/graphrag/rdf-owl-ontology-loader",
+  "packages/graphrag/otel-instrumentation",
 ]
 active  = []
 queue   = [
@@ -147,10 +148,7 @@ queue   = [
     "work:packages/graphrag/mcp-tool-server",
     "shape:spec-multi-strategy-routing",
   ]},
-  {path = "packages/graphrag/otel-instrumentation",   needs = [
-    "work:packages/graphrag/mcp-tool-server",
-    "shape:spec-otel-observability",
-  ]},
+
   {path = "infra-tf/mcp-otel-lambda",                 needs = [
     "work:packages/graphrag/mcp-tool-server",
     "shape:adr-0015-otel-observability",
@@ -313,6 +311,21 @@ open = [
   # ADOT collector's export-failure metric. Owner: infra-tf/mcp-otel-lambda. Surfaced
   # by the spec-otel-observability security review (Nit 6).
   {slug = "otel-collector-export-failure-alarm", source = "docs/specs/spec-otel-observability/"},
+
+  # AC7 deferred: offline pre-deploy assertion that the MCP Lambda terraform plan
+  # contains the ADOT collector attributes processor delete-set (DENY_SET ∪
+  # AUTO_CAPTURE_KEYS), capture-off env vars, and AWSXRayDaemonWriteAccess grant.
+  # Owner: infra-tf/mcp-otel-lambda (apps/infra-tf/tests/test_plan.py).
+  # Unblock: when infra-tf/mcp-otel-lambda is implemented.
+  {slug = "infra-otel-lambda-offline-ac7", source = "docs/specs/spec-otel-observability/"},
+
+  # AC8 deferred: live end-to-end trace assertion — invoke ask via Function URL,
+  # confirm X-Ray trace with mcp.ask root + retrieval.* subsegments, no DENY_SET or
+  # AUTO_CAPTURE_KEYS attributes, mcp.tool.duration_ms EMF metric in CloudWatch.
+  # @pytest.mark.live_aws; requires both otel-instrumentation and infra-tf/mcp-otel-lambda
+  # deployed. Owner: the spec-otel-observability live gate.
+  # Unblock: when infra-tf/mcp-otel-lambda ships and a live deploy is available.
+  {slug = "otel-live-ac8-e2e", source = "docs/specs/spec-otel-observability/"},
 
   # Neptune CloudWatch audit-log export for detective control (neptune-sparql-engine AC-DEFER-2).
   # No `enable_cloudwatch_logs_exports = ["audit"]` means an escaped SPARQL Update mutation

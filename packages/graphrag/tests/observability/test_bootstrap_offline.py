@@ -58,18 +58,27 @@ def test_no_error_log_on_configure(caplog) -> None:
 
 
 def test_import_without_boto3() -> None:
-    """graphrag.observability imports cleanly without boto3/botocore."""
-    saved = {}
-    for mod in list(sys.modules):
-        if mod in ("boto3", "botocore") or mod.startswith(("boto3.", "botocore.")):
-            saved[mod] = sys.modules.pop(mod)
+    """graphrag.observability imports cleanly when boto3/botocore are blocked.
+
+    Uses the ``sys.modules["boto3"] = None`` sentinel pattern to force
+    ``ImportError`` on any ``import boto3`` — a real negative test.
+    """
+    import importlib
+
+    sentinel_keys = ["boto3", "botocore"]
+    saved: dict = {}
+    for key in sentinel_keys:
+        saved[key] = sys.modules.pop(key, ...)
+        sys.modules[key] = None  # type: ignore[assignment]
 
     try:
-        import importlib
-
         import graphrag.observability as obs_mod
 
         importlib.reload(obs_mod)
-        assert obs_mod.DENY_SET  # proves module loaded
+        assert obs_mod.DENY_SET  # proves module loaded without boto3
     finally:
-        sys.modules.update(saved)
+        for key in sentinel_keys:
+            if saved[key] is ...:
+                sys.modules.pop(key, None)
+            else:
+                sys.modules[key] = saved[key]  # type: ignore[assignment]

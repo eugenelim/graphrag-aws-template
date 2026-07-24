@@ -109,22 +109,43 @@ def test_event_deny_attrs_stripped(pair) -> None:
 
 
 def test_import_without_boto3() -> None:
-    """Importing the module does not require boto3 or botocore."""
+    """Importing the module does not require boto3 or botocore.
+
+    Sets ``sys.modules["boto3"] = None`` (and ``botocore``) which causes
+    Python to raise ``ImportError`` on any ``import boto3`` — a real negative
+    test, not just a missing-module check.
+    """
+    import importlib
     import sys
 
-    # Temporarily shadow boto3/botocore if present
-    saved = {}
-    for mod in list(sys.modules):
-        if mod in ("boto3", "botocore") or mod.startswith(("boto3.", "botocore.")):
-            saved[mod] = sys.modules.pop(mod)
+    # Block boto3/botocore imports by setting sentinel None entries
+    sentinel_keys = ["boto3", "botocore"]
+    saved: dict = {}
+    for key in sentinel_keys:
+        saved[key] = sys.modules.pop(key, ...)  # ... means "was not present"
+        sys.modules[key] = None  # type: ignore[assignment]  # blocks any import attempt
 
     try:
-        # Re-import the filter module to prove it loads without boto3
-        import importlib
-
         import graphrag.observability._content_filter as cf_mod
 
         importlib.reload(cf_mod)
-        assert cf_mod.DENY_SET  # non-empty, import succeeded
+        assert cf_mod.DENY_SET  # non-empty: import succeeded without boto3
     finally:
-        sys.modules.update(saved)
+        for key in sentinel_keys:
+            if saved[key] is ...:
+                sys.modules.pop(key, None)
+            else:
+                sys.modules[key] = saved[key]  # type: ignore[assignment]
+
+
+def test_auto_capture_event_attrs_stripped(pair) -> None:
+    """AUTO_CAPTURE_KEYS keys in span-event attributes are stripped (auto-instrumentation path)."""
+    # db.statement carries the SPARQL text in boto3/urllib3 auto-instrumentation
+    span = _export(
+        *pair,
+        {"tool_name": "ask"},
+        {"db.statement": "SELECT * WHERE { ?s ?p ?o }", "db.system": "neptune"},
+    )
+    ev_attrs = dict(span.events[0].attributes or {})
+    assert "db.statement" not in ev_attrs, "AUTO_CAPTURE_KEY db.statement in event not stripped"
+    assert "db.system" in ev_attrs, "benign db.system was stripped from event"

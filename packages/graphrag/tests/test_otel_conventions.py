@@ -152,3 +152,24 @@ def test_deny_set_keys_stripped_from_span_events(
     event_attrs = dict(exported_events[0].attributes or {})
     assert "question.text" not in event_attrs, "DENY_SET key in event was not stripped"
     assert "safe_key" in event_attrs, "benign event key was stripped"
+
+
+def test_auto_capture_key_stripped_from_span_events(
+    filtered_exporter: tuple[TracerProvider, InMemorySpanExporter],
+) -> None:
+    """AUTO_CAPTURE_KEYS in span-event attributes are also stripped (auto-instrumentation)."""
+    provider, inner = filtered_exporter
+    # db.statement is the primary auto-instrumentation content vector (SPARQL text)
+    span = _make_span(
+        provider,
+        inner,
+        {"tool_name": "ask"},
+        event_attrs={"db.statement": "SELECT * WHERE { ?s a <urn:Policy> }", "safe_key": "safe"},
+    )
+    exported_events = span.events
+    assert len(exported_events) == 1
+    event_attrs = dict(exported_events[0].attributes or {})
+    assert "db.statement" not in event_attrs, (
+        "AUTO_CAPTURE_KEY db.statement in event was not stripped"
+    )
+    assert "safe_key" in event_attrs, "benign event key was stripped"

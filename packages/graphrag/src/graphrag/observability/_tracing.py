@@ -82,9 +82,9 @@ def traced_leg(
     ``f"{name}.{strategy}"`` when ``strategy`` is provided.  The ``SpanKind``
     is resolved from :data:`SPAN_KINDS`.
 
-    Attributes in *attrs* that are NOT in ``DENY_SET`` are set on the span;
-    the ``ContentCaptureFilterExporter`` strips any ``DENY_SET`` keys at export
-    time as the runtime backstop.
+    All *attrs* are set on the span unconditionally; the ``ContentCaptureFilterExporter``
+    strips any ``DENY_SET ∪ AUTO_CAPTURE_KEYS`` keys at export time as the runtime backstop.
+    Do not pass ``DENY_SET`` keys here — they will be stripped before export.
 
     Parameters
     ----------
