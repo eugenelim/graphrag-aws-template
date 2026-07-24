@@ -35,3 +35,8 @@ def load_ontology() -> rdflib.Graph:
 def _load_shapes() -> rdflib.Graph:
     """Return the bundled SHACL shapes graph (biz_ops_shapes.ttl), memoized per process."""
     return _load_ttl("biz_ops_shapes.ttl")
+
+
+def load_shapes() -> rdflib.Graph:
+    """Return a parsed rdflib.Graph of the bundled SHACL shapes (biz_ops_shapes.ttl)."""
+    return _load_shapes()
