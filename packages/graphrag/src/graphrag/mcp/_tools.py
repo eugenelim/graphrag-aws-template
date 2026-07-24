@@ -234,6 +234,7 @@ SELECT ?s ?p ?o ?type ?label WHERE {{
 }}
 """
 
+
 @mcp.tool()
 async def search_graph(uri: str, hops: int = 1) -> SubgraphResult:
     """Named-graph neighbourhood lookup. Returns typed subgraph (nodes + edges)."""
@@ -255,16 +256,25 @@ async def search_graph(uri: str, hops: int = 1) -> SubgraphResult:
                     _SEARCH_GRAPH_SPARQL_PRODUCTION.format(root=root)
                 )
                 row_iter = [
-                    {"s": r.get("s",""), "p": r.get("p",""), "o": r.get("o",""),
-                     "type": r.get("type",""), "label": r.get("label","")}
+                    {
+                        "s": r.get("s", ""),
+                        "p": r.get("p", ""),
+                        "o": r.get("o", ""),
+                        "type": r.get("type", ""),
+                        "label": r.get("label", ""),
+                    }
                     for r in raw_rows
                 ]
             else:
                 row_iter = [
-                    {"s": str(row.s), "p": str(row.p), "o": str(row.o),
-                     "type": str(row.type) if row.type else "",
-                     "label": str(row.label) if row.label else "",
-                     "_o_node": row.o}
+                    {
+                        "s": str(row.s),
+                        "p": str(row.p),
+                        "o": str(row.o),
+                        "type": str(row.type) if row.type else "",
+                        "label": str(row.label) if row.label else "",
+                        "_o_node": row.o,
+                    }
                     for row in store.graph.query(
                         _SEARCH_GRAPH_SPARQL, initBindings={"root": URIRef(root)}
                     )
@@ -370,6 +380,7 @@ SELECT ?policy ?name ?effectiveDate ?scope WHERE {{
     }}
 }}
 """
+
 
 @mcp.tool()
 async def get_policies(context: str, domain: str | None = None) -> list[PolicyResult]:
