@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 # Fixture paths
 # ---------------------------------------------------------------------------
 
+
 # Resolve to tests/fixtures/ relative to the package location when running
 # from an installed package.
 def _fixture_path() -> Path:

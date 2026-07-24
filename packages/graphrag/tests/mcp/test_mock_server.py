@@ -91,7 +91,6 @@ def test_search_graph_returns_subgraph() -> None:
     assert len(neighbour_uris) > 0, "Expected at least one neighbour node beyond the root"
 
 
-
 def test_get_policies_returns_all() -> None:
     """get_policies() without domain filter returns all 3 fixture policies (AC6)."""
     texts, result = _call("get_policies", context="workflow approval required", domain=None)
@@ -169,6 +168,7 @@ def test_search_unknown_type_returns_empty() -> None:
     assert "result" in result
     assert result["result"] == []
 
+
 # ---------------------------------------------------------------------------
 # AC6: get_policies domain filter is effective
 # ---------------------------------------------------------------------------
@@ -179,8 +179,6 @@ def test_get_policies_domain_filter_returns_scoped_policies() -> None:
     _, result = _call("get_policies", context="leave approval", domain="hr")
     assert "result" in result
     policies = result["result"]
-    assert len(policies) == 1, (
-        f"Expected 1 HR-scoped policy, got {len(policies)}: {policies}"
-    )
+    assert len(policies) == 1, f"Expected 1 HR-scoped policy, got {len(policies)}: {policies}"
     assert policies[0]["uri"] == "urn:biz:policy:hr-leave"
     assert policies[0]["domain"] == "hr"
