@@ -79,7 +79,7 @@ select = ["E", "F", "I", "UP", "B", "S"]
 # Tests: asserts (S101), mock/fake credentials (S105/S106), and subprocess calls against
 # test-constructed (trusted) inputs (S603/S607 — e.g. driving the delta demo over a throwaway
 # git repo) are expected.
-"**/tests/**" = ["S101", "S105", "S106", "S603", "S607"]
+"**/tests/**" = ["S101", "S105", "S106", "S603", "S607", "S608"]
 
 [tool.mypy]
 python_version = "3.11"
