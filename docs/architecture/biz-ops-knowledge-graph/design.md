@@ -211,11 +211,19 @@ flowchart TB
         MCP["MCP Tool Server<br/>ask · search · search_graph<br/>get_policies · query · summarize"]
     end
 
+    subgraph Observability["Observability"]
+        OT["OTEL Spans<br/>AWS ADOT → CloudWatch"]
+    end
+
     subgraph Retrieval["Retrieval Layer"]
         QA["Question Analyzer<br/>NER → typed URIs<br/>query type · specificity"]
         SR["Strategy Router<br/>rules-first · LLM fallback<br/>normative-first principle"]
         EX["Retrieval Executor<br/>vector · hybrid_graph · graph_expand<br/>structured · global · normative"]
         SY["Synthesizer<br/>LLM API call<br/>ask and get_policies only"]
+    end
+
+    subgraph Ingestion["Ingestion Layer"]
+        GI["Git Ingestion<br/>delta diff · RDF emit<br/>partition graph upsert/drop"]
     end
 
     subgraph Stores["Store Layer"]
@@ -224,13 +232,6 @@ flowchart TB
         BD["LLM API<br/>embed · synthesise · route"]
     end
 
-    subgraph Ingestion["Ingestion Layer"]
-        GI["Git Ingestion<br/>delta diff · RDF emit<br/>partition graph upsert/drop"]
-    end
-
-    subgraph Observability["Observability"]
-        OT["OTEL Spans<br/>AWS ADOT → CloudWatch"]
-    end
 
     HU -->|"natural language via IDE LLM"| MCP
     AG -->|"tool call"| MCP
@@ -464,7 +465,7 @@ sequenceDiagram
     NP-->>M: subgraph triples
     M->>BD: synthesize(chunks, graph facts, question)
     BD-->>M: answer with citations
-    M-->>C: answer, citations, strategy=hybrid_graph, trace
+    M-->>C: answer · citations · strategy · trace
 ```
 
 **`get_policies(context, domain)` — normative exhaustive path:**
@@ -481,6 +482,7 @@ sequenceDiagram
     M->>NP: SELECT all policies in normative graph matching domain + date filter
     NP-->>M: ALL matching policies (no top-k limit)
     M->>BD: embed(context)
+    BD-->>M: embedding vector
     M->>OS: threshold filter(vector, threshold=0.7, partition=normative)
     OS-->>M: additional policies above similarity threshold
     M-->>C: union of SPARQL and vector results (exhaustive, fail if unavailable)
@@ -504,19 +506,19 @@ sequenceDiagram
     G-->>F: list of added, modified, and deleted files
 
     loop for each added/modified file [Silver gate]
-        F->>F: route to extractor by format (pandoc/docling/markitdown/Textract)
+        Note over F: route to extractor by format (pandoc/docling/markitdown/Textract)
         alt scanned PDF
             F->>TX: OCR extract
             TX-->>F: text blocks
         end
-        F->>F: cleanse (strip headers, detect PII, quality gates)
+        Note over F: cleanse (strip headers, detect PII, quality gates)
         alt quality gate failed
             F->>NP: write quarantine record with reason
         else gate passed
             F->>S: write Silver artifact (Markdown + cleansing report)
             Note over F,S: Gold layer
-            F->>F: classify rdf:type, emit RDF triples + PROV-O triples
-            F->>F: SHACL validate RDF triples against shape library (pyshacl)
+            Note over F: classify rdf:type, emit RDF triples + PROV-O triples
+            Note over F: SHACL validate RDF triples against shape library (pyshacl)
             alt SHACL violation
                 F->>NP: write quarantine record with SHACL violation report
             else SHACL valid
@@ -828,13 +830,8 @@ flowchart TB
             end
         end
 
-        subgraph LLM["Amazon Bedrock (via VPC endpoint)"]
-            BD["LLM API<br/>embed · synthesise · route"]
-        end
-
-        subgraph Obs["Observability"]
-            ADOT["ADOT layer<br/>OTLP to CloudWatch Logs · X-Ray"]
-        end
+        BD["Amazon Bedrock (via VPC endpoint)<br/>LLM API · embed · synthesise · route"]
+        ADOT["Observability — ADOT layer<br/>OTLP to CloudWatch Logs · X-Ray"]
     end
 
     Git["Git repository<br/>(source of truth · Bronze)"]
@@ -851,17 +848,17 @@ flowchart TB
     ING --> S3
     ING --> NEP
     ING --> OS
-    ING --> LLM
+    ING --> BD
 
     ML --> NEP
     ML --> OS
-    ML --> LLM
+    ML --> BD
     ML --> ADOT
-    ADOT --> Obs
+    BUD -.->|"account cost alert · email"| ADOT
 
     SP --> NEP
     VP --> OS
-    VP --> LLM
+    VP --> BD
 ```
 
 ### AWS resource summary
