@@ -29,10 +29,10 @@ Enterprise customers in regulated verticals (financial services, healthcare, gov
 
 > Does the target deployment context require **execution isolation** (dedicated microVM per session, no cross-session contamination, policy enforced outside agent code), or does it require **audit evidence** (model invocation logs, Guardrails, versioned prompts, IAM-scoped model access)?
 
-If execution isolation is required → Shape B or C (AgentCore Runtime for at least the router).
+If execution isolation is required → Shape C (both calls to AgentCore Runtime).
 If audit evidence suffices → Shape A (inline Bedrock with governance controls) with no new service boundary.
 
-The three candidate shapes evaluated are documented in Alternatives Considered below. Shape B is the natural split: the router (policy-sensitive classification step, 64-token payload, no retrieved context to serialize) gets the hard execution boundary; the synthesizer (latency-sensitive, large retrieved context per call) retains inline Bedrock with full governance controls.
+The governance-relevant call is the **synthesizer**, not the router. The synthesizer processes retrieved chunks and graph facts (the sensitive data surface), produces user-facing output (the data egress surface), and is the primary prompt-injection target when retrieved content is tainted. The router maps a question string to a strategy name — no sensitive data is processed, no user-facing output is produced, and a misbehaving router falls back to `hybrid_graph` by design (`routing/_bedrock_router.py:165`). Governing only the router while leaving the synthesizer inline does not add meaningful governance; it governs the trivial call and leaves the critical one untouched. The real choice is therefore binary: Shape A or Shape C.
 
 Until the open question is resolved, no synthesis wiring should proceed in `mcp/_tools.py` — the wiring commits to one of these shapes.
 
@@ -55,9 +55,10 @@ Consequences are shape-dependent. The shared negatives across all shapes:
 - Positive: no latency overhead, no new service to operate, governance evidence is sufficient for most compliance frameworks.
 - Negative: policy enforcement depends on developer discipline (passing `guardrailIdentifier` on every Converse call); no execution isolation between sessions.
 
-**Shape B (router to AgentCore, synthesizer inline):**
-- Positive: the strategy classification step — the most governance-sensitive decision point — gets microVM isolation and versioned, IAM-governed endpoints; synthesizer latency is unchanged.
-- Negative: two deployment surfaces to operate; router context serialization overhead is negligible (64-token output, no retrieved context), but the AgentCore Runtime ARM64 build and idle-timeout (15 min default) must be managed.
+**Shape B (router to AgentCore, synthesizer inline) — not a governance option:**
+- Governs the wrong call. The synthesizer is where sensitive data is processed and user-facing output is produced; the router handles only question-to-strategy classification with no sensitive payload.
+- Only valid driver for Shape B is operational: independent deployment lifecycle for the router (update strategy/model without a graphrag package release). That is a release-engineering argument, not a governance argument, and does not satisfy an execution-isolation requirement.
+- Not considered further as a governance shape.
 
 **Shape C (both to AgentCore Runtime):**
 - Positive: hardest governance boundary; purest separation of reasoning from serving.
@@ -78,10 +79,10 @@ Both `BedrockClaudeSynthesizer` and `BedrockQueryRouter` remain in the `graphrag
 
 Rejected for execution-isolation-required contexts: policy enforcement depends on developer discipline; no microVM-per-session isolation.
 
-**Shape B — Split boundary: router to AgentCore Runtime, synthesizer inline with governance**
-`BedrockQueryRouter` runs as an AgentCore Runtime agent (ARM64 container, versioned endpoint, IAM-governed invocation). `BedrockClaudeSynthesizer` stays inline with Shape A governance controls. The router's classification payload is small (question text only, no retrieved context), so serialization overhead is negligible. This is the minimum viable execution boundary for organizations that require it.
+**Shape B — Split boundary: router to AgentCore Runtime, synthesizer inline**
+`BedrockQueryRouter` runs as an AgentCore Runtime agent; `BedrockClaudeSynthesizer` stays inline with Shape A governance controls.
 
-Not yet rejected — this is the leading candidate if execution isolation is required.
+Rejected as a governance option: governing only the router provides no meaningful execution isolation for the data that actually matters — retrieved chunks, graph facts, and user-facing output all remain in the inline synthesizer path. Shape B only makes sense as a release-engineering decision (independent deployment of the router), not a governance one. If execution isolation is genuinely required, Shape C is the minimum viable boundary.
 
 **Shape C — Full separation: both calls to AgentCore Runtime**
 Both synthesizer and router run as AgentCore Runtime agents. The retrieval layer serializes retrieved chunks + graph facts across the network boundary before every synthesis call. Governance is maximally separated from the serving layer.
