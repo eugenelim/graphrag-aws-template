@@ -10,7 +10,7 @@
 
 Two components make direct boto3 Bedrock calls today:
 
-- **`BedrockClaudeSynthesizer`** (`packages/graphrag/src/graphrag/synthesize.py`) — RAG synthesis via the Converse API, `us.anthropic.claude-sonnet-4-6` (cross-region inference profile, routes across US regions), up to 2 000 output tokens; receives multi-chunk retrieved context + graph facts per call.
+- **`BedrockClaudeSynthesizer`** (`packages/graphrag/src/graphrag/synthesize.py`) — RAG synthesis via the Converse API, `us.anthropic.claude-sonnet-4-6` (cross-region US inference profile), up to 2 000 output tokens; receives multi-chunk retrieved context + graph facts per call.
 - **`BedrockQueryRouter`** (`packages/graphrag/src/graphrag/routing/_bedrock_router.py`) — strategy classification via `invoke_model`, `amazon.nova-lite-v1:0`, 64 max tokens, called only when the deterministic `RuleQueryRouter` returns `AMBIGUOUS`.
 
 Neither call is yet wired into the MCP server (`mcp/_tools.py:124` holds a placeholder; `_ProductionStore.bedrock_client` is constructed but unconnected). This is a greenfield wiring decision.
@@ -105,7 +105,7 @@ Rejected: governance evidence is required in any production deployment. The curr
 
 Design review (2026-07-29) identified the following judgment calls that must be resolved to close this ADR. Mechanical issues have been corrected above; these require human input.
 
-**OQ-1 — Data residency (major).** The synthesizer default is `us.anthropic.claude-sonnet-4-6` — a cross-region inference profile that routes requests across US regions. The Context cites "data residency controls" as a compliance requirement. *Question: does any known target deployment have a single-region residency mandate?* If yes, a regional FM ARN must replace the cross-region profile at the cost of cross-region throughput and failover — and the same requirement applies to the MIL S3 bucket region. *Needs input from: governance team / regulated customer representative.*
+**OQ-1 — Data residency (resolved).** Deployment is US-only. The `us.anthropic.claude-sonnet-4-6` cross-region US inference profile is acceptable; no single-region residency mandate applies. The MIL S3 bucket should be deployed in a US region consistent with the workload region. No further action required on this item.
 
 **OQ-2 — Resolution owner, deadline, and default posture (major).** The named decision-maker is `eugenelim`, but resolution requires the governance team or a regulated customer representative (Consulted field, currently unnamed). No deadline or default posture is recorded. *Question: who owns the governance consultation, by when, and what is the default posture if no consultation materialises by that date — proceed with Shape A substrate as the reversible baseline, or block entirely?* *Needs input from: eugenelim + governance team.*
 
