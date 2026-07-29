@@ -1,6 +1,6 @@
 # ADR-0016: Git ingestion: commit-SHA delta + medallion over CodePipeline/S3-mirror bronze source
 
-- **Status:** Accepted
+- **Status:** Proposed <!-- re-opened: design review (2026-07-29) found blockers — stale triples on modify, LFS silent corruption, unstated scale envelope. See Open questions. -->
 - **Date:** 2026-07-23
 - **Decision-makers:** eugenelim
 - **Supersedes:** [ADR-0007](0007-silver-cache-content-and-config-addressed.md) (Silver-cache S3-key addressing superseded by git commit-SHA artifact keying; the "silver cache" artifact is renamed the Gold layer in medallion terminology)
@@ -44,11 +44,15 @@ Concretely:
 
 4. **Artifact keying by commit SHA.** All S3 artifacts are keyed `<doc_uri>/<commit_sha>.<ext>`. This embeds the authoring signal in the key, enables exact provenance (`biz:gitCommitSHA`), and makes Gold artifacts immutable per commit — a re-ingest of the same commit SHA is idempotent.
 
-5. **Neptune/OpenSearch update on delete.** When `git diff` reports a deleted file, the Fargate task issues `DROP GRAPH` (under `ingestion_task_role`, which holds `WriteDataViaQuery`) for the document's triples and deletes the corresponding OpenSearch documents by `doc_uri`. The `mcp_lambda_role` cannot issue `DROP GRAPH` (ADR-0011 read-only guard).
+5. **Neptune/OpenSearch update on delete and modify.** When `git diff` reports a **deleted** file, the Fargate task issues `DROP GRAPH` (under `ingestion_task_role`, which holds `WriteDataViaQuery`) for the document's triples and deletes the corresponding OpenSearch documents by `doc_uri`. When `git diff` reports a **modified** file, the Fargate task must drop all triples for the prior commit SHA's named graph before inserting the new SHA's Gold triples — omitting the prior-SHA drop causes stale triples to accumulate across commits, which contradicts the idempotency design driver. The `mcp_lambda_role` cannot issue `DROP GRAPH` (ADR-0011 read-only guard).
 
-6. **Git-first seam, not git-only.** The ingestion seam (`BronzeSource` protocol) stays pluggable; other source patterns (S3 event-driven, webhook) can implement the same interface. Git-commit-SHA delta is the only implementation in scope for ini-002.
+6. **Git LFS handling.** Git LFS pointer files (identified by the `version https://git-lfs.github.com/spec/v1` header in blob content) are detected at the Silver cleansing stage and routed to quarantine — the pointer stub is not valid document content and must not be extracted as if it were the referenced file. LFS object resolution (fetching the actual referenced object via the LFS batch API) is out of scope for ini-002. Adopters requiring LFS-tracked content must add a Bronze-stage LFS smudge step before this pipeline receives the blob.
 
-7. **Commit SHA manifest.** The last-ingested SHA is stored at `s3://<bucket>/manifest/last_commit_sha`. On completion, the task writes the new HEAD SHA. On corruption or absence the task falls back to a full rescan (`git diff --name-status 4b825dc..HEAD`, the empty-tree SHA).
+7. **Unsupported content types.** Files whose MIME type does not match any format router handler (executables, compiled artifacts, unknown binaries, standalone images) are routed to quarantine with `reason: unsupported_mime_type` in the cleansing report. No silent drop; every unhandled blob produces a `urn:graph:quarantine` record in Neptune for auditability.
+
+8. **Git-first seam, not git-only.** The ingestion seam (`BronzeSource` protocol) stays pluggable; other source patterns (S3 event-driven, webhook) can implement the same interface. Git-commit-SHA delta is the only implementation in scope for ini-002.
+
+9. **Commit SHA manifest.** The last-ingested SHA is stored at `s3://<bucket>/manifest/last_commit_sha`. On completion, the task writes the new HEAD SHA. On corruption or absence the task falls back to a full rescan (`git diff --name-status 4b825dc..HEAD`, the empty-tree SHA).
 
 ## Decision drivers
 
@@ -72,8 +76,10 @@ Concretely:
 - CodePipeline is an additional AWS service — an additional cost item and operational surface. On a first push to a new repo the mirror latency adds ~30–60 s before the Fargate task sees the content.
 - High-churn corpora (frequent commits touching many files) produce proportionally more Gold S3 artifacts per document. Cleanup policy is out of scope for ini-002; Gold storage cost grows linearly with commit history depth.
 - `biz:gitCommitSHA` is a required SHACL property on every document and chunk shape — a non-git source that cannot supply a commit SHA must supply a synthetic SHA-like identifier or the SHACL gate rejects every emission.
+- **Single-task sequential ceiling (unstated scale envelope).** The current implementation processes all documents in a single Fargate task (2 vCPU / 8 GB RAM) with Bronze content held in-memory. No maximum repo size, per-file size, or changed-file count per run is defined. For multi-gigabyte repos or high document counts this design will OOM or run for many hours without partial recovery. See OQ-1.
+- **VPC interface endpoints required for extraction toolchain.** The no-NAT posture is preserved only if all extraction dependencies are reachable via VPC endpoints. Required interface endpoints: `com.amazonaws.<region>.bedrock-runtime` (Titan embed, Textract), `com.amazonaws.<region>.textract`. Extraction model weights must be pre-baked into the container image (`TRANSFORMERS_OFFLINE=1`, `HF_DATASETS_OFFLINE=1` — already set) with no runtime download path.
 
-**Revisit if:** An adopter's primary corpus is not git-tracked and no synthetic SHA can be supplied; or CodePipeline/S3-mirror latency violates an ingestion SLA that requires sub-minute trigger-to-ingest turnaround.
+**Revisit if:** An adopter's primary corpus is not git-tracked and no synthetic SHA can be supplied; or CodePipeline/S3-mirror latency violates the ingestion SLA (see OQ-2 — no numeric SLA is currently committed); or the in-memory single-task processing model is insufficient for the actual repository size and document count encountered in production (see OQ-1).
 
 ## Confirmation
 
@@ -89,6 +95,16 @@ Concretely:
 - **S3 object-event delta (EventBridge → SQS → Fargate).** Trigger ingestion on S3 `ObjectCreated` events from the CodePipeline mirror. *Rejected:* the S3 event detects mirror churn (a CodePipeline sync), not commit boundaries — the same false-positive problem as content-hash. Also requires SQS and EventBridge in the ingestion path, with no correctness advantage over SHA-keyed polling.
 - **Webhook-triggered full rescan.** On each push, re-process the entire corpus. *Rejected:* no delta — every commit re-runs Bedrock extraction on every document regardless of whether it changed; not viable for a corpus of any non-trivial size. Retained as a valid fallback path for small corpora (implemented via the empty-tree SHA in the manifest corruption recovery path).
 - **NAT gateway for direct git clone.** Put a NAT gateway on the ingestion subnet so Fargate can `git clone` the remote directly. *Rejected against the no-NAT constraint:* ADR-0002's no-NAT egress posture is carried forward by RFC-0004 (§Security posture) as a load-bearing control; a NAT gateway reopens the unrestricted egress surface that the read-only guard and the OpenSearch ACL controls depend on.
+
+## Open questions
+
+Design review (2026-07-29) identified the following judgment calls that must be resolved before this ADR can be re-accepted. Mechanical issues have been corrected above; these require human input.
+
+**OQ-1 — Scale envelope (blocker).** The decision assumes Bronze content is passed in-memory within a single 8 GB Fargate task processed sequentially. No maximum repo size, per-file size, or changed-file count per run is stated. *Question: is this design scoped to small-to-medium text corpora (< ~1 GB blob payload, < ~1,000 changed files per run), or must it accommodate multi-gigabyte repos with mixed content?* If the latter, the single-task sequential model requires replacement with a fan-out pipeline (a candidate architecture is under design as a successor ADR) before this ADR can be re-accepted.
+
+**OQ-2 — Numeric trigger-to-ingest SLA (major).** The Revisit-if references "sub-minute trigger-to-ingest turnaround" as the threshold for reconsidering CodePipeline, but this figure is not a committed SLA target — it appears only in the consequences restatement. *Question: what is the accepted trigger-to-ingest p95 latency?* Without a number the Revisit-if trigger has no threshold to fire against.
+
+**OQ-3 — Gold artifact cleanup / retention policy (minor).** Gold artifacts are keyed per commit SHA; S3 storage grows linearly with commit history depth for any document that changes frequently. No lifecycle policy (S3-IA transition, Glacier, or expiry of non-current SHAs) is defined, and cleanup is explicitly deferred from ini-002. *Question: what is the acceptable per-repository Gold storage growth bound, and should a lifecycle policy be applied before ini-002 closes?*
 
 ## References
 
