@@ -22,6 +22,7 @@
 | [0014](0014-mcp-tool-server.md) | MCP tool server: generic typed tools over per-class or per-strategy tools | Accepted |
 | [0015](0015-otel-observability.md) | OTEL observability: AWS ADOT Lambda layer with X-Ray traces and CloudWatch EMF metrics | Accepted |
 | [0016](0016-git-ingestion-commit-sha-delta-medallion.md) | Git ingestion: commit-SHA delta + medallion over CodePipeline/S3-mirror bronze source | Accepted |
+| [0017](0017-llm-reasoning-governance-boundary.md) | LLM reasoning governance boundary for synthesizer and strategy router | Proposed |
 
 ## Adding a new ADR
 
