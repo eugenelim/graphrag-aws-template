@@ -211,8 +211,10 @@ docstring convention (cite the gap-inventory item instead of a CDK test name).
   `aws_cloudwatch_event_rule.ecs_task_failed` (probe-verified pattern,
   cluster-scoped), `aws_cloudwatch_event_target` (topic, with
   `input_transformer` — cluster/task/stopCode/stoppedReason only).
-- `.trivyignore` (new, repo root): AVD-AWS-0095 with the
-  EventBridge-vs-aws/sns-key rationale and the P2 CMK pointer.
+- `.trivyignore`: AVD-AWS-0095 with the EventBridge-vs-aws/sns-key rationale
+  and the P2 CMK pointer, in `apps/infra-tf/.trivyignore` — the register CI
+  reads (`working-directory: apps/infra-tf`). (Corrected post-ship: PR #101
+  put it at the repo root, which trivy's CI invocation never reads.)
 - `iam.tf`: three new inline policies on `ingestion_task_role`
   (`textract-detect`, `s3-put-gold`, `dynamodb-status-rw`).
 - `compute.tf`: `INGESTION_STATUS_TABLE` env var.

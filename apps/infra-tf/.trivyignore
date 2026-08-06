@@ -21,3 +21,12 @@ AVD-AWS-0128
 # The bucket already enforces TLS-only access (aws_s3_bucket_policy.corpus_tls) and
 # blocks all public access. Revisit if this template stores regulated data.
 AVD-AWS-0132
+
+# SNS ingestion-alerts topic — no SSE (AWS-0095)
+# Rationale: SSE with the AWS-managed aws/sns key silently breaks EventBridge→SNS
+# publishing (that key's policy is unmodifiable and grants events.amazonaws.com no
+# kms:GenerateDataKey/Decrypt); a CMK is the gap inventory's P2 #15 and this stack
+# carries no CMKs. The message body is input-transformed alert metadata only
+# (cluster/task ARN, stop code, stopped reason) — corpus content never transits the
+# topic. Revisit when P2 KMS/CMK work lands (CMK is the adopter upgrade path).
+AVD-AWS-0095
