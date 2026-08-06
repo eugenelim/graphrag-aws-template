@@ -1,0 +1,93 @@
+# governance-index.yaml — the Stage-0 routing manifest for IaC work.
+#
+# Maps the seven canonical IaC decision domains (new-adr infra mode /
+# generate-iac Stage 0) to the ADRs that govern them in THIS repo. Before
+# generating or changing infrastructure, load only the rows matching the
+# intent's domains and cite them; a domain with `adrs: []` has no governing
+# ADR yet — a material decision there must produce one (new-adr, infra mode),
+# never a silent resolution.
+#
+# Bootstrapped 2026-08-06 from the accepted ADR set (docs/adr/). Rows point at
+# decisions, not designs: architecture views live in docs/architecture/.
+
+domains:
+  state:
+    question: Where does Terraform state live and how is it locked?
+    adrs: [ADR-0010]
+    notes: >-
+      S3 backend, native lockfile (use_lockfile, TF >= 1.11), encrypt=true;
+      values injected via backend.hcl (gitignored), bucket bootstrapped by
+      apps/infra-tf/scripts/bootstrap.sh.
+
+  layout:
+    question: How is the IaC organized into layers/stacks/modules?
+    adrs: [ADR-0010]
+    notes: >-
+      Single flat root module (apps/infra-tf), topical .tf files, no
+      registry modules; the CDK app (apps/infra) is a frozen migration
+      reference, not deployed.
+
+  iam:
+    question: What identity and least-privilege model applies?
+    adrs: [ADR-0011, ADR-0009]
+    notes: >-
+      Least-privilege inline role policies, constructed ARNs, no wildcard
+      Resource on data-plane allows (documented single-action exceptions
+      only); read-only query/MCP path is the ADR-0011 blast-radius backstop.
+      ADR-0009 scopes what authz is deliberately NOT real in this template.
+
+  tagging:
+    question: Which tags are mandatory and how are they applied?
+    adrs: []
+    notes: >-
+      GAP — convention only: five governance tags (Environment/Project/
+      Department/Application/User) via provider default_tags
+      (apps/infra-tf/provider.tf, variables.tf). No ADR records the taxonomy;
+      write one if the tag set becomes load-bearing (cost allocation, IAM
+      conditions).
+
+  networking:
+    question: Public or private topology; how does egress work?
+    adrs: [ADR-0002]
+    notes: >-
+      Private-isolated subnets, no NAT/IGW; all egress via gateway/interface
+      VPC endpoints; closed-egress SGs with explicit rules; ephemeral
+      teardown-first posture.
+
+  pipeline_auth:
+    question: How does CI authenticate to the cloud?
+    adrs: []
+    notes: >-
+      GAP — CI is deliberately cloud-credential-free (gates are offline;
+      trivy/pytest run against sources and committed fixtures). Live
+      apply/destroy is operator-run with exported static session credentials
+      (AGENTS.md § Commands). If CI ever deploys, write the OIDC
+      workload-identity ADR first — static keys in CI are prohibited.
+
+  remediation:
+    question: Can the system self-heal or auto-apply IaC changes?
+    adrs: [ADR-0002]
+    notes: >-
+      No autonomous apply. Teardown-first ephemeral stack; drift handling is
+      detect-and-propose (plan-based), human-applied. ADR-0002's posture is
+      the closest governing decision; a dedicated remediation ADR is only
+      needed if a standing environment appears.
+
+# Infra-adjacent decisions outside the seven canonical domains — loaded when
+# the intent touches the matching subsystem.
+additional:
+  stores:
+    question: Which managed data stores back the graph and vector legs?
+    adrs: [ADR-0011, ADR-0018]
+    notes: >-
+      Neptune Serverless SPARQL/RDF (ADR-0011); managed OpenSearch domain
+      retained over AOSS VECTORSEARCH for the template, AOSS documented as
+      the enterprise adoption shape (ADR-0018).
+
+  ingestion_trigger:
+    question: How does corpus change reach the ingestion compute?
+    adrs: [ADR-0016]
+    notes: >-
+      CodePipeline S3-mirror bronze source + EventBridge → ECS RunTask;
+      commit-SHA delta; failure alerting via the cluster-scoped
+      EventBridge → SNS rule (infra-tf-p0-gap-remediation).

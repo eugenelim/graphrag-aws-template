@@ -57,7 +57,9 @@ ingest = [
 server = [
     # MCP tool server — FastMCP + Mangum Lambda adapter.
     # Also pulled into [dev] so CI installs it via graphrag-aws-demo[server].
-    "mcp>=1.0",
+    # <2: mcp 2.0 moved/removed mcp.server.fastmcp — the tool server targets the
+    # 1.x FastMCP API (broke CI 2026-08-06; migration tracked: mcp-2x-migration).
+    "mcp>=1.0,<2",
     "pydantic>=2.0",
     "mangum>=0.21",
 ]
