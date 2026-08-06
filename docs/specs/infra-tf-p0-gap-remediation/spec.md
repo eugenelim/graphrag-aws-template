@@ -1,6 +1,6 @@
 # Spec: infra-tf P0 gap remediation (Textract, gold/*, failure alerting, status registry)
 
-- **Status:** Implementing <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Shipped <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** ADR-0002 (no NAT / closed egress), ADR-0010 (Terraform), ADR-0016 (medallion / Gold artifacts), context-ontology gap inventory P0 (2026-08-05)
@@ -97,19 +97,19 @@ plan-assertion pytest suite as the construction-test layer:
 
 ## Acceptance Criteria
 
-- [ ] **AC1 — Textract path.** The plan contains a `textract` interface
+- [x] **AC1 — Textract path.** The plan contains a `textract` interface
   endpoint (with its own SG accepting 443 from the VPC CIDR), an
   `ingestion_to_textract` egress rule (443, endpoint SG), and an
   `ingestion_task_role` inline policy allowing exactly
   `textract:DetectDocumentText` (`Resource: "*"`, commented as the documented
   no-resource-scoping exception). Plan-assertion tests cover all three.
-- [ ] **AC2 — Gold grant.** `ingestion_task_role` carries a dedicated inline
+- [x] **AC2 — Gold grant.** `ingestion_task_role` carries a dedicated inline
   policy `s3:PutObject` on `${corpus}/gold/*`; no bucket-wide PutObject
   appears. The pre-existing allowlist test
   (`test_ingestion_task_can_write_manifest_scoped_to_manifest_key`) has
   `"gold/"` appended to `_allowed_keys`; a new plan-assertion test covers the
   grant itself.
-- [ ] **AC3 — Failure alerting.** SNS topic `graphrag-ingestion-alerts` with an
+- [x] **AC3 — Failure alerting.** SNS topic `graphrag-ingestion-alerts` with an
   email subscription to `var.budget_alarm_email`; a topic policy allowing only
   `events.amazonaws.com` scoped by `aws:SourceArn` to the rule; an EventBridge
   rule (cluster-scoped, `lastStatus=STOPPED`, `$or`: any container
@@ -124,7 +124,7 @@ plan-assertion pytest suite as the construction-test layer:
   P2 #15, out of this slice — recorded as a `.trivyignore` AVD-AWS-0095 entry
   with this rationale. Plan-assertion tests cover topic, subscription, rule
   pattern, target, and transformer.
-- [ ] **AC4 — Status registry.** DynamoDB table `graphrag-ingestion-status`
+- [x] **AC4 — Status registry.** DynamoDB table `graphrag-ingestion-status`
   (`PAY_PER_REQUEST`, hash key `pk` type S, no deletion protection); DynamoDB
   gateway endpoint associated with both private route tables **and carrying an
   endpoint policy scoped to the status-table ARN** (defense-in-depth beyond
@@ -133,7 +133,7 @@ plan-assertion pytest suite as the construction-test layer:
   `dynamodb:PutItem`, `UpdateItem`, `GetItem`, `Query` on the table ARN only;
   `INGESTION_STATUS_TABLE` env var on the task definition. Plan-assertion
   tests cover all six.
-- [ ] **AC5 — Gates.** `terraform fmt -check`, `terraform validate`,
+- [x] **AC5 — Gates.** `terraform fmt -check`, `terraform validate`,
   `trivy config --exit-code 1 --severity HIGH,CRITICAL apps/infra-tf/` (with
   the documented AVD-AWS-0095 ignore), and the full plan-assertion suite pass
   in fresh-plan mode; `test_has_6_vpc_endpoints` is updated to assert 8;
@@ -143,7 +143,7 @@ plan-assertion pytest suite as the construction-test layer:
   pre-existing header that omitted `mcp_lambda_sg`), reads **7**
   compute/store SGs on line 1 (5 compute + 2 store), and reads **6** endpoint
   SGs (Textract joins the interface-endpoint set).
-- [ ] **AC6 — Live cycle.** `terraform apply` converges (follow-up plan: no
+- [x] **AC6 — Live cycle.** `terraform apply` converges (follow-up plan: no
   changes); all 8 VPC endpoints reach `available`; the DynamoDB table is
   `ACTIVE` and round-trips a put/get; **both** alert branches fire live —
   (a) `run-task` with no image in ECR → `TaskFailedToStart`, then (b) after
@@ -154,12 +154,12 @@ plan-assertion pytest suite as the construction-test layer:
   Assumptions); `scripts/probe.sh` exits 0; `terraform destroy` completes
   with zero orphaned resources (the pending email subscription expires
   AWS-side ≤ 3 days — documented, not an orphan).
-- [ ] **AC7 — Fixture refresh.** `tests/fixtures/plan.json` is regenerated from
+- [x] **AC7 — Fixture refresh.** `tests/fixtures/plan.json` is regenerated from
   applied state (post-apply `terraform plan` → `show -json`) per the
   infra-terraform-verification convention.
-- [ ] **AC8 — Registry app wiring deferred.** The entrypoint writes of run/doc
-  items are recorded in `workspace.toml [backlog].open`.
-  (deferred: ingestion-status-registry-app-wiring)
+- [ ] **AC8 — Registry app wiring.** (deferred: ingestion-status-registry-app-wiring)
+  The entrypoint writes of run/doc items are recorded in
+  `workspace.toml [backlog].open`; this slice provisions the infrastructure only.
 
 ## Assumptions
 
