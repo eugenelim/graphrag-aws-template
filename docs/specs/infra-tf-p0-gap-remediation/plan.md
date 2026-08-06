@@ -1,7 +1,7 @@
 # Plan: infra-tf P0 gap remediation
 
 - **Spec:** [`spec.md`](spec.md)
-- **Status:** Drafting <!-- Drafting | Executing | Done -->
+- **Status:** Done <!-- Drafting | Executing | Done -->
 
 > **Plan contract:** this is the implementation strategy. Unlike the spec, this
 > document is allowed to change as you learn. When it changes substantially
@@ -74,9 +74,11 @@ state checks, the deliberate failed-task alert probe, `probe.sh`, destroy.
   for `events.amazonaws.com`, `aws:SourceArn` = rule ARN) — SNS targets use
   resource policies, not target roles. Traces to: AC3.
 - **The target carries an `input_transformer`** emitting only
-  `{clusterArn, taskArn, stopCode, stoppedReason, exitCodes}` — the raw ECS
-  event over-discloses (task-role ARN, image URIs, override env values) into
-  plaintext email (security review 2026-08-05 #1). Traces to: AC3.
+  `{clusterArn, taskArn, stopCode, stoppedReason}` — the raw ECS event
+  over-discloses (task-role ARN, image URIs, override env values) into
+  plaintext email; per-container exit codes are deliberately omitted so an
+  unresolvable JSONPath can't break the no-exitCode `TaskFailedToStart`
+  branch (security review 2026-08-05 #1). Traces to: AC3.
 - **The topic is deliberately unencrypted, with a `.trivyignore` entry.**
   SSE via the AWS-managed `aws/sns` key silently breaks EventBridge→SNS (the
   key policy is unmodifiable and grants `events.amazonaws.com` nothing); a
@@ -208,7 +210,7 @@ docstring convention (cite the gap-inventory item instead of a CDK test name).
   `aws_sns_topic_policy` (events.amazonaws.com, SourceArn = rule),
   `aws_cloudwatch_event_rule.ecs_task_failed` (probe-verified pattern,
   cluster-scoped), `aws_cloudwatch_event_target` (topic, with
-  `input_transformer` — cluster/task/stopCode/stoppedReason/exitCodes only).
+  `input_transformer` — cluster/task/stopCode/stoppedReason only).
 - `.trivyignore` (new, repo root): AVD-AWS-0095 with the
   EventBridge-vs-aws/sns-key rationale and the P2 CMK pointer.
 - `iam.tf`: three new inline policies on `ingestion_task_role`
