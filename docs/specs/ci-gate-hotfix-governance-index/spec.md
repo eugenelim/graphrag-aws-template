@@ -1,6 +1,6 @@
 # Spec: CI gate hotfix + governance-index bootstrap
 
-- **Status:** Implementing <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Shipped <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Constrained by:** ADR-0002, ADR-0010 (referenced by the index), PR #101 follow-on
 
@@ -39,4 +39,4 @@ is mechanical:
   repo-root `.trivyignore` remains; plan.md/backlog references corrected.
 - [x] AC3: `docs/governance-index.yaml` exists with the seven domain rows,
   each `adrs:` list resolving to real ADR files; gaps are explicit.
-- [ ] AC4: CI green on the PR (both `gates` and `tf-gates`).
+- [x] AC4: CI green on the PR (both `gates` and `tf-gates`).
