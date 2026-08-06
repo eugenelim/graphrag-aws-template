@@ -307,12 +307,20 @@ open = [
   # dynamodb client + offline moto/in-memory substitute for tests).
   {slug = "ingestion-status-registry-app-wiring", summary = "Wire the Fargate entrypoint to write run/doc status items to the graphrag-ingestion-status table", source = "docs/specs/infra-tf-p0-gap-remediation/ AC8"},
 
+  # Alert-chain health observability (quality review 2026-08-05 #1): the
+  # EventBridge→SNS failure-alerting path has no failure-observability of its
+  # own — no CloudWatch alarm on the rule's FailedInvocations, no signal that
+  # the email subscription left PendingConfirmation. A silent break (topic-
+  # policy regression, unconfirmed subscription) reintroduces the invisible-
+  # failure gap the P0 slice closed. Fix: aws_cloudwatch_metric_alarm on
+  # FailedInvocations >= 1 (alerting.tf) + a probe.sh subscription-status line.
+  {slug = "alert-chain-health-alarm", summary = "Watch the watcher: FailedInvocations alarm + subscription-confirmation signal for the ingestion failure-alert chain", source = "docs/specs/infra-tf-p0-gap-remediation/ quality review"},
+
   # Pre-existing trivy HIGH findings (pre-flight/2026-08-05, infra-tf-p0 gates):
-  # AWS-0031 (ECR tag mutability, compute.tf), AWS-0128 (Neptune CMK), AWS-0132
-  # (S3 CMK — corpus + git_mirror). All predate the P0 slice (its diff adds no
-  # new findings; its AVD-AWS-0095 SNS suppression is reasoned in .trivyignore).
-  # Fix shape: IMMUTABLE ECR tags (one-liner, check CI image-push compat) and
-  # either CMKs (gap-inventory P2 #15) or reasoned .trivyignore entries per ID.
-  {slug = "pre-existing-trivy-high-findings", summary = "Triage pre-existing trivy HIGHs: ECR tag mutability + Neptune/S3 CMK posture (suppress with rationale or fix)", source = "pre-flight/2026-08-05"},
+  # AWS-0128 (Neptune CMK), AWS-0132 (S3 CMK — corpus + git_mirror). Both
+  # predate the P0 slice (its diff adds no new findings; AVD-AWS-0095 SNS and
+  # AVD-AWS-0031 ECR mutable-tags are reasoned suppressions in .trivyignore).
+  # Fix shape: CMKs (gap-inventory P2 #15) or reasoned .trivyignore entries.
+  {slug = "pre-existing-trivy-high-findings", summary = "Triage pre-existing trivy HIGHs: Neptune/S3 CMK posture (suppress with rationale or fix)", source = "pre-flight/2026-08-05"},
 
 ]
