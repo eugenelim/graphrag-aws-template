@@ -601,6 +601,12 @@ def test_ingestion_task_can_write_manifest_scoped_to_manifest_key(tfplan):
             continue
         resources = json.dumps(stmt.get("Resource", ""))
         assert resources.strip('"') != "*", "s3:PutObject must not be wildcard"
+        # Key-scoping applies to the CORPUS bucket only. The CodePipeline
+        # artifact-store grant (git-mirror bucket, ADR-0016) is legitimately
+        # bucket-wide — invisible in fresh plans (computed ARN) and first
+        # exposed when the applied-state fixture was regenerated 2026-08-05.
+        if "git-mirror" in resources:
+            continue
         assert any(k in resources for k in _allowed_keys), (
             f"s3:PutObject must be scoped to one of {_allowed_keys}, got {resources}"
         )
