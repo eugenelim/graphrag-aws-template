@@ -68,9 +68,17 @@ def test_vpc_has_no_nat_gateway(tfplan):
     assert len(_pv_by_type(tfplan, "aws_nat_gateway")) == 0
 
 
-def test_has_6_vpc_endpoints(tfplan):
-    """CDK: test_has_the_required_vpc_endpoints"""
-    assert len(_pv_by_type(tfplan, "aws_vpc_endpoint")) == 6
+def test_has_8_vpc_endpoints(tfplan):
+    """CDK: test_has_the_required_vpc_endpoints (+2: textract interface + dynamodb
+    gateway, infra-tf-p0-gap-remediation AC1/AC4)."""
+    endpoints = _pv_by_type(tfplan, "aws_vpc_endpoint")
+    assert len(endpoints) == 8
+    textract = [e for e in endpoints if ".textract" in _vals(e).get("service_name", "")]
+    assert len(textract) == 1, "expected exactly one textract VPC endpoint"
+    assert _vals(textract[0]).get("vpc_endpoint_type") == "Interface"
+    ddb = [e for e in endpoints if ".dynamodb" in _vals(e).get("service_name", "")]
+    assert len(ddb) == 1, "expected exactly one dynamodb VPC endpoint"
+    assert _vals(ddb[0]).get("vpc_endpoint_type") == "Gateway"
 
 
 def test_bedrock_runtime_endpoint_present(tfplan):
@@ -267,6 +275,9 @@ _TF_COMPUTE_SG_EGRESS: dict[str, set[tuple[str, int]]] = {
         ("endpoint_CloudWatchLogs", 443),
         ("endpoint_Sts", 443),
         ("s3_prefix_list", 443),
+        # infra-tf-p0-gap-remediation AC1/AC4: Textract OCR + status-registry paths.
+        ("endpoint_Textract", 443),
+        ("dynamodb_prefix_list", 443),
     },
     "smoke_probe_sg": {
         ("neptune_sg", 8182),
@@ -307,6 +318,8 @@ _EGRESS_TARGET_FROM_SUFFIX = {
     "to_logs": "endpoint_CloudWatchLogs",
     "to_sts": "endpoint_Sts",
     "to_s3": "s3_prefix_list",
+    "to_textract": "endpoint_Textract",
+    "to_dynamodb": "dynamodb_prefix_list",
 }
 
 # SG resource name → owning compute SG group (from egress rule name prefix).
@@ -352,7 +365,9 @@ def test_compute_sgs_egress_equals_exact_call_set(tfplan):
 
 def test_no_iam_statement_grants_app_actions_on_wildcard_resource(tfplan):
     """CDK: test_no_iam_statement_grants_app_actions_on_wildcard_resource"""
-    _WILDCARD_RESOURCE_ALLOWLIST = {"ecr:GetAuthorizationToken"}
+    # textract:DetectDocumentText supports no resource-level permissions — the
+    # documented exception to the no-wildcard rule (infra-tf-p0-gap-remediation AC1).
+    _WILDCARD_RESOURCE_ALLOWLIST = {"ecr:GetAuthorizationToken", "textract:DetectDocumentText"}
     found_scoped = False
     for stmt in _all_iam_statements(tfplan):
         actions = _as_list(stmt.get("Action", []))
@@ -578,7 +593,7 @@ def test_bedrock_synthesis_grant_scopes_profile_and_foundation_arns(tfplan):
 
 def test_ingestion_task_can_write_manifest_scoped_to_manifest_key(tfplan):
     """CDK: test_ingestion_task_can_write_manifest_scoped_to_manifest_key"""
-    _allowed_keys = ("manifest.json", "schema_extraction_trace.txt", "silver/")
+    _allowed_keys = ("manifest.json", "schema_extraction_trace.txt", "silver/", "gold/")
     found_manifest = False
     for stmt in _all_iam_statements(tfplan):
         actions = set(_as_list(stmt.get("Action", [])))
@@ -1162,3 +1177,168 @@ def test_git_mirror_bucket_is_private_encrypted_versioned(tfplan):
     assert "CODEPIPELINE_EXECUTION_ID" in (tmpl or ""), (
         "input_transformer must inject CODEPIPELINE_EXECUTION_ID into the container"
     )
+
+
+# ── P0 gap remediation tests (infra-tf-p0-gap-remediation) ────────────────────
+# Fresh-plan caveat (K-0030): jsonencode() over any known-after-apply input
+# renders the whole policy string null in planned_values, so content assertions
+# guard on readability and fall back to address existence; the applied-state
+# fixture (AC7) exercises the full content path.
+
+
+def test_ingestion_textract_policy_single_action_wildcard(tfplan):
+    """AC1: exactly textract:DetectDocumentText on Resource "*", sharing its
+    statement with no other action (the documented no-resource-scoping exception)."""
+    policy = _pv_by_address(tfplan, "aws_iam_role_policy.ingestion_textract")
+    assert policy is not None, "aws_iam_role_policy.ingestion_textract must exist"
+    policy_str = _vals(policy).get("policy")
+    assert policy_str, "textract policy is fully static and must be readable in a fresh plan"
+    stmts = json.loads(policy_str)["Statement"]
+    assert len(stmts) == 1
+    assert _as_list(stmts[0]["Action"]) == ["textract:DetectDocumentText"]
+    assert _as_list(stmts[0]["Resource"]) == ["*"]
+
+
+def test_ingestion_gold_put_policy(tfplan):
+    """AC2: a dedicated key-scoped s3:PutObject grant on gold/* (never bucket-wide)."""
+    policy = _pv_by_address(tfplan, "aws_iam_role_policy.ingestion_s3_put_gold")
+    assert policy is not None, "aws_iam_role_policy.ingestion_s3_put_gold must exist"
+    policy_str = _vals(policy).get("policy")
+    if policy_str:  # applied-state fixture path (bucket ARN resolved)
+        stmts = json.loads(policy_str)["Statement"]
+        assert len(stmts) == 1
+        assert _as_list(stmts[0]["Action"]) == ["s3:PutObject"]
+        resources = _as_list(stmts[0]["Resource"])
+        assert len(resources) == 1 and resources[0].endswith("/gold/*"), (
+            f"gold grant must be key-scoped to /gold/*, got {resources}"
+        )
+
+
+def test_ingestion_status_table(tfplan):
+    """AC4: on-demand single-pk table, teardown-first (no deletion protection)."""
+    tables = _pv_by_type(tfplan, "aws_dynamodb_table")
+    assert len(tables) == 1, "expected exactly one DynamoDB table"
+    v = _vals(tables[0])
+    assert v.get("name") == "graphrag-ingestion-status"
+    assert v.get("billing_mode") == "PAY_PER_REQUEST"
+    assert v.get("hash_key") == "pk"
+    attrs = v.get("attribute") or []
+    assert {(a["name"], a["type"]) for a in attrs} == {("pk", "S")}
+    assert not v.get("deletion_protection_enabled"), (
+        "teardown-first: deletion protection must stay off (ADR-0002)"
+    )
+
+
+def test_ingestion_dynamodb_policy(tfplan):
+    """AC4: ingestion role gets exactly Put/Update/Get/Query on the table ARN."""
+    policy = _pv_by_address(tfplan, "aws_iam_role_policy.ingestion_dynamodb_status")
+    assert policy is not None, "aws_iam_role_policy.ingestion_dynamodb_status must exist"
+    policy_str = _vals(policy).get("policy")
+    if policy_str:  # applied-state fixture path (table ARN resolved)
+        stmts = json.loads(policy_str)["Statement"]
+        assert len(stmts) == 1
+        assert set(_as_list(stmts[0]["Action"])) == {
+            "dynamodb:PutItem",
+            "dynamodb:UpdateItem",
+            "dynamodb:GetItem",
+            "dynamodb:Query",
+        }
+        resources = _as_list(stmts[0]["Resource"])
+        assert all("table/graphrag-ingestion-status" in r for r in resources)
+        assert resources != ["*"]
+
+
+def test_dynamodb_gateway_endpoint_policy_scoped(tfplan):
+    """AC4: the gateway endpoint policy is scoped to the status-table ARN
+    (defense-in-depth beyond the default-open S3 gateway parity)."""
+    endpoints = _pv_by_type(tfplan, "aws_vpc_endpoint")
+    ddb = [e for e in endpoints if ".dynamodb" in _vals(e).get("service_name", "")]
+    assert len(ddb) == 1
+    policy_str = _vals(ddb[0]).get("policy")
+    if policy_str:  # applied-state fixture path (table ARN resolved)
+        stmts = json.loads(policy_str)["Statement"]
+        for stmt in stmts:
+            resources = _as_list(stmt.get("Resource", []))
+            assert resources and resources != ["*"], "endpoint policy must be table-scoped"
+            assert all("table/graphrag-ingestion-status" in r for r in resources)
+
+
+def test_ingestion_alerts_topic_and_subscription(tfplan):
+    """AC3: alert topic + email subscription; deliberately unencrypted (SSE via the
+    unmodifiable aws/sns key would break EventBridge publish; CMK is P2 —
+    .trivyignore AVD-AWS-0095 carries the rationale)."""
+    topics = _pv_by_type(tfplan, "aws_sns_topic")
+    assert len(topics) == 1, "expected exactly one SNS topic"
+    v = _vals(topics[0])
+    assert v.get("name") == "graphrag-ingestion-alerts"
+    assert not v.get("kms_master_key_id"), (
+        "topic must stay unencrypted: aws/sns key policy is unmodifiable and denies "
+        "events.amazonaws.com — SSE here silently breaks the alert chain"
+    )
+    subs = _pv_by_type(tfplan, "aws_sns_topic_subscription")
+    assert len(subs) == 1, "expected exactly one topic subscription"
+    assert _vals(subs[0]).get("protocol") == "email"
+
+
+def test_sns_topic_policy_scoped_to_events(tfplan):
+    """AC3: only events.amazonaws.com may publish, confined by aws:SourceArn."""
+    policies = _pv_by_type(tfplan, "aws_sns_topic_policy")
+    assert len(policies) == 1, "expected exactly one SNS topic policy"
+    policy_str = _vals(policies[0]).get("policy")
+    if policy_str:  # applied-state fixture path (rule/topic ARNs resolved)
+        stmts = json.loads(policy_str)["Statement"]
+        assert len(stmts) == 1
+        assert stmts[0]["Principal"] == {"Service": "events.amazonaws.com"}
+        assert _as_list(stmts[0]["Action"]) == ["sns:Publish"]
+        source_arn = stmts[0].get("Condition", {}).get("ArnEquals", {}).get("aws:SourceArn")
+        assert source_arn, "topic policy must confine the publisher via aws:SourceArn"
+
+
+def test_ecs_failure_rule_pattern(tfplan):
+    """AC3: cluster-scoped STOPPED rule; $or covers exitCode != 0 and
+    TaskFailedToStart (pattern semantics probe-verified 2026-08-05)."""
+    rules = _pv_by_type(tfplan, "aws_cloudwatch_event_rule")
+    failed = [r for r in rules if r["name"] == "ecs_task_failed"]
+    assert len(failed) == 1, "expected the ecs_task_failed EventBridge rule"
+    pattern_str = _vals(failed[0]).get("event_pattern")
+    assert pattern_str, (
+        "event_pattern is built from the constructed cluster ARN (account+region+fixed "
+        "name) and must be readable in a fresh plan"
+    )
+    pattern = json.loads(pattern_str)
+    assert pattern["source"] == ["aws.ecs"]
+    assert pattern["detail-type"] == ["ECS Task State Change"]
+    detail = pattern["detail"]
+    assert detail["lastStatus"] == ["STOPPED"]
+    assert "clusterArn" in detail, "rule must be cluster-scoped"
+    branches = detail["$or"]
+    assert {"containers": {"exitCode": [{"anything-but": 0}]}} in branches
+    assert {"stopCode": ["TaskFailedToStart"]} in branches
+
+
+def test_ecs_failure_rule_target_uses_input_transformer(tfplan):
+    """AC3: the SNS target emits a minimal shape — never the raw ECS event
+    (task-role ARN / image URIs / override env values stay out of plaintext email)."""
+    targets = _pv_by_type(tfplan, "aws_cloudwatch_event_target")
+    alert_targets = [t for t in targets if t["name"] == "ecs_task_failed_to_sns"]
+    assert len(alert_targets) == 1, "expected the ecs_task_failed_to_sns target"
+    transformer = _vals(alert_targets[0]).get("input_transformer") or []
+    assert transformer, "alert target must use an input_transformer (never the raw event)"
+    cfg = transformer[0]
+    paths = cfg.get("input_paths", {})
+    # No containers/exitCode path: TaskFailedToStart events carry no exitCode, and an
+    # unresolvable JSONPath must not be able to break the (a)-branch alert.
+    allowed = {"cluster", "task", "stopCode", "stoppedReason"}
+    assert set(paths) <= allowed, f"unexpected input_paths beyond {allowed}: {set(paths)}"
+    assert "overrides" not in json.dumps(paths), "override env values must not reach email"
+    tmpl = cfg.get("input_template", "")
+    assert "stopCode" in tmpl
+
+
+def test_task_def_has_status_table_env(tfplan):
+    """AC4: the ingestion task carries INGESTION_STATUS_TABLE."""
+    task_defs = _pv_by_type(tfplan, "aws_ecs_task_definition")
+    assert len(task_defs) == 1
+    container_defs = _vals(task_defs[0]).get("container_definitions")
+    if container_defs:  # applied-state fixture path (endpoint URLs resolved)
+        assert "INGESTION_STATUS_TABLE" in container_defs
