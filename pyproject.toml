@@ -33,7 +33,7 @@ infra = [
 ingest = [
     "networkx>=3.0",
     "rdflib>=6.3",
-    "pyshacl>=0.25,<0.27",
+    "pyshacl>=0.25,<0.41",
     # Format extraction — lighter deps (no PyTorch stack).
     # pypandoc wraps the pandoc binary (baked into the Fargate image).
     # markitdown handles .pptx and .xlsx.
