@@ -150,6 +150,26 @@ cd apps/infra && cdk synth --quiet     # IaC synth + cdk-nag hard gate
 > **detect-secrets false positives:** test fixtures with fake keys/SHAs are flagged.
 > Annotate the line with `# pragma: allowlist secret` to suppress.
 
+> **AWS credential provider rate limit (live deploys):** the per-command
+> credential provider (credential_process / SSO) rate-limits when every
+> aws/terraform call re-resolves credentials. Export static credentials ONCE
+> into a mode-600 session file **outside the repo** (e.g.
+> `/tmp/<project>-aws-session.env` — never inside the working tree, where it
+> could be committed): `aws configure export-credentials
+> --format env-no-export > <session-file>`, then `source` it for all later
+> calls; re-export only when the session expires. **Strip the
+> `AWS_CREDENTIAL_EXPIRATION` line from the sourced file** — with it present
+> the SDK treats env credentials as refreshable and calls the throttled
+> credential_process mid-run (this broke a 156-resource destroy at refresh
+> time); without it the static credentials are used as-is until expiry. If an export
+> itself times out, the provider is throttled — **cool down 10–15 minutes
+> before the first retry, and calibrate from there: double the wait on each
+> further timeout (10 → 20 → 40 min) rather than retrying on a fixed clock.**
+> One successful export resets the ladder. Never tight-loop the export — every
+> failed attempt extends the provider's throttle window, so impatience is
+> self-defeating. Plan long apply/destroy runs so a single session file covers
+> them end-to-end (export immediately before starting).
+
 ## Code style
 
 We don't list style rules here — the linter does that job better than prose can.

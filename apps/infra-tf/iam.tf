@@ -169,6 +169,50 @@ locals {
     }]
   })
 
+  # Gold artifacts (ADR-0016 medallion; infra-tf-p0-gap-remediation AC2). A new
+  # S3 artifact the ingest task writes needs its OWN key-scoped grant — the
+  # silver/manifest grants do not cover it, and the miss is a runtime
+  # AccessDenied mid-pipeline.
+  s3_put_gold_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = "s3:PutObject"
+      Resource = "${aws_s3_bucket.corpus.arn}/gold/*"
+    }]
+  })
+
+  # Textract OCR (infra-tf-p0-gap-remediation AC1). Textract supports NO
+  # resource-level permissions, so Resource "*" on this single action is the
+  # narrowest possible grant — the documented exception to the no-wildcard rule
+  # (mirrored by the plan-assertion wildcard allowlist).
+  textract_detect_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = "textract:DetectDocumentText"
+      Resource = "*"
+    }]
+  })
+
+  # Ingestion status registry (infra-tf-p0-gap-remediation AC4): write run/doc
+  # items, read them back for delta decisions and operator lookups. Scoped to
+  # the table ARN; the query/MCP roles carry NO DynamoDB policy (allow-union
+  # absence — the registry is operational state, not retrieval content).
+  dynamodb_status_rw_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:GetItem",
+        "dynamodb:Query",
+      ]
+      Resource = aws_dynamodb_table.ingestion_status.arn
+    }]
+  })
+
   # Read-only access to the CodePipeline git mirror bucket (ADR-0016).
   # GetObject on objects + ListBucket on the bucket — mirrors s3_read_policy above
   # but scoped to the mirror bucket. Kept separate from corpus read so policy names
@@ -286,6 +330,24 @@ resource "aws_iam_role_policy" "ingestion_s3_put_silver" {
   name   = "s3-put-silver"
   role   = aws_iam_role.ingestion_task_role.id
   policy = local.s3_put_silver_policy
+}
+
+resource "aws_iam_role_policy" "ingestion_s3_put_gold" {
+  name   = "s3-put-gold"
+  role   = aws_iam_role.ingestion_task_role.id
+  policy = local.s3_put_gold_policy
+}
+
+resource "aws_iam_role_policy" "ingestion_textract" {
+  name   = "textract-detect"
+  role   = aws_iam_role.ingestion_task_role.id
+  policy = local.textract_detect_policy
+}
+
+resource "aws_iam_role_policy" "ingestion_dynamodb_status" {
+  name   = "dynamodb-status-rw"
+  role   = aws_iam_role.ingestion_task_role.id
+  policy = local.dynamodb_status_rw_policy
 }
 
 resource "aws_iam_role_policy" "ingestion_s3_git_mirror_read" {

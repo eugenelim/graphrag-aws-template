@@ -1,7 +1,7 @@
 # Business Operations Knowledge Graph — Architecture
 
 **Status:** Draft  
-**Last updated:** 2026-07-23  
+**Last updated:** 2026-08-05  
 **Initiative:** ini-002 · M2  
 **Supersedes:** [`graphrag-aws-architecture/design.md`](../graphrag-aws-architecture/design.md) (Kubernetes demo corpus design)
 
@@ -493,11 +493,13 @@ sequenceDiagram
     participant G as Git Repo (Bronze)
     participant F as Fargate Ingestion Task
     participant S as S3 (Silver + Gold + manifest)
+    participant DDB as DynamoDB (ingestion status)
     participant TX as Textract (scanned PDFs)
     participant NP as Neptune SPARQL
     participant OS as OpenSearch
     participant BD as Bedrock
 
+    F->>DDB: run item → RUNNING
     F->>G: git pull / clone
     F->>S: load last_commit_sha
     F->>G: git diff last_sha..HEAD --name-status
@@ -512,6 +514,7 @@ sequenceDiagram
         F->>F: cleanse (strip headers, detect PII, quality gates)
         alt quality gate failed
             F->>NP: write quarantine record with reason
+            F->>DDB: doc item → QUARANTINED (reason)
         else gate passed
             F->>S: write Silver artifact (Markdown + cleansing report)
             Note over F,S: Gold layer
@@ -519,11 +522,13 @@ sequenceDiagram
             F->>F: SHACL validate RDF triples against shape library (pyshacl)
             alt SHACL violation
                 F->>NP: write quarantine record with SHACL violation report
+                F->>DDB: doc item → QUARANTINED (SHACL report)
             else SHACL valid
                 F->>BD: LLM API call for chunk embeddings
                 F->>S: write Gold artifact (chunks + vectors)
                 F->>NP: INSERT triples into partition graph + taxonomy index
                 F->>OS: upsert chunks with doc_uri, partition, pii_flagged
+                F->>DDB: doc item → INGESTED (commit sha)
             end
         end
     end
@@ -533,10 +538,51 @@ sequenceDiagram
         NP-->>F: partition graph URI
         F->>NP: DELETE doc triples and chunk triples from partition graph
         F->>OS: delete by doc_uri
+        F->>DDB: doc item → DELETED
     end
 
     F->>S: store new commit_sha
+    F->>DDB: run item → SUCCEEDED (counts)
 ```
+
+### Ingestion status registry and failure alerting
+
+The S3 manifest stores only the last-ingested commit SHA — it is the delta base,
+not an operational record. Two additions close the "silent ingestion failure" gap
+(context-ontology gap inventory P0, 2026-08-05):
+
+**Status registry — one DynamoDB table (`graphrag-ingestion-status`, on-demand):**
+
+| Item kind | PK | Attributes |
+|---|---|---|
+| Run | `run#<pipeline_execution_id>` | `status` (RUNNING → SUCCEEDED \| FAILED) · `started_at` · `finished_at` · `docs_ingested` · `docs_quarantined` · `docs_deleted` · `error` |
+| Document | `doc#<doc_uri>` | `status` (INGESTED \| QUARANTINED \| DELETED \| FAILED) · `commit_sha` · `run_id` · `updated_at` · `quarantine_reason` |
+
+Write semantics: the Fargate task writes the run item as `RUNNING` at entry,
+a terminal per-document status as each document completes its pipeline pass, and
+the run item's terminal status at exit. A task that crashes mid-run leaves the run
+item at `RUNNING` — combined with the ECS stopped-task alert below, this
+distinguishes a crash from a clean failure and identifies exactly which documents
+were already committed to the stores before the crash.
+
+The registry complements, not replaces, the existing records: the S3 manifest
+remains the git-delta base; the `urn:graph:quarantine` named graph remains the
+data-plane quarantine record (with full SHACL violation reports). The registry is
+the operator-facing index: "what is the state of document X / run Y" without
+reading raw S3 or ECS logs, and the targeting mechanism for selective re-ingest.
+
+**Failure alerting:** an EventBridge rule on `ECS Task State Change`
+(cluster-scoped, `lastStatus = STOPPED`, any container `exitCode ≠ 0` **or**
+`stopCode = TaskFailedToStart` — a task that never started carries no exit code) publishes to
+an SNS topic with an email subscription (same operator address as the Budgets
+alarm). A mid-pipeline failure — OOM, Neptune timeout, sustained Bedrock throttle —
+reaches the operator without console monitoring.
+
+Access: the table is reached via a DynamoDB **gateway** VPC endpoint
+(route-table-associated, no hourly cost — same class as the S3 endpoint, preserving
+the no-NAT posture). Only `ingestion_task_role` gets read/write on the table ARN;
+the query and MCP roles get no access — the registry is operational state, not
+retrieval content.
 
 ### OTEL observability
 
@@ -806,6 +852,8 @@ flowchart TB
         FU["IAM-auth Function URL<br/>AuthType=AWS_IAM · SigV4<br/>automation + AgentCore ingress"]
         BUD["Budgets alarm<br/>$250/mo · 80% · email"]
         EB["EventBridge Rule<br/>git push webhook / scheduled"]
+        EBF["EventBridge Rule<br/>ECS task STOPPED<br/>exitCode ≠ 0 · TaskFailedToStart"]
+        SNS["SNS topic<br/>ingestion alerts → email"]
 
         subgraph VPC["VPC — private isolated subnets · 2 AZs · NO NAT / NO IGW"]
             direction TB
@@ -821,10 +869,11 @@ flowchart TB
                 NEP[("Neptune Serverless<br/>SPARQL/RDF · min 1 NCU<br/>normative · descriptive<br/>taxonomy · ontology · quarantine")]
                 OS[("OpenSearch<br/>t3.small.search · Lucene HNSW<br/>named_graph filter · encrypted")]
                 S3[("S3<br/>commit SHA manifest<br/>Silver artifacts · Gold artifacts")]
+                DDB[("DynamoDB<br/>ingestion-status registry<br/>on-demand · run + doc items")]
             end
 
             subgraph Endpoints["VPC Endpoints (no NAT)"]
-                EPS["s3(gw) · ecr.api · ecr.dkr<br/>logs · sts · bedrock-runtime<br/>otlp · xray · textract · comprehend"]
+                EPS["s3(gw) · dynamodb(gw) · ecr.api · ecr.dkr<br/>logs · sts · bedrock-runtime<br/>otlp · xray · textract · comprehend"]
             end
         end
 
@@ -852,6 +901,8 @@ flowchart TB
     ING --> NEP
     ING --> OS
     ING --> LLM
+    ING --> DDB
+    EBF -->|"non-zero exit"| SNS
 
     ML --> NEP
     ML --> OS
@@ -875,21 +926,28 @@ flowchart TB
 | **Lambda: vector probe** | Python 3.12 · 120 s | In-VPC embed→knn round-trip smoke probe |
 | **Fargate ingestion task** | 2048 CPU / 8192 MiB · on-demand | Format router · extract (pandoc/docling/markitdown/Textract) · cleanse · RDF emit · embed · SPARQL LOAD. 8 GB required to load docling model weights (~2.4 GB PyTorch stack) at runtime. |
 | **EventBridge rule** | Git webhook or scheduled pull | Triggers Fargate ingestion on corpus change |
+| **DynamoDB table** | `graphrag-ingestion-status` · on-demand · single PK | Ingestion status registry — run items + per-document items; operator lookup and targeted re-ingest |
+| **EventBridge rule (failure)** | ECS Task State Change · STOPPED · exitCode ≠ 0 or TaskFailedToStart · cluster-scoped | Publishes ingestion task failures to SNS — no silent mid-pipeline failures |
+| **SNS topic** | `graphrag-ingestion-alerts` · email subscription | Operator notification channel for failed ingestion runs |
 | **API Gateway HTTP API** | Usage plan · API key auth | Human / IDE ingress — MCP over HTTPS; API key per developer, no SigV4 on the client |
 | **IAM-auth Function URL** | AuthType=AWS_IAM · SigV4 | Automation + AgentCore ingress — MCP over HTTPS; SigV4 signed by AWS SDK |
 | **S3 bucket** | Block-public · encrypted · TLS-only | Commit SHA manifest · Silver artifacts (extracted Markdown + cleansing reports) · Gold artifacts (chunks + embedding vectors) |
 | **ADOT Lambda layer** | AWS Distro for OpenTelemetry | OTLP span export to CloudWatch — attached to MCP Lambda |
-| **VPC endpoints** | s3(gw) · ecr.api · ecr.dkr · logs · sts · bedrock-runtime · otlp · textract · comprehend | All egress stays inside VPC — no NAT, no IGW. `textract` and `comprehend` required for scanned PDF OCR and optional PII detection. |
+| **VPC endpoints** | s3(gw) · dynamodb(gw) · ecr.api · ecr.dkr · logs · sts · bedrock-runtime · otlp · textract · comprehend | All egress stays inside VPC — no NAT, no IGW. `textract` required for scanned PDF OCR; `dynamodb` (gateway, no hourly cost) for the status registry; `comprehend` deferred until Comprehend-backed PII detection is enabled (regex detection needs no endpoint). |
 | **Budgets alarm** | Limit set above the standing floor · email | ⚠️ The computed standing-cost floor — Neptune min NCU (~$110/mo) + OpenSearch t3.small (~$26/mo) + interface VPC endpoints (~$90/mo) ≈ $226/mo before any traffic — **exceeds 80% of a $250 alarm ($200)**, so a $250/80% alarm fires at idle on day one. The infra follow-on sets the Budgets limit above the standing floor so the alert fires on traffic, not at idle (tracked: RFC-0004 follow-up). |
 
 ### IAM roles (least privilege — no wildcard Resource)
 
-| Role | Neptune SPARQL | OpenSearch | Bedrock | S3 |
-|---|---|---|---|---|
-| `ingestion_task_role` | ReadDataViaQuery + WriteDataViaQuery + connect | `es:ESHttp*` | embed + synthesise (Invoke + Converse) | read + scoped PutObject: `manifest/*`, `silver/*`, `gold/*` |
-| `mcp_lambda_role` | **ReadDataViaQuery + connect ONLY** | `es:ESHttp*` | embed + synthesise (Invoke + Converse) | — |
-| `sparql_probe_role` | ReadDataViaQuery + WriteDataViaQuery + connect | — | — | — |
-| `vector_probe_role` | — | `es:ESHttp*` | embed (Invoke only) | — |
+| Role | Neptune SPARQL | OpenSearch | Bedrock | S3 | Other |
+|---|---|---|---|---|---|
+| `ingestion_task_role` | ReadDataViaQuery + WriteDataViaQuery + connect | `es:ESHttp*` | embed + synthesise (Invoke + Converse) | read + scoped PutObject: `manifest/*`, `silver/*`, `gold/*` | `textract:DetectDocumentText` (†) · DynamoDB RW on status table ARN |
+| `mcp_lambda_role` | **ReadDataViaQuery + connect ONLY** | `es:ESHttp*` | embed + synthesise (Invoke + Converse) | — | — |
+| `sparql_probe_role` | ReadDataViaQuery + WriteDataViaQuery + connect | — | — | — | — |
+| `vector_probe_role` | — | `es:ESHttp*` | embed (Invoke only) | — | — |
+
+(†) Textract supports no resource-level permissions — `Resource: "*"` is the
+narrowest possible grant for this single action; it is the documented exception to
+the no-wildcard-Resource rule.
 
 The `mcp_lambda_role` cannot write or delete graph data — this is the primary
 blast-radius containment for LLM-generated SPARQL (Text2SPARQL guard, successor to
@@ -952,6 +1010,8 @@ and vice versa. The filter composes with any visibility filter.
 | PII flag and surface (not redact) | spec-ingestion-extraction-cleanse | `biz:hasPII true`; document stays in natural partition; default query filter excludes PII-flagged docs; adopters add authz |
 | PROV-O provenance on chunks and documents | spec-provenance-citations | W3C PROV-O triples; git commit SHA; extractor used; Silver/Gold artifact URIs; resolved into MCP citations |
 | SHACL validation gate on RDF triple emission | spec-shacl-validation | pyshacl validates emitted triples before Neptune LOAD; shapes colocated with OWL ontology; violation → quarantine with structured report; CI-safe (rdflib, no AWS); `inference="none"` consistent with ADR-0012 |
+| Ingestion status registry + failure alerting; Textract endpoint/IAM; `gold/*` write grant | Context-ontology gap inventory P0 (2026-08-05) | DynamoDB registry (run + doc items) for operator status lookup and targeted re-ingest; EventBridge → SNS on non-zero ECS task exit; Textract interface endpoint + IAM closes the scanned-PDF OCR gap; `gold/*` PutObject closes the Gold artifact write gap |
+| OpenSearch managed domain retained over AOSS VECTORSEARCH | ADR-0018 | Managed domain stays for the template's cost/teaching posture; AOSS VECTORSEARCH documented as the enterprise adoption shape — see ADR-0018 for the decision record and per-shape recommendation |
 
 ---
 
@@ -963,8 +1023,9 @@ and vice versa. The filter composes with any visibility filter.
 | **Neptune cold-scale latency** | First query after idle period is slow (NCU scale-up from min floor) | Expected behaviour at min 1 NCU; document expected cold latency; smoke probe warms the cluster before production traffic |
 | **OpenSearch node loss** | Vector retrieval unavailable; SPARQL-only path continues | Single-node — no failover. Rebuild: reset commit SHA manifest to trigger full re-ingest from Gold S3 artifacts. RTO depends on corpus size. Acknowledged posture: cost/teaching over HA. |
 | **Neptune data loss** | Graph retrieval and normative path unavailable | Rebuild from Gold S3 artifacts (replay `INSERT DATA` from stored Turtle). Commit SHA manifest reset triggers re-ingest. |
-| **Ingestion task OOM** | Any PDF processed by docling in an under-sized task | Task is sized at 8 GB; do not reduce below 4 GB. If corpus has no PDFs, docling can be excluded and task can downsize. |
-| **Git remote unreachable** | Fargate task fails to clone/pull; no new corpus content ingested | Retry via EventBridge; investigate NAT/CodePipeline source path. The stored commit SHA is unchanged — no partial state. |
+| **Ingestion task OOM** | Any PDF processed by docling in an under-sized task | Task is sized at 8 GB; do not reduce below 4 GB. If corpus has no PDFs, docling can be excluded and task can downsize. The ECS stopped-task rule fires an SNS alert; the run item stuck at `RUNNING` marks the crash point. |
+| **Git remote unreachable** | Fargate task fails to clone/pull; no new corpus content ingested | SNS alert fires on the non-zero exit; retry via EventBridge; investigate CodePipeline source path. The stored commit SHA is unchanged — no partial state. |
+| **Ingestion fails mid-run after partial store writes** | Some documents committed to Neptune/OpenSearch, run incomplete | Status registry: run item stays `RUNNING`, per-document items show exactly which documents committed. Re-trigger ingestion — the commit-SHA delta plus per-document `commit_sha` fields make the re-run idempotent (upserts). |
 | **Gold S3 artifact missing** | Rebuild from Gold is impossible for affected documents | Re-ingest from git history using the commit SHA stored in the manifest as the base ref. Silver artifacts (if retained) can skip re-extraction. |
 
 **Documented risk acceptances (non-goals):**

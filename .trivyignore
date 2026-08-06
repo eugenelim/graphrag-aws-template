@@ -1,0 +1,20 @@
+# .trivyignore — reasoned suppressions for the `trivy config` IaC gate.
+# One vuln/misconfig id per non-comment line; keep a rationale + revisit trigger
+# with every entry (mirrors the .pip-audit-ignore convention).
+
+# AVD-AWS-0095: SNS topic (graphrag-ingestion-alerts, apps/infra-tf/alerting.tf)
+# is deliberately unencrypted. SSE via the AWS-managed aws/sns key silently
+# breaks EventBridge→SNS publishing (the key policy is unmodifiable and grants
+# events.amazonaws.com no kms:GenerateDataKey/Decrypt); a CMK is the gap
+# inventory's P2 #15 and this stack carries no CMKs. Message body is alert
+# metadata only (cluster/task ARN, stop code, stopped reason) — corpus content
+# never transits the topic. Revisit when P2 KMS/CMK work lands.
+AVD-AWS-0095
+
+# AVD-AWS-0031: ECR repository (graphrag-ingestion, apps/infra-tf/compute.tf)
+# deliberately keeps mutable tags — the deploy contract is a CI re-push to
+# :latest and the task definition pins :latest; IMMUTABLE would break the
+# re-push workflow. The repo already scans on push. compute.tf documents the
+# decision beside the resource. Revisit if the deploy moves to digest-pinned
+# images (which would also close the tag-race class).
+AVD-AWS-0031
