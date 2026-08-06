@@ -36,6 +36,12 @@ ingestion, OTEL observability.
 Integration, observability, and API Gateway ingress. All gate on `mcp-tool-server`
 (shipped).
 
+- **P0 gap remediation (shipped 2026-08-05)** — Textract OCR path, `gold/*`
+  write grant, EventBridge→SNS ingestion failure alerting, DynamoDB
+  ingestion-status registry; live-cycle verified (both alert branches),
+  vs the AWS context-ontology reference (ADR-0018 records the vector-store
+  divergence). App-side registry wiring is backlogged.
+
 - **Multi-strategy router** — server-side rules-first cascade over six strategies
   (`hybrid_graph`, `structured`, `graph_expand`, `vector_only`, `global`,
   `normative_exhaustive`); transparent strategy trace in every response
