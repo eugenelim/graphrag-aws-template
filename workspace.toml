@@ -295,4 +295,40 @@ open = [
   # Blocked until infra-tf/api-gateway-mcp lands.
   {slug = "ac3-api-gw-round-trip", summary = "AC3: API Gateway round-trip parity — same 6 queries against the in-process mock and the Mangum-wrapped Lambda", source = "docs/specs/spec-mcp-tool-server/"},
 
+  # ── infra-tf-p0-gap-remediation deferred ──────────────────────────────────
+
+  # AC8 deferred: app-side wiring of the ingestion status registry. The table,
+  # gateway endpoint, IAM RW grant, and INGESTION_STATUS_TABLE env var are
+  # provisioned (apps/infra-tf/dynamodb.tf); the entrypoint does not yet write
+  # run items (run#<pipeline_execution_id>: RUNNING → SUCCEEDED|FAILED, counts)
+  # or doc items (doc#<doc_uri>: INGESTED|QUARANTINED|DELETED|FAILED, commit_sha)
+  # per design.md § "Ingestion status registry and failure alerting". Unblocked:
+  # infra shipped 2026-08-05; pure packages/graphrag work (entrypoint.py + boto3
+  # dynamodb client + offline moto/in-memory substitute for tests).
+  {slug = "ingestion-status-registry-app-wiring", summary = "Wire the Fargate entrypoint to write run/doc status items to the graphrag-ingestion-status table", source = "docs/specs/infra-tf-p0-gap-remediation/ AC8"},
+
+  # Alert-chain health observability (quality review 2026-08-05 #1): the
+  # EventBridge→SNS failure-alerting path has no failure-observability of its
+  # own — no CloudWatch alarm on the rule's FailedInvocations, no signal that
+  # the email subscription left PendingConfirmation. A silent break (topic-
+  # policy regression, unconfirmed subscription) reintroduces the invisible-
+  # failure gap the P0 slice closed. Fix: aws_cloudwatch_metric_alarm on
+  # FailedInvocations >= 1 (alerting.tf) + a probe.sh subscription-status line.
+  {slug = "alert-chain-health-alarm", summary = "Watch the watcher: FailedInvocations alarm + subscription-confirmation signal for the ingestion failure-alert chain", source = "docs/specs/infra-tf-p0-gap-remediation/ quality review"},
+
+  # Pre-existing lint-spec-status hard violations (pre-flight/2026-08-05): 7
+  # stale (deferred: <slug>) anchors in older shipped specs (spec-otel-
+  # observability, spec-shacl-validation, incremental-delta-reingest,
+  # infra-config-separation, infra-terraform-compute) whose slugs no longer
+  # resolve in [backlog].open — deferral entries were removed/renamed at ship
+  # time without updating the spec markers. Fix: re-anchor or mark shipped.
+  {slug = "pre-existing-spec-lint-deferral-anchors", summary = "Re-anchor 7 stale (deferred:) markers in older shipped specs so lint-spec-status runs clean", source = "pre-flight/2026-08-05"},
+
+  # Pre-existing trivy HIGH findings (pre-flight/2026-08-05, infra-tf-p0 gates):
+  # AWS-0128 (Neptune CMK), AWS-0132 (S3 CMK — corpus + git_mirror). Both
+  # predate the P0 slice (its diff adds no new findings; AVD-AWS-0095 SNS and
+  # AVD-AWS-0031 ECR mutable-tags are reasoned suppressions in .trivyignore).
+  # Fix shape: CMKs (gap-inventory P2 #15) or reasoned .trivyignore entries.
+  {slug = "pre-existing-trivy-high-findings", summary = "Triage pre-existing trivy HIGHs: Neptune/S3 CMK posture (suppress with rationale or fix)", source = "pre-flight/2026-08-05"},
+
 ]

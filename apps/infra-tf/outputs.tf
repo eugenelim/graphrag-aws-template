@@ -83,3 +83,13 @@ output "git_mirror_pipeline_name" {
   description = "Name of the CodePipeline pipeline that mirrors the GitHub repository to S3 on each push."
   value       = aws_codepipeline.git_mirror.name
 }
+
+output "ingestion_alerts_topic_arn" {
+  description = "SNS topic receiving ingestion task failure alerts (EventBridge ECS STOPPED rule; infra-tf-p0-gap-remediation AC3)."
+  value       = aws_sns_topic.ingestion_alerts.arn
+}
+
+output "ingestion_status_table_name" {
+  description = "DynamoDB ingestion status registry table (run + doc items; INGESTION_STATUS_TABLE env var on the Fargate task)."
+  value       = aws_dynamodb_table.ingestion_status.name
+}

@@ -90,6 +90,10 @@ resource "aws_ecs_task_definition" "ingestion" {
       # into the Docker image at build time. spec-ingestion-extraction-cleanse AC11.
       { name = "TRANSFORMERS_OFFLINE", value = "1" },
       { name = "HF_DATASETS_OFFLINE", value = "1" },
+      # Ingestion status registry (infra-tf-p0-gap-remediation AC4). Consumed by
+      # nothing yet — the entrypoint run/doc-item writes are the AC8 deferral
+      # (backlog: ingestion-status-registry-app-wiring).
+      { name = "INGESTION_STATUS_TABLE", value = aws_dynamodb_table.ingestion_status.name },
     ]
     logConfiguration = {
       logDriver = "awslogs"
