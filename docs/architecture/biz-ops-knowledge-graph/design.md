@@ -572,7 +572,8 @@ the operator-facing index: "what is the state of document X / run Y" without
 reading raw S3 or ECS logs, and the targeting mechanism for selective re-ingest.
 
 **Failure alerting:** an EventBridge rule on `ECS Task State Change`
-(cluster-scoped, `lastStatus = STOPPED`, any container `exitCode ≠ 0`) publishes to
+(cluster-scoped, `lastStatus = STOPPED`, any container `exitCode ≠ 0` **or**
+`stopCode = TaskFailedToStart` — a task that never started carries no exit code) publishes to
 an SNS topic with an email subscription (same operator address as the Budgets
 alarm). A mid-pipeline failure — OOM, Neptune timeout, sustained Bedrock throttle —
 reaches the operator without console monitoring.
@@ -851,7 +852,7 @@ flowchart TB
         FU["IAM-auth Function URL<br/>AuthType=AWS_IAM · SigV4<br/>automation + AgentCore ingress"]
         BUD["Budgets alarm<br/>$250/mo · 80% · email"]
         EB["EventBridge Rule<br/>git push webhook / scheduled"]
-        EBF["EventBridge Rule<br/>ECS task STOPPED · exitCode ≠ 0"]
+        EBF["EventBridge Rule<br/>ECS task STOPPED<br/>exitCode ≠ 0 · TaskFailedToStart"]
         SNS["SNS topic<br/>ingestion alerts → email"]
 
         subgraph VPC["VPC — private isolated subnets · 2 AZs · NO NAT / NO IGW"]
@@ -926,7 +927,7 @@ flowchart TB
 | **Fargate ingestion task** | 2048 CPU / 8192 MiB · on-demand | Format router · extract (pandoc/docling/markitdown/Textract) · cleanse · RDF emit · embed · SPARQL LOAD. 8 GB required to load docling model weights (~2.4 GB PyTorch stack) at runtime. |
 | **EventBridge rule** | Git webhook or scheduled pull | Triggers Fargate ingestion on corpus change |
 | **DynamoDB table** | `graphrag-ingestion-status` · on-demand · single PK | Ingestion status registry — run items + per-document items; operator lookup and targeted re-ingest |
-| **EventBridge rule (failure)** | ECS Task State Change · STOPPED · exitCode ≠ 0 · cluster-scoped | Publishes ingestion task failures to SNS — no silent mid-pipeline failures |
+| **EventBridge rule (failure)** | ECS Task State Change · STOPPED · exitCode ≠ 0 or TaskFailedToStart · cluster-scoped | Publishes ingestion task failures to SNS — no silent mid-pipeline failures |
 | **SNS topic** | `graphrag-ingestion-alerts` · email subscription | Operator notification channel for failed ingestion runs |
 | **API Gateway HTTP API** | Usage plan · API key auth | Human / IDE ingress — MCP over HTTPS; API key per developer, no SigV4 on the client |
 | **IAM-auth Function URL** | AuthType=AWS_IAM · SigV4 | Automation + AgentCore ingress — MCP over HTTPS; SigV4 signed by AWS SDK |

@@ -79,6 +79,12 @@ def test_has_8_vpc_endpoints(tfplan):
     ddb = [e for e in endpoints if ".dynamodb" in _vals(e).get("service_name", "")]
     assert len(ddb) == 1, "expected exactly one dynamodb VPC endpoint"
     assert _vals(ddb[0]).get("vpc_endpoint_type") == "Gateway"
+    # Both private route tables must carry the gateway route (AC4) — computed in
+    # fresh plans (route-table ids unknown), resolved in the applied-state fixture
+    # (whose freshness the canary test pins).
+    rt_ids = _vals(ddb[0]).get("route_table_ids")
+    if rt_ids is not None:
+        assert len(rt_ids) == 2, f"dynamodb gateway must associate both RTs, got {rt_ids}"
 
 
 def test_bedrock_runtime_endpoint_present(tfplan):
