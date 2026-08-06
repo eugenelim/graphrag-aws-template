@@ -11,6 +11,11 @@
 #
 # Reversibility: reversible — the registry holds derivable operational state
 # (re-ingest regenerates it); no deletion protection, teardown-first (ADR-0002).
+#
+# Teardown residual: the FIXED name means a table left behind by a stalled
+# destroy blocks the next apply with ResourceInUseException — sweep it manually
+# (`aws dynamodb delete-table --table-name graphrag-ingestion-status`) before
+# re-applying, the same class as the fixed OpenSearch domain name.
 
 resource "aws_dynamodb_table" "ingestion_status" {
   name         = "graphrag-ingestion-status"

@@ -10,3 +10,11 @@
 # metadata only (cluster/task ARN, stop code, stopped reason) — corpus content
 # never transits the topic. Revisit when P2 KMS/CMK work lands.
 AVD-AWS-0095
+
+# AVD-AWS-0031: ECR repository (graphrag-ingestion, apps/infra-tf/compute.tf)
+# deliberately keeps mutable tags — the deploy contract is a CI re-push to
+# :latest and the task definition pins :latest; IMMUTABLE would break the
+# re-push workflow. The repo already scans on push. compute.tf documents the
+# decision beside the resource. Revisit if the deploy moves to digest-pinned
+# images (which would also close the tag-race class).
+AVD-AWS-0031

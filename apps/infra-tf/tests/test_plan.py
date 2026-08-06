@@ -1348,3 +1348,41 @@ def test_task_def_has_status_table_env(tfplan):
     container_defs = _vals(task_defs[0]).get("container_definitions")
     if container_defs:  # applied-state fixture path (endpoint URLs resolved)
         assert "INGESTION_STATUS_TABLE" in container_defs
+
+
+def test_fixture_freshness_and_sanitization_canary():
+    """Guarded content assertions silently skip when policy strings are null
+    (fresh-plan regen), so pin the committed fixture's applied-state provenance:
+    a known computed policy must be resolved, and the operator email must stay
+    the sanitized placeholder. Runs only against the committed fixture."""
+    fixture = pathlib.Path(__file__).parent / "fixtures" / "plan.json"
+    tfplan = json.loads(fixture.read_text())
+    gold = _pv_by_address(tfplan, "aws_iam_role_policy.ingestion_s3_put_gold")
+    assert gold is not None and _vals(gold).get("policy"), (
+        "fixtures/plan.json must be generated from APPLIED state (resolved policy "
+        "strings) — a fresh-plan regen hollows every guarded content assertion"
+    )
+    subs = _pv_by_type(tfplan, "aws_sns_topic_subscription")
+    assert _vals(subs[0]).get("endpoint") == "test@example.com", (
+        "fixture must carry the sanitized placeholder email — regenerate with "
+        "sanitized tfvars or scrub before committing (no real operator PII)"
+    )
+
+
+def test_sg_header_totals_match_egress_table():
+    """The security_groups.tf header totals are a lockstep contract surface
+    (spec Always-do) and drifted once before (mcp_lambda_sg omitted) — assert
+    the prose numbers against the authoritative _TF_COMPUTE_SG_EGRESS table."""
+    header = (
+        (pathlib.Path(__file__).parent.parent / "security_groups.tf").read_text().split("\n")[:20]
+    )
+    text = "\n".join(header)
+    for sg_key, expected in _TF_COMPUTE_SG_EGRESS.items():
+        m = re.search(rf"{sg_key} = (\d+)", text)
+        assert m, f"header must enumerate {sg_key}"
+        assert int(m.group(1)) == len(expected), (
+            f"header claims {sg_key} = {m.group(1)}, table has {len(expected)}"
+        )
+    m = re.search(r"(\d+) egress rules total", text)
+    total = sum(len(v) for v in _TF_COMPUTE_SG_EGRESS.values())
+    assert m and int(m.group(1)) == total, f"header total must equal {total}"
