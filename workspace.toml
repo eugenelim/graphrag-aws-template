@@ -295,4 +295,24 @@ open = [
   # Blocked until infra-tf/api-gateway-mcp lands.
   {slug = "ac3-api-gw-round-trip", summary = "AC3: API Gateway round-trip parity — same 6 queries against the in-process mock and the Mangum-wrapped Lambda", source = "docs/specs/spec-mcp-tool-server/"},
 
+  # ── infra-tf-p0-gap-remediation deferred ──────────────────────────────────
+
+  # AC8 deferred: app-side wiring of the ingestion status registry. The table,
+  # gateway endpoint, IAM RW grant, and INGESTION_STATUS_TABLE env var are
+  # provisioned (apps/infra-tf/dynamodb.tf); the entrypoint does not yet write
+  # run items (run#<pipeline_execution_id>: RUNNING → SUCCEEDED|FAILED, counts)
+  # or doc items (doc#<doc_uri>: INGESTED|QUARANTINED|DELETED|FAILED, commit_sha)
+  # per design.md § "Ingestion status registry and failure alerting". Unblocked:
+  # infra shipped 2026-08-05; pure packages/graphrag work (entrypoint.py + boto3
+  # dynamodb client + offline moto/in-memory substitute for tests).
+  {slug = "ingestion-status-registry-app-wiring", summary = "Wire the Fargate entrypoint to write run/doc status items to the graphrag-ingestion-status table", source = "docs/specs/infra-tf-p0-gap-remediation/ AC8"},
+
+  # Pre-existing trivy HIGH findings (pre-flight/2026-08-05, infra-tf-p0 gates):
+  # AWS-0031 (ECR tag mutability, compute.tf), AWS-0128 (Neptune CMK), AWS-0132
+  # (S3 CMK — corpus + git_mirror). All predate the P0 slice (its diff adds no
+  # new findings; its AVD-AWS-0095 SNS suppression is reasoned in .trivyignore).
+  # Fix shape: IMMUTABLE ECR tags (one-liner, check CI image-push compat) and
+  # either CMKs (gap-inventory P2 #15) or reasoned .trivyignore entries per ID.
+  {slug = "pre-existing-trivy-high-findings", summary = "Triage pre-existing trivy HIGHs: ECR tag mutability + Neptune/S3 CMK posture (suppress with rationale or fix)", source = "pre-flight/2026-08-05"},
+
 ]

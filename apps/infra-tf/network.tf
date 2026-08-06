@@ -56,13 +56,17 @@ resource "aws_route_table_association" "private" {
 # 1 gateway (S3) + 5 interface. Keys match the CDK _INTERFACE_ENDPOINTS dict and
 # the _COMPUTE_SG_EGRESS egress-target vocabulary so the mapping is legible.
 locals {
-  # key (CDK construct name / egress-target label) => AWS service short name
+  # key (CDK construct name / egress-target label) => AWS service short name.
+  # Textract has no CDK twin (infra-tf-p0-gap-remediation AC1): scanned-PDF OCR
+  # from the private-isolated Fargate task — the extractor calls the synchronous
+  # DetectDocumentText API through this endpoint.
   interface_endpoints = {
     EcrApi         = "ecr.api"
     EcrDocker      = "ecr.dkr"
     CloudWatchLogs = "logs"
     Sts            = "sts"
     BedrockRuntime = "bedrock-runtime"
+    Textract       = "textract"
   }
 }
 
@@ -85,6 +89,36 @@ resource "aws_vpc_endpoint" "s3_gateway" {
   route_table_ids   = aws_route_table.private[*].id
 
   tags = { Name = "graphrag-s3-endpoint" }
+}
+
+# The AWS-managed DynamoDB prefix list — account-resolved, never operator-supplied
+# (same SEC-2 posture as the S3 prefix list above).
+data "aws_ec2_managed_prefix_list" "dynamodb" {
+  name = "com.amazonaws.${var.aws_region}.dynamodb"
+}
+
+# DynamoDB gateway endpoint (infra-tf-p0-gap-remediation AC4) — the ingestion
+# status registry's no-NAT path; gateway endpoints carry no hourly cost. Unlike
+# the default-open S3 gateway, the policy is table-scoped: only the status
+# registry is reachable through this endpoint (defense-in-depth — identity
+# policies remain the primary gate; security review 2026-08-05).
+resource "aws_vpc_endpoint" "dynamodb_gateway" {
+  vpc_id            = aws_vpc.main.id
+  service_name      = "com.amazonaws.${var.aws_region}.dynamodb"
+  vpc_endpoint_type = "Gateway"
+  route_table_ids   = aws_route_table.private[*].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = "*" # network-layer scope only; identity policies still gate every call
+      Action    = "dynamodb:*"
+      Resource  = aws_dynamodb_table.ingestion_status.arn
+    }]
+  })
+
+  tags = { Name = "graphrag-dynamodb-endpoint" }
 }
 
 # One dedicated SG per interface endpoint, accepting 443 from the VPC CIDR.
