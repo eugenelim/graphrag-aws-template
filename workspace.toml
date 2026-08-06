@@ -324,11 +324,16 @@ open = [
   # time without updating the spec markers. Fix: re-anchor or mark shipped.
   {slug = "pre-existing-spec-lint-deferral-anchors", summary = "Re-anchor 7 stale (deferred:) markers in older shipped specs so lint-spec-status runs clean", source = "pre-flight/2026-08-05"},
 
-  # Pre-existing trivy HIGH findings (pre-flight/2026-08-05, infra-tf-p0 gates):
-  # AWS-0128 (Neptune CMK), AWS-0132 (S3 CMK — corpus + git_mirror). Both
-  # predate the P0 slice (its diff adds no new findings; AVD-AWS-0095 SNS and
-  # AVD-AWS-0031 ECR mutable-tags are reasoned suppressions in .trivyignore).
-  # Fix shape: CMKs (gap-inventory P2 #15) or reasoned .trivyignore entries.
-  {slug = "pre-existing-trivy-high-findings", summary = "Triage pre-existing trivy HIGHs: Neptune/S3 CMK posture (suppress with rationale or fix)", source = "pre-flight/2026-08-05"},
+  # (Removed 2026-08-06: pre-existing-trivy-high-findings was factually wrong —
+  # AWS-0031/0128/0132 were already reasoned suppressions in
+  # apps/infra-tf/.trivyignore, the register CI reads; the local scan that
+  # "found" them ran from the repo root and missed the in-dir ignore file.)
+
+  # mcp 2.x migration: mcp 2.0 moved/removed mcp.server.fastmcp, breaking the
+  # tool server's FastMCP imports (CI red 2026-08-06); pyproject now pins
+  # mcp>=1.0,<2 (the Lambda zip builds from the same [server] extra, so the
+  # ceiling covers it). Migrate graphrag.mcp to the 2.x API (or the
+  # standalone fastmcp package), then drop the ceiling.
+  {slug = "mcp-2x-migration", summary = "Migrate graphrag.mcp off the 1.x FastMCP API and lift the mcp<2 pin", source = "docs/specs/ci-gate-hotfix-governance-index/"},
 
 ]
