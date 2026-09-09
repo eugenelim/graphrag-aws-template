@@ -10,6 +10,16 @@
 # matching the CDK (:363 passes [task_role, vector_probe_role]). QueryRole is NOT here —
 # it reaches OpenSearch via its identity policy (iam.tf query_opensearch), relying on
 # same-account IAM allow-union. Never Principal:"*", never account-root (spec AC4).
+#
+# FOUR roles reach this domain, not the two named in access_policies. The other two ride
+# the same-account allow-union via their identity policies, so they are invisible here:
+#   graphrag-ingestion     (opensearch-data,   es:ESHttpGet/Put/Post/Delete/Head)
+#   graphrag-vector-probe  (opensearch-data,   es:ESHttpGet/Put/Post/Delete/Head)
+#   graphrag-query         (opensearch-data,   es:ESHttpGet/Put/Post/Delete/Head)
+#   graphrag-mcp-lambda    (opensearch-search, es:ESHttpGet/Post/Head)
+# Confirmed from both directions: the opensearch_sg ingress rules and an IAM policy scan.
+# Under fine-grained access control ALL FOUR need an OpenSearch backend-role mapping —
+# an identity-policy grant buys nothing once the security plugin is authorizing.
 
 resource "aws_opensearch_domain" "graphrag_vectors" {
   domain_name    = "graphrag-vectors"
@@ -46,6 +56,38 @@ resource "aws_opensearch_domain" "graphrag_vectors" {
   vpc_options {
     subnet_ids         = [aws_subnet.private[0].id] # single data node -> one subnet
     security_group_ids = [aws_security_group.opensearch_sg.id]
+  }
+
+  # Fine-grained access control. Authentication for Dashboards/OpenSearch is enforced by
+  # the security plugin rather than by the resource policy alone, and the master identity
+  # is an IAM role (internal_user_database_enabled = false) so there is no username/password
+  # master to rotate or leak.
+  #
+  # STATE NOTE: FGAC was enabled out-of-band on 2026-09-08 to close a security finding,
+  # so this block documents live reality rather than proposing a change. It must stay —
+  # removing it makes Terraform plan a disable, which AWS rejects outright.
+  #
+  # One-way door: AWS does not permit disabling FGAC. Enabling forces a blue/green.
+  #
+  # NOT MANAGED HERE — the AWS provider cannot express OpenSearch role mappings, and the
+  # domain is VPC-only so Terraform cannot reach the security API from outside the VPC.
+  # The mappings are applied by an in-VPC Lambda and must be re-applied after any domain
+  # replacement, or all four callers above get 403:
+  #   role graphrag_workload -> crud, create_index, indices_monitor
+  #                             (ingestion, vector-probe, query)
+  #   role graphrag_search   -> read, search
+  #                             (mcp-lambda — read-only, mirroring its narrower IAM policy)
+  #
+  # var.opensearch_master_user_arn points at graphrag-opensearch-master, an IAM role
+  # created out-of-band (it doubles as the mapping Lambda's execution role). Import it
+  # before any apply that would otherwise recreate the dependency.
+  advanced_security_options {
+    enabled                        = true
+    internal_user_database_enabled = false
+
+    master_user_options {
+      master_user_arn = var.opensearch_master_user_arn
+    }
   }
 
   # Resource-side IAM enforcement: only the ingestion task + vector-probe roles may call

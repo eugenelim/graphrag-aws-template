@@ -1,0 +1,35 @@
+# terraform.tfvars.example — copy to terraform.tfvars and fill in real values.
+# Never commit terraform.tfvars (it is gitignored); this example carries only placeholders.
+#
+# Usage:
+#   cp terraform.tfvars.example terraform.tfvars
+#   $EDITOR terraform.tfvars
+#   terraform plan
+#
+# Every variable below is REQUIRED (no default). Terraform will refuse to plan until
+# each is set. Each is validated in variables.tf — a malformed value fails at plan
+# time rather than surfacing as an opaque API rejection during apply.
+
+# Email that receives the AWS Budgets cost alarm. Shape is validated in variables.tf.
+budget_alarm_email = "you@example.com"
+
+# IAM role ARN permitted to invoke the query Function URL (SigV4).
+# Role ARNs only — root, wildcard, and non-role principals are rejected.
+invoker_role_arn = "arn:aws:iam::000000000000:role/YourInvokerRole"
+
+# IAM role ARN permitted to invoke the MCP tool-server Function URL
+# (SigV4 — automation and AgentCore).
+mcp_invoker_role_arn = "arn:aws:iam::000000000000:role/YourMcpInvokerRole"
+
+# IAM role mapped to the OpenSearch fine-grained-access-control master user
+# (all_access). Deliberately has no default: a silent fallback for a cluster-admin
+# identity is exactly the kind of thing that should fail loudly.
+#
+# This should NOT be one of the four workload roles (ingestion, vector-probe, query,
+# mcp-lambda). See docs/architecture/deployment-and-verification.md, "Post-apply:
+# OpenSearch FGAC role mappings" — the domain is unusable by those roles until the
+# mapping step is run, and Terraform cannot do it for you.
+opensearch_master_user_arn = "arn:aws:iam::000000000000:role/YourOpenSearchMasterRole"
+
+# Region has a default of us-east-1 in variables.tf; uncomment to override.
+# aws_region = "us-east-1"
