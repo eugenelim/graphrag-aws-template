@@ -41,6 +41,19 @@ variable "mcp_invoker_role_arn" {
     error_message = "mcp_invoker_role_arn must be a role ARN of the form arn:aws:iam::<account-id>:role/<name>. Root, wildcard, and non-role principals are not permitted."
   }
 }
+
+variable "opensearch_master_user_arn" {
+  type        = string
+  description = "IAM role ARN mapped to the OpenSearch fine-grained-access-control master user (all_access). Operator-supplied so the master identity is an explicit choice, not a silent default."
+
+  validation {
+    # Same end-anchored role-ARN validation as the invoker variables. An IAM ARN here is
+    # what keeps master_user_options off the internal user database — a username/password
+    # master is the "master user is not IAM" finding this variable exists to prevent.
+    condition     = can(regex("^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$", var.opensearch_master_user_arn))
+    error_message = "opensearch_master_user_arn must be a role ARN of the form arn:aws:iam::<account-id>:role/<name>. Root, wildcard, and non-role principals are not permitted."
+  }
+}
 # NOTE: the former `s3_prefix_list_id` variable was removed by the
 # infra-terraform-network tier (SEC-2 hardening). The AWS-managed S3
 # gateway-endpoint prefix list is now resolved declaratively from the account via

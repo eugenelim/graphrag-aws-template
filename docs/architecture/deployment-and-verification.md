@@ -164,6 +164,54 @@ identical to the pre-refactor template (spec
   probe) and then sweeps the auto-created `/aws/lambda/<fn>` log groups CDK doesn't
   manage. `deploy.sh` fills the `User` governance tag from the caller identity.
 
+## Post-apply: OpenSearch FGAC role mappings (Terraform)
+
+**`terraform apply` alone does not produce a working stack.** The `graphrag-vectors`
+domain runs with fine-grained access control, and Terraform's AWS provider can enable
+FGAC but cannot express role *mappings*. Until they are applied, every workload role
+gets 403 from the domain regardless of what its IAM policy or the domain access policy
+allows — under FGAC the security plugin authorizes independently, and an identity-policy
+grant buys nothing.
+
+Deploy is therefore two steps:
+
+```bash
+cd apps/infra-tf
+cp terraform.tfvars.example terraform.tfvars   # fill in real values
+terraform init -backend-config=backend.hcl
+terraform apply
+bash scripts/fgac-rolemap.sh                   # <- REQUIRED, not optional
+bash scripts/probe.sh                          # confirms the roles can reach the domain
+```
+
+`scripts/fgac-rolemap.sh` stands up a throwaway Lambda inside the VPC (the domain has no
+public endpoint, so the security API is unreachable from a laptop or from CI), applies
+the mappings, and deletes the Lambda on exit. It is idempotent — safe to re-run.
+
+**Re-run it after any apply that replaces the domain.** A domain replacement resets the
+security config, and the symptom is a total ingestion/query outage with 403s, which does
+not look like a Terraform problem.
+
+Four roles need mapping, in two privilege tiers mirroring their IAM policies. Three
+carry `es:ESHttpGet/Put/Post/Delete/Head`; the MCP lambda carries only `Get/Post/Head`:
+
+| OpenSearch role | Permissions | Backend roles |
+| --- | --- | --- |
+| `graphrag_workload` | `crud`, `create_index`, `indices_monitor` | ingestion, vector-probe, query |
+| `graphrag_search` | `read`, `search` | mcp-lambda |
+
+Mapping all four to `all_access` would restore service faster but make FGAC decorative.
+
+> **Two traps.** Only *two* of the four roles appear in `access_policies` — query and
+> mcp-lambda reach the domain through the same-account IAM allow-union via their identity
+> policies, so reading `opensearch.tf` alone undercounts them. And enabling FGAC is a
+> **one-way door**: AWS does not permit disabling it, so the exit is a new domain plus a
+> reindex.
+
+`var.opensearch_master_user_arn` must be an IAM role that is *not* one of the four
+workload roles. It has no default on purpose — a silent fallback for a cluster-admin
+identity should fail loudly.
+
 ## Live-deploy findings (what synth could not catch)
 
 These surfaced only by actually deploying; each now has a synth-level guard or a

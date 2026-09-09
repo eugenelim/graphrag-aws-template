@@ -25,6 +25,14 @@ resource "aws_neptune_cluster_parameter_group" "main" {
     name  = "neptune_query_timeout"
     value = "20000"
   }
+
+  # Audit logging: records every connection and query against the cluster. Static
+  # parameter — a change only takes effect after an instance reboot, and the cluster's
+  # enable_cloudwatch_logs_exports below is inert until it is active.
+  parameter {
+    name  = "neptune_enable_audit_log"
+    value = "1"
+  }
 }
 
 resource "aws_neptune_cluster" "main" {
@@ -41,6 +49,11 @@ resource "aws_neptune_cluster" "main" {
   iam_database_authentication_enabled = true # IAM-enforced access (ADR-0002)
   storage_encrypted                   = true
   skip_final_snapshot                 = true # ephemeral — no snapshot to retain
+
+  # Ship the audit log to CloudWatch Logs. Load-bearing pair with
+  # neptune_enable_audit_log=1 in the parameter group above: without the parameter the
+  # engine writes no audit records, and without this export they never leave the cluster.
+  enable_cloudwatch_logs_exports = ["audit"]
 
   # Serverless at minimum capacity — scales down when idle (not to zero).
   serverless_v2_scaling_configuration {
