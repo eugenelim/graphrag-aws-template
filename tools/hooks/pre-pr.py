@@ -67,6 +67,16 @@ _ROLE_ARN_RE = re.compile(r"arn:aws:iam::([^:\s]+):role/")
 # RFC-2606 reserved domains are documentation placeholders, not real addresses.
 _PLACEHOLDER_EMAIL_DOMAINS = {"example.com", "example.org", "example.net"}
 
+# Tracked paths this guard scans. `apps/infra/scripts/config*` was the original scope,
+# but a real account id reached history anyway through the Terraform applied-state
+# fixture (1130 occurrences) and the tfvars example -- neither of which is a `config*`
+# file. Both are now in scope. Still a targeted guard, not a repo-wide scanner.
+_SCANNED_PATH_GLOBS = (
+    "apps/infra/scripts/config*",
+    "apps/infra-tf/tests/fixtures/*.json",
+    "apps/infra-tf/*.tfvars.example",
+)
+
 
 def _is_placeholder_email(addr: str) -> bool:
     # Suffix match: the reserved domain itself or any subdomain of it is a
@@ -97,17 +107,20 @@ def _scan_config_text(rel: str, text: str) -> list[str]:
 
 
 def _tracked_config_files(repo_root: Path) -> list[str]:
-    """The tracked ``apps/infra/scripts/config*`` files (repo-relative paths). The
-    gitignored ``config.local.env`` is never tracked, so it is excluded by construction."""
+    """The tracked files matching ``_SCANNED_PATH_GLOBS`` (repo-relative paths).
+
+    Only *tracked* files are listed, so gitignored per-deployer values
+    (``config.local.env``, ``apps/infra-tf/*.tfvars``) are excluded by construction --
+    the guard's job is history, not the working tree."""
     listed = subprocess.run(
-        ["git", "ls-files", "apps/infra/scripts/config*"],
+        ["git", "ls-files", *_SCANNED_PATH_GLOBS],
         capture_output=True, text=True, check=False, cwd=repo_root,
     )
     return listed.stdout.split()
 
 
 def _committed_config_secret_findings(repo_root: Path) -> list[str]:
-    """Scan tracked ``apps/infra/scripts/config*`` files for a non-placeholder email
+    """Scan the tracked files in ``_SCANNED_PATH_GLOBS`` for a non-placeholder email
     address or IAM role ARN. Returns a list of human-readable findings (empty = clean)."""
     findings: list[str] = []
     for rel in _tracked_config_files(repo_root):

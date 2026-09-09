@@ -170,7 +170,7 @@ Gates: `shellcheck` (scripts), `ruff` + `mypy` + `pytest` (Python, unaffected bu
   `CDK_APP` and `pytest apps/infra/tests` both pass and produce the same `GraphragSlice1`
   template as before the refactor (the stack code is untouched). *(goal-based synth)*
 - [x] **AC6 — Live deploy verifies all three slices on the refactored scripts, then tears
-  down.** **Verified live (2026-06-24, account `752989493306`/`us-east-1`, `config.local.env`
+  down.** **Verified live (2026-06-24, account `<redacted>`/`us-east-1`, `config.local.env`
   absent so the committed-defaults path was exercised).** The refactored `scripts/deploy.sh`
   → `CREATE_COMPLETE` (18 min); `scripts/status.sh` → `CREATE_COMPLETE`; slice-1 Neptune
   smoke probe `{"ok": true, "retrieved_node": "person:smoke-…", "neighbors": […]}`; slice-2

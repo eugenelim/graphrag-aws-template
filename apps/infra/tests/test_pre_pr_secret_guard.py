@@ -49,7 +49,7 @@ def test_placeholder_arn_passes() -> None:
 
 
 def test_real_arn_flagged() -> None:
-    assert not hook._is_placeholder_arn("752989493306")
+    assert not hook._is_placeholder_arn("111111111111")
 
 
 def test_scan_flags_real_email() -> None:
@@ -61,9 +61,9 @@ def test_scan_flags_real_email() -> None:
 
 def test_scan_flags_real_role_arn() -> None:
     findings = hook._scan_config_text(
-        "config.prod.env", "# INVOKER_ROLE_ARN=arn:aws:iam::752989493306:role/Admin\n"
+        "config.prod.env", "# INVOKER_ROLE_ARN=arn:aws:iam::111111111111:role/Admin\n"
     )
-    assert findings and "752989493306" in findings[0]
+    assert findings and "111111111111" in findings[0]
 
 
 def test_scan_passes_placeholders() -> None:
@@ -101,3 +101,29 @@ def test_tracked_config_glob_discovers_the_committed_files() -> None:
     assert "apps/infra/scripts/config.local.env.example" in tracked
     # And it must never list the gitignored local file.
     assert "apps/infra/scripts/config.local.env" not in tracked
+
+
+def test_scan_scope_covers_terraform_paths() -> None:
+    # A real account id reached history through the Terraform applied-state fixture,
+    # which the original `config*`-only scope never looked at. Pin the widened scope
+    # so it cannot silently narrow back.
+    assert "apps/infra-tf/tests/fixtures/*.json" in hook._SCANNED_PATH_GLOBS
+    assert "apps/infra-tf/*.tfvars.example" in hook._SCANNED_PATH_GLOBS
+
+    tracked = hook._tracked_config_files(_REPO_ROOT)
+    assert "apps/infra-tf/tests/fixtures/plan.json" in tracked
+    # Per-deployer real values are gitignored and must never be listed.
+    assert "apps/infra-tf/terraform.tfvars" not in tracked
+
+
+def test_terraform_fixture_and_example_carry_no_real_account() -> None:
+    # Read from disk rather than via git so this holds before the files are staged.
+    for rel in (
+        "apps/infra-tf/tests/fixtures/plan.json",
+        "apps/infra-tf/terraform.tfvars.example",
+    ):
+        path = _REPO_ROOT / rel
+        if not path.exists():  # example is optional in a fresh checkout
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        assert hook._scan_config_text(rel, text) == [], rel

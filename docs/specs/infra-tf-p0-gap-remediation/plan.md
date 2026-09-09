@@ -264,7 +264,7 @@ package + `mcp`/`mangum` extras into a build dir with
 `--platform manylinux2014_x86_64 --python-version 3.12 --only-binary=:all:`
 (pydantic-core is compiled; the Lambdas are x86_64 python3.12), overlay
 `packages/graphrag/src/graphrag`, zip. Create `backend.hcl` from the example
-(state bucket `graphrag-tf-state-752989493306` exists from the prior cycle;
+(state bucket `graphrag-tf-state-<redacted>` exists from the prior cycle;
 skip bootstrap). Remove `backend_override.tf`, `terraform init
 -backend-config=backend.hcl -reconfigure`, then drive the cycle reading real
 output; on destroy stall, re-issue delete and verify via API, sweep log
