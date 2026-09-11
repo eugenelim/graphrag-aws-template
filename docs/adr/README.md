@@ -24,6 +24,7 @@
 | [0016](0016-git-ingestion-commit-sha-delta-medallion.md) | Git ingestion: commit-SHA delta + medallion over CodePipeline/S3-mirror bronze source | Accepted |
 | [0017](0017-llm-reasoning-governance-boundary.md) | LLM reasoning governance boundary for synthesizer and strategy router | Proposed |
 | [0018](0018-vector-store-opensearch-domain-over-aoss.md) | Vector store service shape — managed OpenSearch domain over AOSS VECTORSEARCH | Accepted |
+| [0019](0019-graph-explorer-private-notebook-ecr-mirror.md) | Neptune Graph Explorer runs on a private-subnet notebook with an ECR-mirrored image | Accepted |
 
 ## Adding a new ADR
 

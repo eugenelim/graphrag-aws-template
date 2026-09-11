@@ -1,5 +1,9 @@
-# security_groups.tf — the 7 compute/store security groups (5 compute + 2 store)
+# security_groups.tf — the 8 compute/store security groups (6 compute + 2 store)
 # and their exact closed-egress + peer-ingress rules.
+#
+# notebook_sg is the 6th compute SG. It and its two egress rules are declared in
+# notebook.tf (ADR-0019) rather than here, so that the Graph Explorer stack stays
+# reviewable as one file — but it counts against the totals below.
 #
 # Translated from apps/infra/stacks/graphrag_stack.py: the SecurityGroup(...
 # allow_all_outbound=False) constructs, the `_allow_egress()` helper, and the
@@ -11,9 +15,9 @@
 #
 # Egress-rule totals (must match _TF_COMPUTE_SG_EGRESS exactly, set equality):
 #   ingestion_task_sg = 10, smoke_probe_sg = 3, vector_smoke_sg = 4,
-#   query_lambda_sg = 5, mcp_lambda_sg = 5  => 27 egress rules total, owned only
-#   by the 5 compute SGs.
-# The 2 store SGs and 6 endpoint SGs (network.tf) own ZERO egress rules.
+#   query_lambda_sg = 5, mcp_lambda_sg = 5, notebook_sg = 7
+#   => 34 egress rules total, owned only by the 6 compute SGs.
+# The 2 store SGs and 7 endpoint SGs (network.tf) own ZERO egress rules.
 
 # ── Store security groups (VPC-internal only) ──────────────────────────────────
 resource "aws_security_group" "neptune_sg" {

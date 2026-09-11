@@ -90,6 +90,17 @@ resource "aws_opensearch_domain" "graphrag_vectors" {
     }
   }
 
+  # Cognito authentication proxy for Dashboards — closes finding Issue 39 (NCS 410).
+  # Defined in cognito.tf; see that file's header for the trade-off and for why FGAC
+  # alone does not satisfy the control. This gates the HUMAN Dashboards path only —
+  # the four SigV4 workload callers above are unaffected.
+  cognito_options {
+    enabled          = true
+    user_pool_id     = aws_cognito_user_pool.opensearch_dashboards.id
+    identity_pool_id = aws_cognito_identity_pool.opensearch_dashboards.id
+    role_arn         = aws_iam_role.cognito_opensearch_access.arn
+  }
+
   # Resource-side IAM enforcement: only the ingestion task + vector-probe roles may call
   # the domain via the resource policy. A VPC network path alone is not sufficient.
   access_policies = jsonencode({

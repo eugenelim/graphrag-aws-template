@@ -11,6 +11,7 @@ docs/specs/infra-terraform-verification/plan.md.
 
 from __future__ import annotations
 
+import base64
 import json
 import pathlib
 import re
@@ -68,11 +69,15 @@ def test_vpc_has_no_nat_gateway(tfplan):
     assert len(_pv_by_type(tfplan, "aws_nat_gateway")) == 0
 
 
-def test_has_8_vpc_endpoints(tfplan):
+def test_has_9_vpc_endpoints(tfplan):
     """CDK: test_has_the_required_vpc_endpoints (+2: textract interface + dynamodb
-    gateway, infra-tf-p0-gap-remediation AC1/AC4)."""
+    gateway, infra-tf-p0-gap-remediation AC1/AC4; +1: sagemaker.api interface for the
+    Graph Explorer notebook, ADR-0019 amending ADR-0002's enumerated set)."""
     endpoints = _pv_by_type(tfplan, "aws_vpc_endpoint")
-    assert len(endpoints) == 8
+    assert len(endpoints) == 9
+    sagemaker = [e for e in endpoints if ".sagemaker.api" in _vals(e).get("service_name", "")]
+    assert len(sagemaker) == 1, "expected exactly one sagemaker.api VPC endpoint"
+    assert _vals(sagemaker[0]).get("vpc_endpoint_type") == "Interface"
     textract = [e for e in endpoints if ".textract" in _vals(e).get("service_name", "")]
     assert len(textract) == 1, "expected exactly one textract VPC endpoint"
     assert _vals(textract[0]).get("vpc_endpoint_type") == "Interface"
@@ -207,10 +212,14 @@ def test_log_groups_are_stack_managed_and_destroyed(tfplan):
 
 
 def test_ecr_repository_force_delete(tfplan):
-    """ECR force_delete ensures destroy removes images (teardown-first, ADR-0002)."""
+    """ECR force_delete ensures destroy removes images (teardown-first, ADR-0002).
+    Two repos: the ingestion image and the mirrored Graph Explorer image (ADR-0019)."""
     repos = _pv_by_type(tfplan, "aws_ecr_repository")
-    assert len(repos) == 1
-    assert repos[0]["values"].get("force_delete") is True
+    assert len(repos) == 2, f"expected ingestion + graph_explorer repos, found {len(repos)}"
+    for repo in repos:
+        assert repo["values"].get("force_delete") is True, (
+            f"{repo['address']} must force_delete or destroy strands image layers"
+        )
 
 
 def test_governance_tags_applied_to_provider(tfplan):
@@ -222,7 +231,7 @@ def test_governance_tags_applied_to_provider(tfplan):
         ("aws_s3_bucket", 2),  # corpus + git_mirror
         ("aws_neptune_cluster", 1),
         ("aws_ecs_task_definition", 1),
-        ("aws_ecr_repository", 1),
+        ("aws_ecr_repository", 2),
     ]
     for rtype, expected_count in check_types:
         resources = _pv_by_type(tfplan, rtype)
@@ -312,6 +321,18 @@ _TF_COMPUTE_SG_EGRESS: dict[str, set[tuple[str, int]]] = {
         ("endpoint_CloudWatchLogs", 443),
         ("endpoint_Sts", 443),
     },
+    # Graph Explorer notebook SG (ADR-0019). No bedrock and no opensearch — the explorer
+    # only reads the graph. ECR api+dkr+s3 carry the mirrored-image pull, which replaces
+    # the public-internet pull the out-of-band version relied on.
+    "notebook_sg": {
+        ("neptune_sg", 8182),
+        ("endpoint_EcrApi", 443),
+        ("endpoint_EcrDocker", 443),
+        ("s3_prefix_list", 443),
+        ("endpoint_CloudWatchLogs", 443),
+        ("endpoint_Sts", 443),
+        ("endpoint_SageMakerApi", 443),
+    },
 }
 
 # Resource name suffix → target label (matches the egress rule Terraform resource names).
@@ -326,6 +347,7 @@ _EGRESS_TARGET_FROM_SUFFIX = {
     "to_s3": "s3_prefix_list",
     "to_textract": "endpoint_Textract",
     "to_dynamodb": "dynamodb_prefix_list",
+    "to_sagemaker_api": "endpoint_SageMakerApi",
 }
 
 # SG resource name → owning compute SG group (from egress rule name prefix).
@@ -335,6 +357,7 @@ _EGRESS_SG_FROM_PREFIX = {
     "vector_smoke": "vector_smoke_sg",
     "query": "query_lambda_sg",
     "mcp": "mcp_lambda_sg",
+    "notebook": "notebook_sg",
 }
 
 
@@ -472,8 +495,8 @@ def test_store_sg_ingress_rules_exact(tfplan):
         for r in _pv_by_type(tfplan, "aws_vpc_security_group_ingress_rule")
         if "opensearch_from" in r["name"]
     ]
-    assert len(neptune_ingress) == 4, (
-        f"neptune_sg must have exactly 4 ingress rules, found {len(neptune_ingress)}"
+    assert len(neptune_ingress) == 5, (
+        f"neptune_sg must have exactly 5 ingress rules, found {len(neptune_ingress)}"
     )
     assert len(opensearch_ingress) == 4, (
         f"opensearch_sg must have exactly 4 ingress rules, found {len(opensearch_ingress)}"
@@ -489,6 +512,9 @@ def test_store_sg_ingress_rules_exact(tfplan):
         "neptune_from_smoke",
         "neptune_from_query",
         "neptune_from_mcp",
+        # Graph Explorer notebook reads the graph over 8182 (ADR-0019). Replaces the
+        # out-of-band `neptune_from_self` self-reference, which was a blunter grant.
+        "neptune_from_notebook",
     }
     opensearch_names = {r["name"] for r in opensearch_ingress}
     assert opensearch_names == {
@@ -1392,3 +1418,169 @@ def test_sg_header_totals_match_egress_table():
     m = re.search(r"(\d+) egress rules total", text)
     total = sum(len(v) for v in _TF_COMPUTE_SG_EGRESS.values())
     assert m and int(m.group(1)) == total, f"header total must equal {total}"
+
+
+# ── Cognito Dashboards auth (finding Issue 39 / NCS 410) ──────────────────────
+
+
+def test_opensearch_cognito_auth_enabled(tfplan):
+    """Issue 39 keys on the domain's CognitoOptions, not on FGAC. Assert the domain
+    actually wires cognito_options — an enabled=false block still fails the control."""
+    domains = _pv_by_type(tfplan, "aws_opensearch_domain")
+    assert len(domains) == 1
+    cognito = domains[0]["values"].get("cognito_options")
+    assert cognito, "domain must declare cognito_options (Issue 39)"
+    block = cognito[0] if isinstance(cognito, list) else cognito
+    assert block.get("enabled") is True, "cognito_options.enabled must be true"
+
+
+def test_cognito_identity_pool_forbids_unauthenticated(tfplan):
+    """An unauthenticated identity on the pool fronting Dashboards would re-open the
+    very finding this stack closes."""
+    pools = _pv_by_type(tfplan, "aws_cognito_identity_pool")
+    assert len(pools) == 1, f"expected exactly 1 identity pool, found {len(pools)}"
+    assert pools[0]["values"].get("allow_unauthenticated_identities") is False
+    assert pools[0]["values"].get("allow_classic_flow") is False
+
+
+def test_cognito_user_pool_enforces_mfa_and_strong_passwords(tfplan):
+    """This pool fronts a cluster-admin surface, so provider defaults are not enough."""
+    pools = _pv_by_type(tfplan, "aws_cognito_user_pool")
+    assert len(pools) == 1
+    vals = pools[0]["values"]
+    assert vals.get("mfa_configuration") == "ON", "MFA must be ON, not OPTIONAL/OFF"
+
+    policy = vals.get("password_policy")
+    policy = policy[0] if isinstance(policy, list) else policy
+    assert policy and policy.get("minimum_length", 0) >= 14
+    for req in ("require_lowercase", "require_uppercase", "require_numbers", "require_symbols"):
+        assert policy.get(req) is True, f"password_policy.{req} must be true"
+
+    admin = vals.get("admin_create_user_config")
+    admin = admin[0] if isinstance(admin, list) else admin
+    assert admin and admin.get("allow_admin_create_user_only") is True, (
+        "no self-service signup to a search cluster admin UI"
+    )
+
+
+def test_cognito_authenticated_role_trust_is_scoped(tfplan):
+    """The federated trust must pin BOTH the identity pool (aud) and authenticated-only
+    (amr). Without the amr condition an unauthenticated identity could assume the role."""
+    role = _pv_by_address(tfplan, "aws_iam_role.cognito_authenticated")
+    assert role, "aws_iam_role.cognito_authenticated must exist"
+    policy_str = role["values"].get("assume_role_policy")
+    if policy_str is None:
+        # The trust doc embeds the identity-pool id, which is computed: in a fresh plan
+        # the whole string is unknown. Fall back to asserting the resource is wired,
+        # matching test_opensearch_access_policy_is_scoped_not_all_principals.
+        assert _pv_by_address(tfplan, "aws_cognito_identity_pool.opensearch_dashboards")
+        return
+    trust = json.loads(policy_str)
+    stmt = trust["Statement"][0]
+    assert stmt["Principal"]["Federated"] == "cognito-identity.amazonaws.com"
+    assert stmt["Action"] == "sts:AssumeRoleWithWebIdentity"
+    cond = stmt["Condition"]
+    assert "cognito-identity.amazonaws.com:aud" in cond["StringEquals"]
+    assert cond["ForAnyValue:StringLike"]["cognito-identity.amazonaws.com:amr"] == "authenticated"
+
+
+def test_cognito_service_role_trust_guards_confused_deputy(tfplan):
+    """es.amazonaws.com assumes this role; SourceAccount + SourceArn prevent another
+    account's domain from using it. SourceArn must be the BARE domain ARN — the shared
+    local carries a trailing '/*' that would never match."""
+    role = _pv_by_address(tfplan, "aws_iam_role.cognito_opensearch_access")
+    assert role, "aws_iam_role.cognito_opensearch_access must exist"
+    trust = json.loads(role["values"]["assume_role_policy"])
+    stmt = trust["Statement"][0]
+    assert stmt["Principal"]["Service"] == "es.amazonaws.com"
+    cond = stmt["Condition"]
+    assert "aws:SourceAccount" in cond["StringEquals"]
+    source_arn = cond["ArnLike"]["aws:SourceArn"]
+    assert source_arn.endswith("domain/graphrag-vectors"), (
+        f"SourceArn must be the bare domain ARN, got {source_arn}"
+    )
+
+
+def test_cognito_authenticated_policy_has_no_wildcard_resource(tfplan):
+    """Dashboards access is scoped to this domain only — never Resource '*'."""
+    pol = _pv_by_address(tfplan, "aws_iam_role_policy.cognito_authenticated_dashboards")
+    assert pol, "cognito_authenticated_dashboards policy must exist"
+    doc = json.loads(pol["values"]["policy"])
+    for stmt in doc["Statement"]:
+        assert stmt["Resource"] != "*", "must not grant es:ESHttp* on all resources"
+        assert "domain/graphrag-vectors" in stmt["Resource"]
+        assert not stmt["Resource"].endswith("/*/*"), "double-suffixed ARN"
+
+
+# ── Graph Explorer notebook hardening (ADR-0019) ──────────────────────────────
+
+
+def test_notebook_is_private_no_internet_no_root(tfplan):
+    """The out-of-band notebook sat in a public subnet with DirectInternetAccess and
+    RootAccess both Enabled. ADR-0019 reverses all three; pin each one."""
+    nbs = _pv_by_type(tfplan, "aws_sagemaker_notebook_instance")
+    assert len(nbs) == 1, f"expected exactly 1 notebook, found {len(nbs)}"
+    vals = nbs[0]["values"]
+    assert vals.get("direct_internet_access") == "Disabled"
+    assert vals.get("root_access") == "Disabled"
+
+
+def test_no_internet_gateway_in_configuration(tfplan):
+    """ADR-0002 keeps the store VPC private with no NAT; ADR-0019 declines to add an IGW
+    for the explorer. A regression here silently re-opens a public path into the VPC."""
+    igws = _pv_by_type(tfplan, "aws_internet_gateway")
+    assert igws == [], f"configuration must declare no internet gateway, found {igws}"
+
+    # A public subnet is the other half of the same mistake.
+    for subnet in _pv_by_type(tfplan, "aws_subnet"):
+        assert subnet["values"].get("map_public_ip_on_launch") is not True, (
+            f"{subnet['address']} auto-assigns public IPs — the VPC is private (ADR-0002)"
+        )
+
+
+def test_notebook_neptune_policy_is_actually_read_only(tfplan):
+    """The out-of-band policy was NAMED neptune-data-readonly and granted neptune-db:*.
+    Assert the grant, not the name — no wildcard, and no write/delete/reset action."""
+    pol = _pv_by_address(tfplan, "aws_iam_role_policy.notebook_neptune_readonly")
+    assert pol, "notebook_neptune_readonly policy must exist"
+    policy_str = pol["values"].get("policy")
+    if policy_str is None:
+        return  # cluster_resource_id computed in a fresh plan
+    doc = json.loads(policy_str)
+    actions = set()
+    for stmt in doc["Statement"]:
+        a = stmt["Action"]
+        actions.update(a if isinstance(a, list) else [a])
+
+    assert "neptune-db:*" not in actions, "wildcard data-plane grant (the original bug)"
+    for act in actions:
+        assert act.startswith("neptune-db:"), f"unexpected non-Neptune action {act}"
+        verb = act.split(":", 1)[1].lower()
+        assert not any(w in verb for w in ("write", "delete", "reset", "cancel")), (
+            f"{act} is not a read action in a policy named read-only"
+        )
+    assert "neptune-db:ReadDataViaQuery" in actions
+
+
+def test_notebook_role_has_no_sagemaker_full_access(tfplan):
+    """AmazonSageMakerFullAccess brought s3:* and iam:PassRole along with it."""
+    for att in _pv_by_type(tfplan, "aws_iam_role_policy_attachment"):
+        arn = att["values"].get("policy_arn", "")
+        assert "AmazonSageMakerFullAccess" not in arn, (
+            f"{att['address']} attaches AmazonSageMakerFullAccess (ADR-0019 removed it)"
+        )
+
+
+def test_notebook_lifecycle_pulls_from_private_ecr_not_public(tfplan):
+    """ECR Public has no PrivateLink, so a public.ecr.aws pull cannot work from a private
+    subnet — it is the exact dependency that justified the public subnet originally."""
+    cfgs = _pv_by_type(tfplan, "aws_sagemaker_notebook_instance_lifecycle_configuration")
+    assert len(cfgs) == 1
+    on_start = cfgs[0]["values"].get("on_start")
+    if on_start is None:
+        return  # repository_url is computed in a fresh plan
+    script = base64.b64decode(on_start).decode()
+    assert "public.ecr.aws" not in script, (
+        "lifecycle script pulls from ECR Public — unreachable without NAT (ADR-0019)"
+    )
+    assert "dkr.ecr" in script or "${REPO}" in script or "$REPO" in script

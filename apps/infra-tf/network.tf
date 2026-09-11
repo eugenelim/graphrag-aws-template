@@ -67,6 +67,10 @@ locals {
     Sts            = "sts"
     BedrockRuntime = "bedrock-runtime"
     Textract       = "textract"
+    # SageMakerApi carries the Graph Explorer notebook's control-plane calls. It is a
+    # seventh endpoint beyond ADR-0002's original enumerated set; ADR-0019 amends that
+    # list rather than leaving it undocumented.
+    SageMakerApi = "sagemaker.api"
   }
 }
 

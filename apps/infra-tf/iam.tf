@@ -356,6 +356,27 @@ resource "aws_iam_role_policy" "ingestion_s3_git_mirror_read" {
   policy = local.s3_read_git_mirror_policy
 }
 
+# The ingestion task writes its per-run manifest back into the git-mirror bucket under
+# manifest/ (ADR-0016 commit-SHA delta bookkeeping). Write is scoped to that prefix only
+# — the rest of the bucket is CodePipeline's artifact area and stays read-only to the
+# task, which already has s3-git-mirror-read above.
+#
+# Codified from live state: this policy was applied out-of-band on 2026-08-07 alongside
+# the Graph Explorer stack and was never committed. Unlike that stack it needed no
+# hardening, so it is reproduced as-is.
+resource "aws_iam_role_policy" "ingestion_s3_git_mirror_manifest_put" {
+  name = "s3-git-mirror-manifest-put"
+  role = aws_iam_role.ingestion_task_role.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = "s3:PutObject"
+      Resource = "${aws_s3_bucket.git_mirror.arn}/manifest/*"
+    }]
+  })
+}
+
 # The ingestion task calls codepipeline:GetPipelineExecution to resolve the HEAD commit
 # SHA from the CODEPIPELINE_EXECUTION_ID passed by the EventBridge input_transformer.
 # Scoped to the git-mirror pipeline ARN — no wildcard.
