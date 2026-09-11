@@ -90,7 +90,7 @@ resource "aws_opensearch_domain" "graphrag_vectors" {
     }
   }
 
-  # Cognito authentication proxy for Dashboards — closes finding Issue 39 (NCS 410).
+  # Cognito authentication proxy for Dashboards (ADR-0020).
   # Defined in cognito.tf; see that file's header for the trade-off and for why FGAC
   # alone does not satisfy the control. This gates the HUMAN Dashboards path only —
   # the four SigV4 workload callers above are unaffected.

@@ -1420,16 +1420,16 @@ def test_sg_header_totals_match_egress_table():
     assert m and int(m.group(1)) == total, f"header total must equal {total}"
 
 
-# ── Cognito Dashboards auth (finding Issue 39 / NCS 410) ──────────────────────
+# ── Cognito Dashboards auth (ADR-0020) ───────────────────────────────────────
 
 
 def test_opensearch_cognito_auth_enabled(tfplan):
-    """Issue 39 keys on the domain's CognitoOptions, not on FGAC. Assert the domain
-    actually wires cognito_options — an enabled=false block still fails the control."""
+    """Dashboards-auth controls assert on the domain's CognitoOptions, not on FGAC.
+    Assert the domain wires cognito_options — an enabled=false block still fails."""
     domains = _pv_by_type(tfplan, "aws_opensearch_domain")
     assert len(domains) == 1
     cognito = domains[0]["values"].get("cognito_options")
-    assert cognito, "domain must declare cognito_options (Issue 39)"
+    assert cognito, "domain must declare cognito_options (ADR-0020)"
     block = cognito[0] if isinstance(cognito, list) else cognito
     assert block.get("enabled") is True, "cognito_options.enabled must be true"
 

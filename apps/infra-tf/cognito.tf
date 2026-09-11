@@ -1,10 +1,9 @@
 # cognito.tf — Cognito authentication proxy for OpenSearch Dashboards.
 #
-# Closes security finding Issue 39 ("AWS Elastic Search authentication for accessing
-# Kibana disabled", High, scorecard-impacting) on the graphrag-vectors domain. The
-# governing control is Accenture NCS 410, "Use Cognito as an authentication proxy for
-# accessing Kibana", which keys specifically on the domain's CognitoOptions — fine-grained
-# access control alone does not satisfy it, even though FGAC is the stronger control.
+# Satisfies the common enterprise cloud-security control that OpenSearch Dashboards must
+# sit behind a Cognito authentication proxy. Such controls typically assert on the
+# domain's CognitoOptions specifically, so fine-grained access control alone does not
+# satisfy them even though FGAC is the stronger control.
 #
 # WHAT THIS DOES NOT CHANGE. All four workload callers (ingestion, vector-probe, query,
 # mcp-lambda) reach the domain with SigV4 IAM auth and are unaffected. Cognito gates only

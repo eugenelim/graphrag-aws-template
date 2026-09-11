@@ -91,8 +91,8 @@ introduced.
 - The notebook can no longer write to or delete from the graph, and cannot reach the
   internet, so a compromised notebook session is contained to reads of demo data.
 - The explorer version is pinned by digest and survives upstream tag churn or deletion.
-- Closes one of the SI6005 "Asset Missing AIR ID" findings by bringing the notebook under
-  the tagged, Terraform-managed set.
+- Brings the notebook under the tagged, Terraform-managed set, so it inherits the
+  provider's `default_tags` instead of sitting untagged and unattributable in inventory.
 
 **Negative:**
 - A mirror step is now required before first deploy — someone or something must copy
