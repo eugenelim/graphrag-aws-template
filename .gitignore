@@ -69,3 +69,7 @@ node_modules/
 
 # work-loop plan-verification scratch (local backend, never committed)
 apps/infra-tf/backend_override.tf
+
+# Terraform plan files embed full state (account ids, tfvars values) — never commit.
+apps/infra-tf/*.tfplan
+*.tfplan

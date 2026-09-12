@@ -133,11 +133,14 @@ subnets, no NAT gateway, no Internet Gateway. VPC endpoints shipped (wave 3):
 
 | Endpoint | Service |
 |---|---|
-| Gateway | S3 |
-| Interface | `ecr.api`, `ecr.dkr`, `logs`, `sts`, `bedrock-runtime` |
+| Gateway | S3, DynamoDB |
+| Interface | `ecr.api`, `ecr.dkr`, `logs`, `sts`, `bedrock-runtime`, `textract`, `sagemaker.api` |
+
+`sagemaker.api` was added by ADR-0019, which amends ADR-0002's enumerated set to carry
+the Graph Explorer notebook's control-plane calls.
 
 Wave-4 additions (in-flight, not yet provisioned): `otlp`, `xray` (OTEL/ADOT);
-`textract`, `comprehend` (scanned PDF OCR and PII detection — wave-5+ ingestion).
+`comprehend` (PII detection — wave-5+ ingestion).
 
 Each compute security group sets `allow_all_outbound=False` with explicit egress to
 exactly the in-VPC stores (Neptune 8182, OpenSearch 443) and VPC endpoints (443).
@@ -145,7 +148,32 @@ No compute SG carries a `0.0.0.0/0` egress rule.
 
 Neptune is VPC-resident (private subnet group, no public endpoint). OpenSearch is
 VPC-resident in private isolated subnets — not public; encryption at rest +
-node-to-node encryption + enforce-HTTPS.
+node-to-node encryption + enforce-HTTPS; fine-grained access control with an IAM
+master identity, and Cognito as the Dashboards authentication proxy.
+
+### Graph Explorer notebook (ADR-0019)
+
+The SageMaker notebook that serves Neptune Graph Explorer is the only interactive
+compute in the VPC, so its posture is stated explicitly:
+
+| Control | Setting |
+|---|---|
+| Subnet | private (`aws_subnet.private[0]`) — no public IP |
+| `DirectInternetAccess` | `Disabled` |
+| `RootAccess` | `Disabled` |
+| Neptune grant | `ReadDataViaQuery`, `GetEngineStatus`, `GetQueryStatus`, `GetGraphSummary` — read only, no `neptune-db:*` |
+| SageMaker grant | minimal inline policy; **not** `AmazonSageMakerFullAccess` |
+| Explorer image | mirrored into private ECR and pulled via `ecr.api`/`ecr.dkr`/S3 — ECR Public has no PrivateLink |
+
+Operators reach the UI through the SageMaker-hosted proxy URL, a control-plane path.
+`DirectInternetAccess` governs the notebook's outbound egress only, so disabling it
+introduces no VPN or bastion requirement.
+
+**History worth keeping:** between 2026-08-07 and 2026-09-11 this notebook ran in a
+dedicated *public* subnet behind an internet gateway, with root access, `neptune-db:*`,
+and `AmazonSageMakerFullAccess`. It was deployed out-of-band via Terraform whose HCL was
+never committed, so `plan` from a clean checkout proposed destroying it. ADR-0019 records
+the decision to keep the capability and harden it rather than bless the deployed shape.
 
 ---
 

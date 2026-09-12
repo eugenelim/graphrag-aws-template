@@ -60,6 +60,8 @@ def tfplan(tmp_path_factory):
                     "connection/12345678-1234-1234-1234-123456789012"  # pragma: allowlist secret
                 ),
                 "-var=github_repo_id=owner/repo",
+                "-var=asset_inventory_tag_key=inventory-id",
+                "-var=asset_inventory_tag_value=000000",
             ],
             cwd=infra_dir,
             check=True,
