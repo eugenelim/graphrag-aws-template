@@ -102,6 +102,27 @@ variable "user" {
   default     = "unspecified"
 }
 
+# ── Asset-inventory attribution tag (optional) ────────────────────────────────
+#
+# Many organisations run an asset-inventory or CMDB tool that expects every cloud
+# resource to carry a tag attributing it to an owning application, and raise a finding
+# when one is missing. The tag KEY and VALUE are both deployer-specific, so both are
+# variables with empty defaults: this template stays neutral, and adopters supply their
+# own convention in the gitignored terraform.tfvars. Leave them unset to emit no tag.
+
+variable "asset_inventory_tag_key" {
+  type        = string
+  description = "Tag key your asset-inventory tooling reads to attribute a resource to an owning application. Leave empty to emit no attribution tag. Case-sensitive — match your tooling exactly."
+  default     = ""
+}
+
+variable "asset_inventory_tag_value" {
+  type        = string
+  description = "Value for asset_inventory_tag_key — typically an application identifier. Treated as sensitive so it stays out of plan output and committed fixtures; keep the real value in the gitignored terraform.tfvars."
+  default     = ""
+  sensitive   = true
+}
+
 # ── OTEL / ADOT variables ──────────────────────────────────────────────────────
 
 variable "adot_layer_arn" {
@@ -130,12 +151,16 @@ variable "codestar_connection_arn" {
     (Connections → Create connection → GitHub) and must be in AVAILABLE status before the
     CodePipeline pipeline can pull from GitHub. Terraform provisions the pipeline but
     cannot complete the OAuth handshake.
-    Format: arn:aws:codestar-connections:<region>:<account-id>:connection/<uuid>
+    AWS renamed the service to CodeConnections, and connections created since carry
+    `arn:aws:codeconnections:...`. Both spellings are live and valid — the deployed
+    connection for this stack uses the newer one — so both are accepted.
+    Format: arn:aws:codeconnections:<region>:<account-id>:connection/<uuid>
+        or: arn:aws:codestar-connections:<region>:<account-id>:connection/<uuid>
   DESC
 
   validation {
-    condition     = can(regex("^arn:aws:codestar-connections:[a-z0-9-]+:[0-9]{12}:connection/[0-9a-f-]+$", var.codestar_connection_arn))
-    error_message = "codestar_connection_arn must be a valid CodeStar connection ARN: arn:aws:codestar-connections:<region>:<account-id>:connection/<uuid>."
+    condition     = can(regex("^arn:aws:(codeconnections|codestar-connections):[a-z0-9-]+:[0-9]{12}:connection/[0-9a-f-]+$", var.codestar_connection_arn))
+    error_message = "codestar_connection_arn must be a valid CodeConnections/CodeStar connection ARN: arn:aws:codeconnections:<region>:<account-id>:connection/<uuid> (the legacy codestar-connections prefix is also accepted)."
   }
 }
 

@@ -93,3 +93,13 @@ output "ingestion_status_table_name" {
   description = "DynamoDB ingestion status registry table (run + doc items; INGESTION_STATUS_TABLE env var on the Fargate task)."
   value       = aws_dynamodb_table.ingestion_status.name
 }
+
+output "graph_explorer_url" {
+  description = "Neptune Graph Explorer UI, served through the SageMaker notebook proxy (ADR-0019). Reachable without VPN — the notebook itself has no inbound public path."
+  value       = "https://${aws_sagemaker_notebook_instance.graph_explorer.url}/proxy/9250/explorer/"
+}
+
+output "graph_explorer_image_repo" {
+  description = "Private ECR repo the Graph Explorer image must be mirrored into before first notebook start (ADR-0019 prerequisite; ECR Public has no PrivateLink)."
+  value       = aws_ecr_repository.graph_explorer.repository_url
+}

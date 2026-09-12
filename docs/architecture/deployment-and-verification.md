@@ -164,6 +164,39 @@ identical to the pre-refactor template (spec
   probe) and then sweeps the auto-created `/aws/lambda/<fn>` log groups CDK doesn't
   manage. `deploy.sh` fills the `User` governance tag from the caller identity.
 
+## Pre-apply: mirror the Graph Explorer image (Terraform, ADR-0019)
+
+**Do this before the first `terraform apply`, or the notebook starts with no explorer.**
+The Graph Explorer notebook sits in a private subnet with no route to the internet
+(ADR-0002 no-NAT), and **ECR Public has no PrivateLink endpoint** — so the notebook
+cannot pull `public.ecr.aws/neptune/graph-explorer` directly. The image must be mirrored
+into the account's own ECR first, from a machine that does have internet access:
+
+```bash
+REGION=us-east-1
+ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+REPO="$ACCOUNT.dkr.ecr.$REGION.amazonaws.com/graphrag-graph-explorer"
+TAG=sagemaker-3.2.0   # must match local.graph_explorer_tag in notebook.tf
+
+aws ecr get-login-password --region "$REGION" \
+  | docker login --username AWS --password-stdin "${REPO%%/*}"
+
+docker pull  "public.ecr.aws/neptune/graph-explorer:$TAG"
+docker tag   "public.ecr.aws/neptune/graph-explorer:$TAG" "$REPO:$TAG"
+docker push  "$REPO:$TAG"
+```
+
+Chicken-and-egg note: the ECR repository itself is created by Terraform, so the order is
+`terraform apply` → mirror → start (or restart) the notebook. If the notebook comes up
+first, its `OnStart` script fails and the failure is visible in
+`/var/log/sagemaker/LifecycleConfigOnStart.log` on the instance — a loud failure, not a
+silent one. Re-running the mirror and restarting the notebook is sufficient to recover.
+
+Upgrading the explorer is the same two steps in the same order: re-mirror the new tag,
+bump `local.graph_explorer_tag`, apply, restart.
+
+---
+
 ## Post-apply: OpenSearch FGAC role mappings (Terraform)
 
 **`terraform apply` alone does not produce a working stack.** The `graphrag-vectors`
