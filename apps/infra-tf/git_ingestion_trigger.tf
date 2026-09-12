@@ -131,15 +131,25 @@ resource "aws_iam_role_policy" "codepipeline_s3" {
   })
 }
 
-# CodePipeline must call UseConnection to pull from GitHub via the CodeStar connection.
+# CodePipeline must call UseConnection to pull from GitHub via the connection.
+#
+# BOTH action namespaces are granted. AWS renamed the service to CodeConnections, and
+# which namespace is evaluated depends on the connection's own ARN prefix — the deployed
+# connection here is arn:aws:codeconnections:..., so granting only the legacy
+# codestar-connections action leaves the pipeline unable to pull. Granting both keeps
+# this working against connections of either vintage, which matters for a
+# clone-and-deploy template where the adopter creates their own connection.
 resource "aws_iam_role_policy" "codepipeline_codestar" {
   name = "codestar-connection-use"
   role = aws_iam_role.codepipeline_role.id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Effect   = "Allow"
-      Action   = "codestar-connections:UseConnection"
+      Effect = "Allow"
+      Action = [
+        "codeconnections:UseConnection",
+        "codestar-connections:UseConnection",
+      ]
       Resource = var.codestar_connection_arn
     }]
   })
