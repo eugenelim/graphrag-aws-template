@@ -218,32 +218,48 @@ resource "aws_sagemaker_notebook_instance_lifecycle_configuration" "graph_explor
 
   # No OnCreate pull: the image comes from the account's own ECR, so OnStart both
   # authenticates and pulls. Idempotent — safe across stop/start cycles.
+  # MUST return within 5 minutes or SageMaker marks the instance Failed — pulling a
+  # ~170 MB image over VPC endpoints does not reliably fit in that budget, and the first
+  # attempt at this timed out and failed the notebook outright. So the hook only detaches
+  # a background worker and exits; the pull and run continue after it returns. This is
+  # AWS's documented pattern for long-running lifecycle work.
+  #
+  # Progress and failures land in /var/log/graph-explorer-start.log on the instance,
+  # which is where to look if the UI is not up a few minutes after the notebook reports
+  # InService.
   on_start = base64encode(<<-EOT
     #!/bin/bash
-    set -ex
+    set -eux
 
     REPO="${aws_ecr_repository.graph_explorer.repository_url}"
     TAG="${local.graph_explorer_tag}"
+    NEPTUNE="https://${aws_neptune_cluster.main.endpoint}:8182"
+    REGION="${var.aws_region}"
 
-    aws ecr get-login-password --region ${var.aws_region} \
-      | docker login --username AWS --password-stdin "$${REPO%%/*}"
+    nohup bash -c "
+      set -eux
+      aws ecr get-login-password --region '$${REGION}' \
+        | docker login --username AWS --password-stdin \"\$${REPO%%/*}\"
 
-    docker pull "$${REPO}:$${TAG}"
+      docker pull '$${REPO}:$${TAG}'
 
-    docker stop graph-explorer 2>/dev/null || true
-    docker rm   graph-explorer 2>/dev/null || true
+      docker stop graph-explorer 2>/dev/null || true
+      docker rm   graph-explorer 2>/dev/null || true
 
-    docker run -d \
-      --name graph-explorer \
-      --restart always \
-      -p 9250:9250 \
-      -e "graph-db-connection-url=https://${aws_neptune_cluster.main.endpoint}:8182" \
-      -e "AWS_REGION=${var.aws_region}" \
-      -e "SERVICE_TYPE=neptune-db" \
-      -e "USING_PROXY_SERVER=true" \
-      -e "IAM=true" \
-      -e "LOG_LEVEL=info" \
-      "$${REPO}:$${TAG}"
+      docker run -d \
+        --name graph-explorer \
+        --restart always \
+        -p 9250:9250 \
+        -e 'graph-db-connection-url=$${NEPTUNE}' \
+        -e 'AWS_REGION=$${REGION}' \
+        -e 'SERVICE_TYPE=neptune-db' \
+        -e 'USING_PROXY_SERVER=true' \
+        -e 'IAM=true' \
+        -e 'LOG_LEVEL=info' \
+        '$${REPO}:$${TAG}'
+    " > /var/log/graph-explorer-start.log 2>&1 &
+
+    exit 0
   EOT
   )
 }
