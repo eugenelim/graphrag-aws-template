@@ -33,3 +33,19 @@ opensearch_master_user_arn = "arn:aws:iam::000000000000:role/YourOpenSearchMaste
 
 # Region has a default of us-east-1 in variables.tf; uncomment to override.
 # aws_region = "us-east-1"
+
+# ARN of the CodeConnections (formerly CodeStar Connections) connection to GitHub, used
+# by the git-mirror CodePipeline. Created in the console and must be AVAILABLE before
+# apply — Terraform provisions the pipeline but cannot complete the OAuth handshake.
+# Both arn:aws:codeconnections:... and the legacy arn:aws:codestar-connections:... are
+# accepted; connections created recently use the former.
+codestar_connection_arn = "arn:aws:codeconnections:us-east-1:000000000000:connection/00000000-0000-0000-0000-000000000000"
+
+# owner/repo of the GitHub repository the pipeline mirrors to S3.
+github_repo_id = "your-org/your-repo"
+
+# Asset-inventory attribution tag. Many orgs run a CMDB/inventory tool that expects an
+# owning-application tag on every resource. Both key and value are yours to choose;
+# leave unset to emit no tag. Keep the real value here in terraform.tfvars (gitignored).
+asset_inventory_tag_key   = "your-inventory-tag-key"
+asset_inventory_tag_value = "000000"
