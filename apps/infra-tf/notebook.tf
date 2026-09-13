@@ -7,8 +7,8 @@
 # AmazonSageMakerFullAccess.
 #
 # NOT CODIFIED, deliberately: the dedicated public subnet (10.0.2.0/24), the internet
-# gateway, and its route table. Those exist in live state and must be removed when this
-# lands — see the reconciliation note in docs/architecture/deployment-and-verification.md.
+# gateway, and its route table. Those were removed from the account during the 2026-09-12
+# reconcile; nothing here should reintroduce them.
 #
 # PREREQUISITE. The explorer image must be mirrored into this account before the notebook
 # starts, because ECR Public has no PrivateLink endpoint and this notebook has no route to
@@ -24,6 +24,13 @@
 locals {
   # Pinned explorer version. Bumping this is a two-step change: re-mirror, then apply.
   graph_explorer_tag = "sagemaker-3.2.0"
+
+  # Notebook name is FIXED so the proxy hostname is computable without referencing the
+  # instance itself — the lifecycle config is consumed BY the notebook, so reading
+  # aws_sagemaker_notebook_instance.graph_explorer.url here would be a dependency cycle.
+  # Same trick as the fixed domain name in opensearch.tf.
+  graph_explorer_notebook_name = "graphrag-neptune-explorer"
+  graph_explorer_host          = "${local.graph_explorer_notebook_name}.notebook.${var.aws_region}.sagemaker.aws"
 }
 
 # ── Mirrored image ───────────────────────────────────────────────────────────
@@ -236,34 +243,75 @@ resource "aws_sagemaker_notebook_instance_lifecycle_configuration" "graph_explor
     #!/bin/bash
     set -eux
 
+    # The worker is written to a FILE and then invoked, rather than passed to sudo as a
+    # multi-line string. `sudo -u ec2-user -i bash -c '<script>'` joins its arguments and
+    # re-parses them through a login shell: newlines collapse, every comment swallows the
+    # line after it, and variable assignments vanish. That produced
+    # "NOTEBOOK_HOST: unbound variable" with the script body echoed into the log. A file
+    # has none of those problems.
+    #
+    # It must run as ec2-user because AL2023 Docker is ROOTLESS and owned by that user —
+    # as root, docker talks to /var/run/docker.sock and fails with
+    # "Cannot connect to the Docker daemon". `-i` gives the login shell that sets up the
+    # rootless DOCKER_HOST.
+    cat > /usr/local/bin/start-graph-explorer.sh <<'WORKER_EOF'
+    #!/bin/bash
+    set -eux
+
     REPO="${aws_ecr_repository.graph_explorer.repository_url}"
     TAG="${local.graph_explorer_tag}"
     NEPTUNE="https://${aws_neptune_cluster.main.endpoint}:8182"
     REGION="${var.aws_region}"
+    NOTEBOOK_HOST="${local.graph_explorer_host}"
 
-    nohup bash -c "
-      set -eux
-      aws ecr get-login-password --region '$${REGION}' \
-        | docker login --username AWS --password-stdin \"\$${REPO%%/*}\"
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+      if aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$${REPO%%/*}"; then
+        break
+      fi
+      echo "ecr login attempt $i failed; retrying in 15s"
+      sleep 15
+    done
 
-      docker pull '$${REPO}:$${TAG}'
+    for i in 1 2 3 4 5; do
+      if docker pull "$REPO:$TAG"; then
+        break
+      fi
+      echo "pull attempt $i failed; retrying in 20s"
+      sleep 20
+    done
 
-      docker stop graph-explorer 2>/dev/null || true
-      docker rm   graph-explorer 2>/dev/null || true
+    docker rm -f graph-explorer 2>/dev/null || true
 
-      docker run -d \
-        --name graph-explorer \
-        --restart always \
-        -p 9250:9250 \
-        -e 'graph-db-connection-url=$${NEPTUNE}' \
-        -e 'AWS_REGION=$${REGION}' \
-        -e 'SERVICE_TYPE=neptune-db' \
-        -e 'USING_PROXY_SERVER=true' \
-        -e 'IAM=true' \
-        -e 'LOG_LEVEL=info' \
-        '$${REPO}:$${TAG}'
-    " > /var/log/graph-explorer-start.log 2>&1 &
+    # PUBLIC_OR_PROXY_ENDPOINT must carry the /proxy/9250 base path, or the UI builds a
+    # Default Connection whose every request is routed to the SageMaker Jupyter proxy and
+    # returns 403 with a Jupyter HTML body. GRAPH_TYPE=sparql because this cluster is
+    # RDF/SPARQL (ADR-0011). Verified end-to-end in a browser.
+    docker run -d \
+      --name graph-explorer \
+      --restart always \
+      -p 9250:9250 \
+      -e "PUBLIC_OR_PROXY_ENDPOINT=https://$NOTEBOOK_HOST/proxy/9250" \
+      -e "GRAPH_EXP_ENV_ROOT_FOLDER=/proxy/9250/explorer" \
+      -e "GRAPH_CONNECTION_URL=$NEPTUNE" \
+      -e "GRAPH_TYPE=sparql" \
+      -e "SERVICE_TYPE=neptune-db" \
+      -e "USING_PROXY_SERVER=true" \
+      -e "IAM=true" \
+      -e "AWS_REGION=$REGION" \
+      -e "PROXY_SERVER_HTTPS_CONNECTION=false" \
+      -e "GRAPH_EXP_HTTPS_CONNECTION=false" \
+      -e "LOG_LEVEL=info" \
+      "$REPO:$TAG"
+    WORKER_EOF
 
+    chmod 0755 /usr/local/bin/start-graph-explorer.sh
+
+    # setsid + closed stdin so the hook returns immediately. SageMaker fails the instance
+    # if OnStart has not returned within 5 minutes, and the image pull alone can exceed it.
+    setsid nohup sudo -u ec2-user -i /usr/local/bin/start-graph-explorer.sh \
+      > /var/log/graph-explorer-start.log 2>&1 < /dev/null &
+
+    echo "lifecycle hook returning after $${SECONDS}s"
     exit 0
   EOT
   )
@@ -273,7 +321,7 @@ resource "aws_sagemaker_notebook_instance_lifecycle_configuration" "graph_explor
 # through the SageMaker-hosted proxy URL (a control-plane path), so disabling direct
 # internet access costs no accessibility — see ADR-0019.
 resource "aws_sagemaker_notebook_instance" "graph_explorer" {
-  name          = "graphrag-neptune-explorer"
+  name          = local.graph_explorer_notebook_name
   instance_type = "ml.t3.medium"
   role_arn      = aws_iam_role.notebook_role.arn
   volume_size   = 20
@@ -283,12 +331,17 @@ resource "aws_sagemaker_notebook_instance" "graph_explorer" {
   direct_internet_access = "Disabled"
   root_access            = "Disabled"
 
-  # platform_identifier is deliberately unset. The out-of-band instance runs
-  # notebook-al2023-v1, but the pinned provider (hashicorp/aws 5.100.0) validates this
-  # field against a client-side allowlist that predates AL2023 and rejects the value.
-  # Leaving it unset lets AWS apply its current default rather than pinning the older
-  # notebook-al2-v3. Set it explicitly once the provider pin moves — tracked as a
-  # follow-up, not worth a provider bump on its own.
+  # platform_identifier is left unset ON PURPOSE, and the reason is not cosmetic.
+  #
+  # SageMaker now accepts only notebook-al2023-v1 here — AL2 platforms are retired and
+  # CreateNotebookInstance rejects notebook-al2-v3 with "not supported for this service".
+  # The pinned provider (hashicorp/aws 5.100.0) in turn validates this field against a
+  # client-side allowlist that predates AL2023 and refuses the one value AWS accepts, so
+  # the field cannot be set at all until the provider pin moves. Unset lets AWS apply
+  # al2023-v1, which is the only option anyway.
+  #
+  # AL2023 runs Docker ROOTLESS under ec2-user, which is why the lifecycle script below
+  # does its work via `sudo -u ec2-user -i` rather than as root.
   lifecycle_config_name = aws_sagemaker_notebook_instance_lifecycle_configuration.graph_explorer.name
 
   tags = { Name = "graphrag-neptune-explorer" }
