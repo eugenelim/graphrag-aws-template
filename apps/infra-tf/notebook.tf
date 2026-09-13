@@ -133,8 +133,13 @@ resource "aws_security_group" "notebook_sg" {
   # cannot be repointed until the replacement group exists. The destroy then retries for
   # 15 minutes and fails. name_prefix makes create-before-destroy safe — the two groups
   # get distinct generated names rather than colliding. Hit for real on 2026-09-11.
+  # ignore_changes = [egress] matches every other compute SG here: egress lives in
+  # aws_vpc_security_group_egress_rule resources, and without this the SG resource's
+  # `egress = []` fights them on every plan — a perpetual diff that deletes the rules and
+  # recreates them forever. Omitting it was an oversight caught by a post-apply plan.
   lifecycle {
     create_before_destroy = true
+    ignore_changes        = [egress]
   }
 }
 
