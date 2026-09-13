@@ -336,17 +336,15 @@ resource "aws_sagemaker_notebook_instance" "graph_explorer" {
   direct_internet_access = "Disabled"
   root_access            = "Disabled"
 
-  # platform_identifier is left unset ON PURPOSE, and the reason is not cosmetic.
+  # PINNED. AL2023 is the only platform SageMaker still accepts here (notebook-al2-v3 is
+  # retired and CreateNotebookInstance rejects it), and the whole lifecycle design depends
+  # on this platform's rootless-Docker model — see the OnStart script above. Leaving it
+  # unset let AWS choose, which is silent drift waiting to happen on a capability that is
+  # this sensitive to the platform.
   #
-  # SageMaker now accepts only notebook-al2023-v1 here — AL2 platforms are retired and
-  # CreateNotebookInstance rejects notebook-al2-v3 with "not supported for this service".
-  # The pinned provider (hashicorp/aws 5.100.0) in turn validates this field against a
-  # client-side allowlist that predates AL2023 and refuses the one value AWS accepts, so
-  # the field cannot be set at all until the provider pin moves. Unset lets AWS apply
-  # al2023-v1, which is the only option anyway.
-  #
-  # AL2023 runs Docker ROOTLESS under ec2-user, which is why the lifecycle script below
-  # does its work via `sudo -u ec2-user -i` rather than as root.
+  # Requires provider >= 6.x: the 5.x line validates this field against a client-side
+  # allowlist that predates AL2023 and refuses the only value AWS accepts.
+  platform_identifier   = "notebook-al2023-v1"
   lifecycle_config_name = aws_sagemaker_notebook_instance_lifecycle_configuration.graph_explorer.name
 
   tags = { Name = "graphrag-neptune-explorer" }
