@@ -263,6 +263,11 @@ resource "aws_sagemaker_notebook_instance_lifecycle_configuration" "graph_explor
     NEPTUNE="https://${aws_neptune_cluster.main.endpoint}:8182"
     REGION="${var.aws_region}"
     NOTEBOOK_HOST="${local.graph_explorer_host}"
+    # Hoisted to its own line purely so the allowlist pragma has somewhere to live:
+    # detect-secrets scores this path as a high-entropy base64 string, and the pragma
+    # cannot sit on the `docker run` line below because that line ends in a shell
+    # continuation backslash. Not a secret — a URL path.
+    EXPLORER_ROOT="/proxy/9250/explorer" # pragma: allowlist secret
 
     for i in 1 2 3 4 5 6 7 8 9 10; do
       if aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$${REPO%%/*}"; then
@@ -291,7 +296,7 @@ resource "aws_sagemaker_notebook_instance_lifecycle_configuration" "graph_explor
       --restart always \
       -p 9250:9250 \
       -e "PUBLIC_OR_PROXY_ENDPOINT=https://$NOTEBOOK_HOST/proxy/9250" \
-      -e "GRAPH_EXP_ENV_ROOT_FOLDER=/proxy/9250/explorer" \
+      -e "GRAPH_EXP_ENV_ROOT_FOLDER=$EXPLORER_ROOT" \
       -e "GRAPH_CONNECTION_URL=$NEPTUNE" \
       -e "GRAPH_TYPE=sparql" \
       -e "SERVICE_TYPE=neptune-db" \
