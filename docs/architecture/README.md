@@ -21,8 +21,25 @@ The full platform design in three views. (30–45 min)
 | View | What you'll learn |
 |---|---|
 | **Conceptual** | The two knowledge kinds (normative vs descriptive) and why they must not share a retrieval path; the OWL ontology and named graph partitioning; PII labelling model; git as canonical source |
-| **Logical** | MCP tool server (FastMCP + Mangum); 6 generic tools and when each is called; server-side routing strategy matrix; medallion ingestion pipeline (Bronze → Silver → Gold → Serving); format-specific extraction router; cleansing gates; PROV-O provenance and citation format; OTEL span tree |
+| **Logical** | MCP tool server (FastMCP + Mangum); 6 generic tools and when each is called; server-side routing strategy matrix; citation format; OTEL span tree |
 | **Physical** | AWS resource inventory and config; IAM roles (4 roles, no wildcard Resource); three client connection modes (local mock / API Gateway HTTP API / Function URL SigV4); risks and failure modes with recovery paths |
+
+---
+
+### 2a · Ingestion pipeline — [`biz-ops-knowledge-graph/ingestion.md`](biz-ops-knowledge-graph/ingestion.md)
+
+The ingestion pipeline's own architecture, split out of the platform design because
+it holds a live architectural decision the rest of the platform does not share.
+(20–30 min)
+
+Covers repository acquisition, the commit-SHA delta, working storage and the task
+filesystem, the medallion layers, the extraction and cleansing pipelines, the SHACL
+gate, the PROV-O provenance model, and the ingestion status registry.
+
+> **Contains a known-broken path.** Repository acquisition as deployed cannot
+> perform the delta the pipeline depends on. Four candidate replacements are under
+> review in [RFC-0005](../rfc/0005-git-repository-acquisition-mechanism.md) and logged as
+> [ADR-0021](../adr/0021-git-repository-acquisition-mechanism.md) (Proposed).
 
 ---
 
