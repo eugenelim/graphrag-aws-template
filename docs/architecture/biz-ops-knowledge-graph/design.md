@@ -1,13 +1,24 @@
 # Business Operations Knowledge Graph — Architecture
 
 **Status:** Draft  
-**Last updated:** 2026-08-05  
+**Last updated:** 2026-09-21  
 **Initiative:** ini-002 · M2  
-**Supersedes:** [`graphrag-aws-architecture/design.md`](../graphrag-aws-architecture/design.md) (Kubernetes demo corpus design)
+**Supersedes:** [`graphrag-aws-architecture/design.md`](../_archive/graphrag-aws-architecture/design.md) (Kubernetes demo corpus design)
 
 > Three views — conceptual, logical, physical — of the business operations knowledge
-> platform. Read top-to-bottom for a full picture; jump to the physical view for
-> infrastructure specifics.
+> platform. Read top-to-bottom for the platform picture; ingestion internals are in
+> [`ingestion.md`](ingestion.md), and the physical view carries infrastructure specifics.
+
+## Architecture set
+
+This document is the index for the platform's architecture set. It holds the scope,
+the structural model, the contracts between components, and the invariants no single
+component owns. It does not restate child internals.
+
+| Document | Covers |
+|---|---|
+| **This document** | Conceptual model, MCP serving surface, retrieval and routing, physical AWS footprint, cross-cutting risks |
+| [`ingestion.md`](ingestion.md) | The ingestion pipeline: repository acquisition, delta detection, working storage, medallion layers, extraction and cleansing, SHACL gate, provenance model, status registry |
 
 ---
 
@@ -149,27 +160,31 @@ happens during ingestion and determines which partition graph receives the tripl
 
 ### Git as the canonical source
 
-Documents enter the platform from a git repository. The ingestion pipeline follows
-a three-layer medallion architecture (Bronze → Silver → Gold → Serving). See the
-[Medallion architecture](#medallion-architecture) section in the logical view for
-the full pipeline.
-
-1. Clones or pulls the source repo (Bronze — no S3 copy)
-2. Diffs against the last-ingested commit SHA (stored in S3 manifest)
-3. For added/modified files: extracts Markdown (Silver) → cleanses → classifies → chunks + embeds (Gold) → INSERT INTO partition graph + OpenSearch upsert
-4. For deleted/renamed files: looks up partition from `urn:graph:taxonomy` → DELETE WHERE by doc URI from partition graph + chunks → removes OpenSearch docs by `doc_uri` filter
-5. Stores the new commit SHA in S3
+Documents enter the platform from a git repository, which is the canonical source
+of truth (Bronze). The ingestion pipeline detects what changed since the last run,
+stages each changed document through a three-layer medallion (Bronze → Silver →
+Gold), and updates Neptune and OpenSearch so neither store carries triples or
+chunks for content that no longer exists.
 
 The document URI (`urn:doc:{repo}:{path}`) is the stable RDF subject key across both
 stores. It is never used as a graph name.
 
-> **Git remote egress:** the Fargate ingestion task must reach the git remote
-> (`git clone` / `git pull`). The **sole sanctioned path** is a CodePipeline
-> source stage that mirrors the repo to S3, with the Fargate task reading from
-> S3 — keeping the ingestion task fully VPC-private. A NAT gateway on the
-> ingestion subnet is **out of bounds** (RFC-0004 § Security posture): it would
-> reopen the no-NAT egress posture ADR-0002's carried-forward controls depend on.
+**The ingestion pipeline has its own architecture document.** Everything below the
+"what changed, and what happens to it" line — repository acquisition, the delta
+mechanism, working storage, the medallion layers, extraction and cleansing, the
+SHACL gate, the provenance model, and the ingestion status registry — lives in
+[`ingestion.md`](ingestion.md). It was split out because it holds a
+live architectural decision the rest of the platform does not share, owns the only
+Neptune write credential, fails independently of the query path, and is a batch
+workload rather than a request-response one.
 
+> **Repository acquisition is an open decision, not a settled one.** The mechanism
+> currently described by ADR-0016 §2 is not the mechanism that is deployed, and the
+> deployed mechanism cannot perform the delta it is supposed to perform. Four
+> candidate replacements are under review in
+> [RFC-0005](../../rfc/0005-git-repository-acquisition-mechanism.md). Until that RFC
+> closes, treat the acquisition path in the child document as *described-as-built
+> and known-broken*, not as a target design.
 ### PII handling — flag and surface, not redact
 
 When the extraction pipeline detects PII in a document:
@@ -486,104 +501,21 @@ sequenceDiagram
     M-->>C: union of SPARQL and vector results (exhaustive, fail if unavailable)
 ```
 
-### Ingestion data flow
+### Ingestion — see the child document
 
-```mermaid
-sequenceDiagram
-    participant G as Git Repo (Bronze)
-    participant F as Fargate Ingestion Task
-    participant S as S3 (Silver + Gold + manifest)
-    participant DDB as DynamoDB (ingestion status)
-    participant TX as Textract (scanned PDFs)
-    participant NP as Neptune SPARQL
-    participant OS as OpenSearch
-    participant BD as Bedrock
+The ingestion pipeline is described in [`ingestion.md`](ingestion.md).
+Its contract with the rest of the platform is small enough to state here in full, and
+that contract is the only part of ingestion this document owns:
 
-    F->>DDB: run item → RUNNING
-    F->>G: git pull / clone
-    F->>S: load last_commit_sha
-    F->>G: git diff last_sha..HEAD --name-status
-    G-->>F: list of added, modified, and deleted files
-
-    loop for each added/modified file [Silver gate]
-        F->>F: route to extractor by format (pandoc/docling/markitdown/Textract)
-        alt scanned PDF
-            F->>TX: OCR extract
-            TX-->>F: text blocks
-        end
-        F->>F: cleanse (strip headers, detect PII, quality gates)
-        alt quality gate failed
-            F->>NP: write quarantine record with reason
-            F->>DDB: doc item → QUARANTINED (reason)
-        else gate passed
-            F->>S: write Silver artifact (Markdown + cleansing report)
-            Note over F,S: Gold layer
-            F->>F: classify rdf:type, emit RDF triples + PROV-O triples
-            F->>F: SHACL validate RDF triples against shape library (pyshacl)
-            alt SHACL violation
-                F->>NP: write quarantine record with SHACL violation report
-                F->>DDB: doc item → QUARANTINED (SHACL report)
-            else SHACL valid
-                F->>BD: LLM API call for chunk embeddings
-                F->>S: write Gold artifact (chunks + vectors)
-                F->>NP: INSERT triples into partition graph + taxonomy index
-                F->>OS: upsert chunks with doc_uri, partition, pii_flagged
-                F->>DDB: doc item → INGESTED (commit sha)
-            end
-        end
-    end
-
-    loop for each deleted file
-        F->>NP: lookup partition from taxonomy index
-        NP-->>F: partition graph URI
-        F->>NP: DELETE doc triples and chunk triples from partition graph
-        F->>OS: delete by doc_uri
-        F->>DDB: doc item → DELETED
-    end
-
-    F->>S: store new commit_sha
-    F->>DDB: run item → SUCCEEDED (counts)
-```
-
-### Ingestion status registry and failure alerting
-
-The S3 manifest stores only the last-ingested commit SHA — it is the delta base,
-not an operational record. Two additions close the "silent ingestion failure" gap
-(context-ontology gap inventory P0, 2026-08-05):
-
-**Status registry — one DynamoDB table (`graphrag-ingestion-status`, on-demand):**
-
-| Item kind | PK | Attributes |
+| Contract | Direction | What the platform relies on |
 |---|---|---|
-| Run | `run#<pipeline_execution_id>` | `status` (RUNNING → SUCCEEDED \| FAILED) · `started_at` · `finished_at` · `docs_ingested` · `docs_quarantined` · `docs_deleted` · `error` |
-| Document | `doc#<doc_uri>` | `status` (INGESTED \| QUARANTINED \| DELETED \| FAILED) · `commit_sha` · `run_id` · `updated_at` · `quarantine_reason` |
+| Named-graph writes | Ingestion → Neptune | Triples land in `urn:graph:normative`, `urn:graph:descriptive`, or `urn:graph:quarantine`, never across a partition boundary. The taxonomy graph `urn:graph:taxonomy` carries the `biz:inPartition` lookup the delete path resolves against. |
+| Chunk upserts | Ingestion → OpenSearch | Chunks carry `doc_uri`, `named_graph`, and `pii_flagged`, so the mandatory partition filter and the PII default filter both work at query time. |
+| Orphan removal | Ingestion → both stores | A document removed from the corpus leaves no triples in Neptune and no chunks in OpenSearch. Only `ingestion_task_role` can issue the SPARQL `DROP`/`DELETE` this needs. |
+| Provenance | Ingestion → serving | Every chunk and document carries PROV-O triples that the citation builder resolves. The provenance model is defined in the child document; the citation format it feeds is defined below. |
+| Write isolation | Platform → ingestion | `mcp_lambda_role` is read-only and cannot write or delete graph data. Nothing on the query path may acquire a write grant. |
 
-Write semantics: the Fargate task writes the run item as `RUNNING` at entry,
-a terminal per-document status as each document completes its pipeline pass, and
-the run item's terminal status at exit. A task that crashes mid-run leaves the run
-item at `RUNNING` — combined with the ECS stopped-task alert below, this
-distinguishes a crash from a clean failure and identifies exactly which documents
-were already committed to the stores before the crash.
-
-The registry complements, not replaces, the existing records: the S3 manifest
-remains the git-delta base; the `urn:graph:quarantine` named graph remains the
-data-plane quarantine record (with full SHACL violation reports). The registry is
-the operator-facing index: "what is the state of document X / run Y" without
-reading raw S3 or ECS logs, and the targeting mechanism for selective re-ingest.
-
-**Failure alerting:** an EventBridge rule on `ECS Task State Change`
-(cluster-scoped, `lastStatus = STOPPED`, any container `exitCode ≠ 0` **or**
-`stopCode = TaskFailedToStart` — a task that never started carries no exit code) publishes to
-an SNS topic with an email subscription (same operator address as the Budgets
-alarm). A mid-pipeline failure — OOM, Neptune timeout, sustained Bedrock throttle —
-reaches the operator without console monitoring.
-
-Access: the table is reached via a DynamoDB **gateway** VPC endpoint
-(route-table-associated, no hourly cost — same class as the S3 endpoint, preserving
-the no-NAT posture). Only `ingestion_task_role` gets read/write on the table ARN;
-the query and MCP roles get no access — the registry is operational state, not
-retrieval content.
-
+Nothing else in this document depends on how ingestion works internally.
 ### OTEL observability
 
 Every `ask` / `get_policies` call produces a span tree:
@@ -605,195 +537,6 @@ without data classification sign-off.
 Spans ship to AWS ADOT (Lambda layer) → CloudWatch OTLP endpoint. No NAT required;
 a VPC interface endpoint for `xray` / OTLP handles egress within the private
 subnet.
-
-### Medallion architecture
-
-The ingestion pipeline follows a three-layer medallion architecture. Each layer
-produces immutable S3 artifacts keyed by document URI + commit SHA.
-
-| Layer | Contents | S3 key pattern | Notes |
-|---|---|---|---|
-| **Bronze** | Raw files in the source git repository | Git repo only — no S3 copy | Canonical source of truth |
-| **Silver** | Extracted Markdown + cleansing report per document | `silver/<repo>/<path>/<sha>.md` | Extraction gate; PII flagged here |
-| **Gold** | Text chunks + embedding vectors per document | `gold/<repo>/<path>/<sha>.chunks.json` | SHACL validation gate before Neptune LOAD; written only if shapes valid; feeds both Neptune and OpenSearch |
-| **Serving** | RDF triples (Neptune named graphs) + vector index (OpenSearch) | Neptune + OpenSearch | Live query path |
-
-**Silver is the extraction gate.** A document graduates from Silver to Gold only when:
-- Extraction produced valid Markdown with at least one structural element (heading, paragraph, list)
-- Cleansing passed all quality gates (no zero-content, no binary blob residue)
-- PII detection completed and partition routing is decided
-
-Documents that fail the Silver gate are written to `urn:graph:quarantine` with a
-`biz:quarantineReason` triple — never silently dropped.
-
-**Gold is immutable per commit SHA.** When a document changes (git delta), a new Gold
-artifact is written for the new SHA. Neptune and OpenSearch are updated in-place
-(SPARQL LOAD + OpenSearch upsert), but the S3 artifact history remains for provenance.
-
-> **Naming note:** ADR-0007 refers to a "silver cache" — this is the **Gold layer** in
-> medallion terminology. The Silver layer (extraction + cleansing) is new in ini-002.
-> ADR-0007 will be superseded and its artifact renamed when the new ingestion pipeline ships.
-
-### Extraction pipeline — format router
-
-The Silver-layer extraction step uses a **format-specific router** rather than a
-single universal extractor. This produces higher-quality Markdown across the document
-formats common in business operations corpora.
-
-| Source format | Extractor | Rationale |
-|---|---|---|
-| `.docx` (Word) | **pandoc** (via `pypandoc`) | Highest structural fidelity for Word heading styles, lists, and tables; maps Word styles to GFM headings cleanly; handles complex nested structures and tracked changes |
-| `.pptx` (PowerPoint) | **markitdown** | Only viable pure-Python option; extracts text, tables, speaker notes per slide |
-| `.pdf` (digital, text-layer) | **docling** (IBM, CPU-only, baked weights) | ML layout detection; production-grade GFM table extraction; handles multi-column layouts and complex structures that pdfminer-based tools collapse to run-on paragraphs |
-| `.pdf` (scanned / image-only) | **AWS Textract** (via VPC endpoint) | Managed OCR; no OCR model in the Fargate container; output formatted to Markdown by a post-processor |
-| `.xlsx` (Excel) | **markitdown** (pandas) | DataFrame → Markdown table; `openpyxl` fallback for multi-sheet workbooks |
-| `.md` / `.txt` / `.rst` | Pass-through | Already Markdown or plain text |
-
-**Why not markitdown alone?** markitdown uses `pdfminer.six` for PDF extraction.
-For complex PDF layouts (tabular SOPs, multi-column policies), it degrades tables to
-run-on paragraphs and loses headings — producing poor chunking inputs. It remains the
-right choice for PPTX and XLSX where it wraps `python-pptx` and pandas directly.
-
-**Why not unstructured alone?** The open-source tier bundles LibreOffice and
-detectron2, producing a 5.7 GB+ Docker image that is impractical in Fargate.
-
-**Fargate task sizing for docling:** The ingestion task is sized at 2048 CPU / 8192 MiB.
-The docling PyTorch stack (~2.4 GB model weights) cannot load into a 1 GB task — the
-task OOMs before processing the first PDF. Model weights are baked into the Docker image
-layer at build time; `TRANSFORMERS_OFFLINE=1` and `HF_DATASETS_OFFLINE=1` are set at
-runtime to prevent network calls from the private VPC. CPU inference runs at approximately
-40 s per document; SQS-buffered async ingestion is preferred over synchronous invocation
-for large document batches.
-
-**License note:** `pymupdf4llm` (alternative PDF extractor) is AGPL-licensed; legal
-review required before adoption in a closed-source pipeline. docling is MIT/Apache 2.0.
-
-### Cleansing pipeline
-
-After extraction, each Silver document passes through a cleansing step that runs
-synchronously in the Fargate task before Gold artifact generation.
-
-| Gate | What it checks | On failure |
-|---|---|---|
-| **Minimum content** | Extracted text ≥ 200 characters after stripping artifacts | Route to `urn:graph:quarantine` |
-| **Structure check** | At least one heading or paragraph block | Route to `urn:graph:quarantine` |
-| **Header/footer removal** | Page numbers, running headers, section footers (regex + position heuristic) | Strip and continue |
-| **PII detection** | Email, phone, SSN, credit card, national IDs (regex); optionally AWS Comprehend | Flag `biz:hasPII true`; document stays in its natural partition (routing unchanged by PII flag) |
-| **Binary residue** | Non-UTF-8 blocks > 10% of content (embedded objects encoded as text) | Strip block and continue |
-
-The cleansing report is a JSON sidecar written to S3 alongside the Silver Markdown:
-
-```json
-{
-  "doc_uri": "urn:doc:my-repo:sops/incident-response.md",
-  "sha": "abc123",
-  "extractor": "pandoc",
-  "char_count_raw": 8420,
-  "char_count_clean": 8100,
-  "gates_passed": ["min_content", "structure", "pii_scan"],
-  "gates_failed": [],
-  "pii_flagged": false,
-  "pii_entities_detected": 0,
-  "quarantined": false,
-  "headers_stripped": 12,
-  "binary_blocks_stripped": 0
-}
-```
-
-### SHACL validation gate
-
-After RDF triple emission (Gold layer), the ingestion task runs a SHACL validation pass
-before the Neptune SPARQL `INSERT DATA` statement. This is the third quality gate in the
-pipeline, following the Silver text quality gates (minimum content, structure) and PII
-detection.
-
-**Where it sits:** between `classify rdf:type, emit RDF triples + PROV-O triples` and the
-Neptune `INSERT DATA` call. The validator (`pyshacl`) runs in-process against the in-memory
-RDF graph — no network call, no AWS service.
-
-**One shape per document class, colocated with the OWL ontology:**
-
-```turtle
-biz:PolicyShape
-    a sh:NodeShape ;
-    sh:targetClass biz:Policy ;
-    sh:property [ sh:path schema:name ;       sh:minCount 1 ; sh:datatype xsd:string ] ;
-    sh:property [ sh:path biz:effectiveDate ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:date ] ;
-    sh:property [ sh:path biz:scope ;         sh:minCount 1 ] ;
-    sh:property [ sh:path biz:hasPII ;        sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:boolean ] ;
-    sh:property [ sh:path biz:gitCommitSHA ;  sh:minCount 1 ; sh:datatype xsd:string ] .
-
-biz:SOPShape
-    a sh:NodeShape ;
-    sh:targetClass biz:SOP ;
-    sh:property [ sh:path schema:name ;      sh:minCount 1 ; sh:datatype xsd:string ] ;
-    sh:property [ sh:path biz:inDomain ;     sh:minCount 1 ] ;
-    sh:property [ sh:path biz:hasPII ;       sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:boolean ] ;
-    sh:property [ sh:path biz:gitCommitSHA ; sh:minCount 1 ; sh:datatype xsd:string ] .
-
-biz:ChunkShape
-    a sh:NodeShape ;
-    sh:targetClass biz:Chunk ;
-    sh:property [ sh:path prov:wasDerivedFrom ; sh:minCount 1 ; sh:maxCount 1 ] ;
-    sh:property [ sh:path biz:chunkIndex ;      sh:minCount 1 ; sh:datatype xsd:integer ] ;
-    sh:property [ sh:path biz:embeddingModel ;  sh:minCount 1 ; sh:datatype xsd:string ] .
-```
-
-**On failure:** the document is routed to `urn:graph:quarantine` with a
-`biz:quarantineReason` triple containing the structured SHACL violation report — which
-constraint failed, on which node, and the expected vs actual value. The Gold S3 artifact is
-not written; Neptune and OpenSearch are not updated. Recovery: fix the triple emission
-logic, re-trigger ingestion from the stored commit SHA.
-
-**In CI (no AWS needed):** pyshacl validates against rdflib in-memory — no Neptune
-endpoint, no credentials. The offline gate suite runs SHACL against the fixture corpus
-triples as part of the ingestion pipeline unit tests.
-
-The relationship to OWL: the OWL ontology defines the vocabulary (what classes and
-properties exist); the SHACL shapes define the data contract (what a valid triple emission
-must produce). Together they are the complete machine-readable schema for the knowledge
-graph. `inference="none"` is set on the pyshacl call — no OWL reasoning, consistent with
-ADR-0012.
-
-### Provenance model (PROV-O)
-
-Every document and chunk carries W3C PROV-O provenance triples in the same named
-graph as its content. Provenance is written during Gold artifact generation and loaded
-into Neptune as part of the SPARQL LOAD step.
-
-**Document provenance:**
-
-```turtle
-<urn:doc:my-repo:sops/incident-response.md>
-    a biz:SOP, prov:Entity ;
-    schema:name "Incident Response SOP" ;
-    prov:wasGeneratedBy <urn:activity:ingest:my-repo:abc123> ;
-    prov:generatedAtTime "2026-07-23T10:00:00Z"^^xsd:dateTime ;
-    biz:gitRepo "my-repo" ;
-    biz:gitPath "sops/incident-response.md" ;
-    biz:gitCommitSHA "abc123" ;
-    biz:extractorUsed "pandoc" ;
-    biz:silverArtifact "s3://<bucket>/silver/my-repo/sops/incident-response.md/abc123.md" ;
-    biz:hasPII false .
-```
-
-**Chunk provenance:**
-
-```turtle
-<urn:chunk:my-repo:sops/incident-response.md:3>
-    a biz:Chunk, prov:Entity ;
-    prov:wasDerivedFrom <urn:doc:my-repo:sops/incident-response.md> ;
-    prov:generatedAtTime "2026-07-23T10:00:00Z"^^xsd:dateTime ;
-    schema:name "Initial Response Steps" ;
-    biz:chunkIndex 3 ;
-    biz:embeddingModel "amazon.titan-embed-text-v2:0" ;
-    biz:embeddingDimensions 256 .
-```
-
-Provenance triples live in the same named graph as the document content — not a
-separate provenance graph. This keeps `FROM NAMED` scoping intact: a query against
-`urn:graph:normative` retrieves provenance for normative documents without
-cross-partition leakage.
 
 ### Citation format in MCP responses
 
@@ -851,7 +594,8 @@ flowchart TB
         APIGW["API Gateway HTTP API<br/>API key auth (usage plan)<br/>IDE / human ingress"]
         FU["IAM-auth Function URL<br/>AuthType=AWS_IAM · SigV4<br/>automation + AgentCore ingress"]
         BUD["Budgets alarm<br/>$250/mo · 80% · email"]
-        EB["EventBridge Rule<br/>git push webhook / scheduled"]
+        CP["CodePipeline<br/>git mirror to S3<br/>CodeStarSourceConnection"]
+        EB["EventBridge Rule<br/>CodePipeline SUCCEEDED<br/>→ ecs:RunTask"]
         EBF["EventBridge Rule<br/>ECS task STOPPED<br/>exitCode ≠ 0 · TaskFailedToStart"]
         SNS["SNS topic<br/>ingestion alerts → email"]
 
@@ -869,11 +613,12 @@ flowchart TB
                 NEP[("Neptune Serverless<br/>SPARQL/RDF · min 1 NCU<br/>normative · descriptive<br/>taxonomy · ontology · quarantine")]
                 OS[("OpenSearch<br/>t3.small.search · Lucene HNSW<br/>named_graph filter · encrypted")]
                 S3[("S3<br/>commit SHA manifest<br/>Silver artifacts · Gold artifacts")]
+                GM[("S3 git-mirror<br/>CodePipeline artifact store<br/>versioned")]
                 DDB[("DynamoDB<br/>ingestion-status registry<br/>on-demand · run + doc items")]
             end
 
             subgraph Endpoints["VPC Endpoints (no NAT)"]
-                EPS["s3(gw) · dynamodb(gw) · ecr.api · ecr.dkr<br/>logs · sts · bedrock-runtime<br/>otlp · xray · textract · comprehend"]
+                EPS["s3(gw) · dynamodb(gw) · ecr.api · ecr.dkr<br/>logs · sts · bedrock-runtime<br/>otlp · xray · textract · comprehend (deferred)"]
             end
         end
 
@@ -895,8 +640,11 @@ flowchart TB
     APIGW -->|"proxies to"| ML
     FU -->|"invokes"| ML
 
-    Git -->|"webhook / scheduled"| EB
-    EB --> ING
+    Git -->|"push"| CP
+    CP -->|"artifact"| GM
+    CP -->|"state change"| EB
+    EB -->|"ecs:RunTask"| ING
+    GM -.->|"read — see RFC-0005"| ING
     ING --> S3
     ING --> NEP
     ING --> OS
@@ -925,7 +673,9 @@ flowchart TB
 | **Lambda: SPARQL probe** | Python 3.12 · 60 s | In-VPC Neptune SPARQL round-trip smoke probe |
 | **Lambda: vector probe** | Python 3.12 · 120 s | In-VPC embed→knn round-trip smoke probe |
 | **Fargate ingestion task** | 2048 CPU / 8192 MiB · on-demand | Format router · extract (pandoc/docling/markitdown/Textract) · cleanse · RDF emit · embed · SPARQL LOAD. 8 GB required to load docling model weights (~2.4 GB PyTorch stack) at runtime. |
-| **EventBridge rule** | Git webhook or scheduled pull | Triggers Fargate ingestion on corpus change |
+| **CodePipeline** | `graphrag-git-mirror` · CodeStarSourceConnection source · S3 Deploy to `latest/repo.zip` | Mirrors the git repository to S3 so the ingestion task needs no internet egress. ⚠️ Its `CODE_ZIP` artifact carries no git history — see [RFC-0005](../../rfc/0005-git-repository-acquisition-mechanism.md). |
+| **S3 bucket: git mirror** | Private · AES256 · versioned (CodePipeline requirement) | CodePipeline artifact store; holds the repository mirror the ingestion task reads |
+| **EventBridge rule** | CodePipeline state change · SUCCEEDED · injects `CODEPIPELINE_EXECUTION_ID` | Triggers the Fargate ingestion task once the mirror is published |
 | **DynamoDB table** | `graphrag-ingestion-status` · on-demand · single PK | Ingestion status registry — run items + per-document items; operator lookup and targeted re-ingest |
 | **EventBridge rule (failure)** | ECS Task State Change · STOPPED · exitCode ≠ 0 or TaskFailedToStart · cluster-scoped | Publishes ingestion task failures to SNS — no silent mid-pipeline failures |
 | **SNS topic** | `graphrag-ingestion-alerts` · email subscription | Operator notification channel for failed ingestion runs |
@@ -1005,7 +755,7 @@ and vice versa. The filter composes with any visibility filter.
 | Multi-strategy server-side routing | ADR-0013 | Caller-opaque; rules-first, LLM fallback; normative-first principle |
 | MCP tool server (generic typed tools) | ADR-0014 | One approval covers whole tool set; generic `type?` param over per-class tools |
 | OTEL to AWS ADOT, content off-by-default | ADR-0015 | Observability without disclosure risk; CloudWatch OTLP endpoint, no NAT |
-| Git commit-SHA delta ingestion + medallion | ADR-0016 | Git as canonical source; Bronze/Silver/Gold layers; SPARQL DROP GRAPH for orphan removal |
+| Git commit-SHA delta ingestion + medallion | ADR-0016 · ADR-0021 | Git as canonical source; Bronze/Silver/Gold layers; partition-scoped SPARQL `DELETE WHERE` for orphan removal (ADR-0016 §5 says `DROP GRAPH`; the spec and code use `DELETE WHERE` — see ADR-0021 § Open questions). ⚠️ **§2 (git remote egress) does not match what is deployed and cannot work as written** — under review in [RFC-0005](../../rfc/0005-git-repository-acquisition-mechanism.md) and logged as [ADR-0021](../../adr/0021-git-repository-acquisition-mechanism.md) (Proposed). The delta signal, medallion layers, and artifact keying are unaffected. |
 | Format-specific extraction router | spec-ingestion-extraction-cleanse | pandoc/docling/markitdown/Textract per format; better table and heading fidelity than single extractor |
 | PII flag and surface (not redact) | spec-ingestion-extraction-cleanse | `biz:hasPII true`; document stays in natural partition; default query filter excludes PII-flagged docs; adopters add authz |
 | PROV-O provenance on chunks and documents | spec-provenance-citations | W3C PROV-O triples; git commit SHA; extractor used; Silver/Gold artifact URIs; resolved into MCP citations |
@@ -1017,15 +767,16 @@ and vice versa. The filter composes with any visibility filter.
 
 ## Risks and failure modes
 
+Ingestion-internal failure modes live in [`ingestion.md`](ingestion.md) § Risks, which
+is their single home. This table covers the serving path and the platform as a whole.
+
 | Risk | First to break | Recovery path |
 |---|---|---|
+| **Ingestion-internal failures** | — | See [`ingestion.md`](ingestion.md) § Risks (R1–R9) |
 | **Bedrock throttled on normative path** | `get_policies` hard-fails (exhaustive recall contract); the SPARQL leg alone continues but the vector threshold leg is dropped | Retry-with-backoff in the retrieval executor; on sustained throttle, fall back to SPARQL-only normative retrieval and log a warning citation — do not silently return incomplete results |
 | **Neptune cold-scale latency** | First query after idle period is slow (NCU scale-up from min floor) | Expected behaviour at min 1 NCU; document expected cold latency; smoke probe warms the cluster before production traffic |
 | **OpenSearch node loss** | Vector retrieval unavailable; SPARQL-only path continues | Single-node — no failover. Rebuild: reset commit SHA manifest to trigger full re-ingest from Gold S3 artifacts. RTO depends on corpus size. Acknowledged posture: cost/teaching over HA. |
 | **Neptune data loss** | Graph retrieval and normative path unavailable | Rebuild from Gold S3 artifacts (replay `INSERT DATA` from stored Turtle). Commit SHA manifest reset triggers re-ingest. |
-| **Ingestion task OOM** | Any PDF processed by docling in an under-sized task | Task is sized at 8 GB; do not reduce below 4 GB. If corpus has no PDFs, docling can be excluded and task can downsize. The ECS stopped-task rule fires an SNS alert; the run item stuck at `RUNNING` marks the crash point. |
-| **Git remote unreachable** | Fargate task fails to clone/pull; no new corpus content ingested | SNS alert fires on the non-zero exit; retry via EventBridge; investigate CodePipeline source path. The stored commit SHA is unchanged — no partial state. |
-| **Ingestion fails mid-run after partial store writes** | Some documents committed to Neptune/OpenSearch, run incomplete | Status registry: run item stays `RUNNING`, per-document items show exactly which documents committed. Re-trigger ingestion — the commit-SHA delta plus per-document `commit_sha` fields make the re-run idempotent (upserts). |
 | **Gold S3 artifact missing** | Rebuild from Gold is impossible for affected documents | Re-ingest from git history using the commit SHA stored in the manifest as the base ref. Silver artifacts (if retained) can skip re-extraction. |
 
 **Documented risk acceptances (non-goals):**
