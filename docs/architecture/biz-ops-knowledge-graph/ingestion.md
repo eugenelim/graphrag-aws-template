@@ -1,7 +1,7 @@
 # Ingestion Pipeline — Architecture
 
 **Status:** Draft — describes what is deployed, including the parts that are deployed and non-functional  
-**Last updated:** 2026-09-21  
+**Last updated:** 2026-09-22  
 **Initiative:** ini-002 · M2  
 **Parent:** [`design.md`](design.md) — the platform architecture set index  
 **Open decision:** [RFC-0005](../../rfc/0005-git-repository-acquisition-mechanism.md) → [ADR-0021](../../adr/0021-git-repository-acquisition-mechanism.md) (Proposed) — repository acquisition mechanism
@@ -9,7 +9,9 @@
 > This document describes the ingestion pipeline as it exists today. One part of it
 > — repository acquisition — is described as built *and* as broken, because the
 > deployed mechanism cannot perform the operation the rest of the pipeline depends
-> on. That gap is the subject of RFC-0005 and is not resolved here.
+> on. That gap is the subject of RFC-0005 and is not resolved here. Where this
+> document describes platform capability the pipeline does not use, that capability is
+> stated as vendor contract and the decision to use it is named as open, never taken.
 
 ---
 
@@ -23,7 +25,7 @@
 | Extraction, cleansing, SHACL validation | Citation format returned to callers (parent) |
 | Provenance emission (PROV-O) | Authorisation enforcement (out of scope platform-wide, ADR-0009) |
 | Neptune and OpenSearch write coordination | |
-| Ingestion status registry and failure alerting | |
+| Ingestion status registry and failure alerting | Selection of the acquisition mechanism and of the working-storage persistence axis (RFC-0005: acquisition candidates A–D, plus the separate working-storage candidate E) |
 
 The pipeline's contract with the rest of the platform is stated in the parent
 document and is not repeated here.
@@ -32,8 +34,10 @@ document and is not repeated here.
 
 ## As-built divergence register
 
-Four artifacts describe repository acquisition, and no two of them agree. This
-register is the honest current state; it is the reason RFC-0005 exists.
+Six artifacts touch repository acquisition. The first four each describe a different
+mechanism and no two of them agree; rows 5 and 6 are plumbing that reaches no
+consumer. This register is the honest current state; it is the reason RFC-0005
+exists.
 
 | # | Artifact | What it says | Status |
 |---|---|---|---|
@@ -64,7 +68,7 @@ flowchart LR
     CP -->|"Source: CODE_ZIP"| ART[("S3 artifact store<br/>content-addressed key")]
     CP -->|"Deploy: S3, Extract=false"| ZIP[("S3 git-mirror<br/>latest/repo.zip")]
     CP -->|"state change SUCCEEDED"| EB["EventBridge rule"]
-    EB -->|"ecs:RunTask<br/>+ CODEPIPELINE_EXECUTION_ID"| FG["Fargate ingestion task<br/>private subnet"]
+    EB -->|"ecs:RunTask<br/>+ CODEPIPELINE_EXECUTION_ID"| FG["Fargate ingestion task<br/>private subnets (multi-AZ)"]
     ZIP -.->|"read path is broken —<br/>no history, no per-file keys"| FG
 ```
 
@@ -132,15 +136,27 @@ Per the AWS ECS documentation for Fargate task ephemeral storage:
 `apps/infra-tf/compute.tf` sets no `ephemeral_storage` block, so the ingestion task
 has the 20 GiB default. The image bakes in docling's PyTorch stack (~2.4 GB of model
 weights, per the comments on `aws_ecs_task_definition.ingestion` in `compute.tf`),
-and both its compressed and
-uncompressed forms are subtracted. **Actual free space is therefore materially below
-20 GiB and has never been measured.** Measuring it is a prerequisite for sizing, not
-a follow-up to it.
+and both its compressed and uncompressed forms are subtracted. **Actual free space
+is therefore materially below 20 GiB and has never been measured.**
 
-For calibration: the rejected `unstructured` + detectron2 extractor was ruled out at
-"5.7 GB+", recorded in the format-router section as impractical for Fargate. The
-chosen docling image is smaller but the same order of magnitude, and both its
-compressed and uncompressed forms are charged against the 20 GiB.
+Measuring it is a prerequisite for sizing, not a follow-up to it.
+
+For calibration: the rejected `unstructured` + detectron2 extractor is impractical
+for Fargate at "5.7 GB+", as the format-router section records. The
+chosen docling image is smaller but the same order of magnitude.
+
+### What the deployed trigger cannot do
+
+One property of the deployed trigger bounds every alternative to ephemeral storage:
+EventBridge's `EcsParameters` carries no volume field on either the Rules API or the
+Scheduler API, so the EventBridge → ECS target in `git_ingestion_trigger.tf` cannot
+attach a volume to the ingestion task at all. A task that needed one would have to be
+launched by a direct `ecs:RunTask` call instead.
+
+Whether the working copy should live on a provisioned volume rather than on ephemeral
+storage is [RFC-0005](../../rfc/0005-git-repository-acquisition-mechanism.md)
+candidate E. The EBS and EFS constraint set, and the teardown-first tension with
+[`CHARTER.md`](../../CHARTER.md) § Principles 4, are tabulated there.
 
 ### Keep the repository bare
 
@@ -148,8 +164,7 @@ Where a candidate puts a git repository on disk, it should be a **bare** reposit
 object store and refs, no checked-out worktree. A worktree is a second full copy of
 every document in the corpus and buys nothing the pipeline uses.
 
-This was verified against a real repository rather than assumed. Against a bare
-clone, `git --git-dir=<dir> diff <sha>..HEAD --name-status -M` returns:
+This is verified against a real repository, not assumed. Against a bare clone, `git --git-dir=<dir> diff <sha>..HEAD --name-status -M` returns:
 
 ```
 A	docs/b.md
@@ -208,8 +223,7 @@ The repository term scales with history alone — the trap being that a
 forty-document corpus in a fifty-thousand-commit repository still pays for the
 commits. Where a candidate bundles or clones, that is the term to watch, and the
 mitigation — bundling a fixed depth window instead of full history — costs a full
-rescan whenever `last_sha` falls
-outside the window.
+rescan whenever `last_sha` falls outside the window.
 
 **How much storage each candidate needs differs by roughly an order of magnitude**,
 which is why sizing is deferred to RFC-0005 rather than fixed here:
@@ -224,22 +238,31 @@ which is why sizing is deferred to RFC-0005 rather than fixed here:
 Candidate D removes the repository from disk entirely, which is its strongest
 property and the reason the sizing question cannot be settled ahead of the decision.
 
+Every profile above assumes the working copy is rebuilt each run on ephemeral storage,
+which is what is deployed. Whether it should instead live on a provisioned volume is
+[RFC-0005](../../rfc/0005-git-repository-acquisition-mechanism.md) candidate E.
+
 ### Lifecycle
 
 `/work` is per-task ephemeral storage; it does not outlive the task, and nothing in
-the pipeline treats it as durable. The acquisition artifact is deleted as soon as the
-repository is reconstructed from it. Silver and Gold artifacts are staged locally
+the pipeline treats it as durable. Whether that changes is
+[RFC-0005](../../rfc/0005-git-repository-acquisition-mechanism.md) candidate E.
+
+Under any candidate, the acquisition artifact is deleted as soon as the repository is
+reconstructed from it. Silver and Gold artifacts are staged locally
 only until their S3 `PUT` succeeds — S3 is the retained copy, and per ADR-0016 §11 a
 lifecycle rule expires the Gold prefix after 7 days while Bronze and Silver are kept
 as the replayable source of truth.
 
 ---
+
 ## Runtime — the delta run
 
 The sequence below is the **intended** flow that ADR-0016 specifies and that the
-orchestrator code is written against. The first two interactions with the git repo
-are the ones the as-built divergence register shows cannot happen today; everything
-after the delta set is produced is real and working.
+orchestrator code is written against. Three interactions with the git repo are ones
+the as-built divergence register shows cannot happen today — the clone, the delta,
+and the per-file Bronze read inside the loop. Everything that does not touch the git
+repo is real and working.
 
 ```mermaid
 sequenceDiagram
@@ -255,10 +278,12 @@ sequenceDiagram
     F->>DDB: run item → RUNNING
     F--XG: git pull / clone [BROKEN — divergence #2]
     F->>S: load last_commit_sha
-    F--XG: git diff last_sha..HEAD --name-status [BROKEN — divergence #2]
+    F--XG: git diff last_sha..HEAD --name-status [BROKEN — divergence #3]
     G-->>F: list of added, modified, and deleted files
 
     loop for each added/modified file [Silver gate]
+        F--XG: git show sha:path — read Bronze bytes [BROKEN — divergence #4]
+        G-->>F: file bytes
         F->>F: route to extractor by format (pandoc/docling/markitdown/Textract)
         alt scanned PDF
             F->>TX: OCR extract
@@ -298,6 +323,8 @@ sequenceDiagram
     F->>DDB: run item → SUCCEEDED (counts)
 ```
 
+---
+
 ## Ingestion status registry and failure alerting
 
 The S3 manifest stores only the last-ingested commit SHA — it is the delta base,
@@ -311,7 +338,7 @@ not an operational record. Two additions close the "silent ingestion failure" ga
 | Run | `run#<pipeline_execution_id>` | `status` (RUNNING → SUCCEEDED \| FAILED) · `started_at` · `finished_at` · `docs_ingested` · `docs_quarantined` · `docs_deleted` · `error` |
 | Document | `doc#<doc_uri>` | `status` (INGESTED \| QUARANTINED \| DELETED \| FAILED) · `commit_sha` · `run_id` · `updated_at` · `quarantine_reason` |
 
-> **Not yet wired.** The table below is deployed and the env var is set, but no
+> **Not yet wired.** The table above is deployed and the env var is set, but no
 > application code writes to either — see divergence #6. The write semantics that
 > follow describe the intended contract, not current behaviour. Everything in this
 > section is a target until the `ingestion-status-registry-app-wiring` backlog item
@@ -343,15 +370,7 @@ the no-NAT posture). Only `ingestion_task_role` gets read/write on the table ARN
 the query and MCP roles get no access — the registry is operational state, not
 retrieval content.
 
-
-> **Key scheme, corrected.** An earlier revision of this table stated
-> `silver/<repo>/<path>/<sha>.md` and `gold/<repo>/<path>/<sha>.chunks.json`, and
-> flagged the mismatch with ADR-0016 §3 as an open conflict. It was not one. The
-> code settles it: `pipeline.py:104` and `_types.py:16` both write
-> `silver/<doc_uri>/<sha>.report.json`, and `spec-git-ingestion` and ADR-0016 §3
-> both specify `gold/<doc_uri>/<commit_sha>.ttl` plus `.vectors.json`. Three
-> artifacts concurred and one table dissented; the table was wrong and is corrected
-> above.
+---
 
 ## Medallion architecture
 
@@ -376,6 +395,8 @@ Documents that fail the Silver gate are written to `urn:graph:quarantine` with a
 **Gold is immutable per commit SHA.** When a document changes (git delta), a new Gold
 artifact is written for the new SHA. Neptune and OpenSearch are updated in-place
 (SPARQL LOAD + OpenSearch upsert), but the S3 artifact history remains for provenance.
+
+---
 
 ## Extraction pipeline — format router
 
@@ -406,12 +427,12 @@ task OOMs before processing the first PDF. Model weights are baked into the Dock
 layer at build time; `TRANSFORMERS_OFFLINE=1` and `HF_DATASETS_OFFLINE=1` are set at
 runtime to prevent network calls from the private VPC.
 
-CPU inference runs at approximately
-40 s per document; SQS-buffered async ingestion is preferred over synchronous invocation
-for large document batches.
+CPU inference runs at approximately 40 s per document.
 
 **License note:** `pymupdf4llm` (alternative PDF extractor) is AGPL-licensed; legal
 review required before adoption in a closed-source pipeline. docling is MIT/Apache 2.0.
+
+---
 
 ## Cleansing pipeline
 
@@ -444,6 +465,8 @@ The cleansing report is a JSON sidecar written to S3 alongside the Silver Markdo
   "binary_blocks_stripped": 0
 }
 ```
+
+---
 
 ## SHACL validation gate
 
@@ -499,6 +522,8 @@ properties exist); the SHACL shapes define the data contract (what a valid tripl
 must produce). Together they are the complete machine-readable schema for the knowledge
 graph. `inference="none"` is set on the pyshacl call — no OWL reasoning, consistent with
 ADR-0012.
+
+---
 
 ## Provenance model (PROV-O)
 
@@ -573,7 +598,6 @@ and both are inputs to RFC-0005.
 | R3 | **The manifest is a single unversioned S3 object with no locking.** `ManifestManager` documents the assumption that only one task runs at a time. EventBridge triggers on pipeline success; two rapid pushes can overlap. | Two concurrent runs interleave manifest writes; one delta is silently skipped | Either enforce single-flight at the trigger (ECS task-level concurrency control) or make the manifest write conditional. Currently neither is in place. |
 | R4 | **A manual console step sits in the ingestion path.** CodeConnections cannot be driven to `AVAILABLE` by IaC. | Any fresh environment build, and any adopter following the clone-and-deploy promise | Candidates C and D remove the dependency; A and B keep it. Weighed in RFC-0005. |
 | R5 | **The organisation-provided credential is outside our control.** Rotation, scope, and revocation belong to the adopting organisation. A silently expired token looks like "no changes detected." | An expired or revoked credential produces empty deltas indistinguishable from a quiet corpus | Distinguish "no changes" from "could not determine changes" in the status registry, and alert on the latter. Not currently distinguished. |
-
 | R6 | **Force-push or history rewrite.** `last_sha` stops being reachable from HEAD. `git diff <last_sha>..HEAD` against rewritten history returns a syntactically valid, semantically wrong delta. | Any corpus repo that rebases, squashes, or amends a published branch | Verify `last_sha` is an ancestor of HEAD (`git merge-base --is-ancestor`) before trusting the diff; fall back to full rescan when it is not. Unbuilt. |
 | R7 | **Depth-window fallout.** Where a candidate bundles a fixed depth window instead of full history, `last_sha` can fall outside it. Detecting that condition is itself unbuilt, and undetected it is exactly the R1 shape. | A run following a long gap, or a corpus with heavy churn | Same ancestor check as R6. The fixed-depth mitigation in the disk-budget section is not safe without it. |
 | R8 | **Silently dropped status codes.** `_delta.py:169` carries `# else: ignore unknown status codes (C, U, X …)`. A copy (`C`) or typechange (`T`) entry drops a genuinely changed file out of the delta with no log line. | A corpus where a file's mode or type changes, or a copy-detected add | Log and fail on an unhandled status code rather than skipping it. This is a determinate three-line fix that no candidate choice affects. |
@@ -589,9 +613,10 @@ nothing happening and nothing working.
 
 | Decision | Where it is being made |
 |---|---|
-| Repository acquisition mechanism (four candidates) | [RFC-0005](../../rfc/0005-git-repository-acquisition-mechanism.md) → [ADR-0021](../../adr/0021-git-repository-acquisition-mechanism.md), logged `Proposed` |
-| `ephemeral_storage` sizing | Blocked on measuring the container image's contribution |
-| Single-flight enforcement for concurrent runs | Unowned (R3) |
+| Repository acquisition mechanism (four candidates: A–D) | [RFC-0005](../../rfc/0005-git-repository-acquisition-mechanism.md) → [ADR-0021](../../adr/0021-git-repository-acquisition-mechanism.md), logged `Proposed` |
+| Working-storage persistence — ephemeral per-task storage or a provisioned volume | [RFC-0005](../../rfc/0005-git-repository-acquisition-mechanism.md) candidate E. A **separate axis** from the acquisition mechanism: it composes with A, B, or C, and is moot under D. |
+| `ephemeral_storage` sizing | Blocked on measuring the container image's contribution. The same measurement sizes a candidate E volume. |
+| Single-flight enforcement for concurrent runs | Unowned (R3). RFC-0005 candidate **E2** would make this more urgent, not less: ECS creates a new volume per task, so two concurrent runs restore one snapshot and diverge, and the next run resolves a single latest-snapshot pointer, so one run's writes are never seen again. E1 leaves the gap unchanged. |
 | `DROP GRAPH` vs `DELETE WHERE` on the delete path | **Out of RFC-0005's scope, named here so it is not lost.** ADR-0016 §5 specifies `DROP GRAPH`; `spec-git-ingestion` forbids it explicitly ("`DROP GRAPH` on `urn:graph:normative` would destroy the entire normative partition") and requires partition-scoped `DELETE WHERE`, which is what the spec's acceptance criteria and this document's sequence diagram both describe. ADR-0016 §5's literal text is not safe to implement. Needs its own ADR. |
 
 ---
@@ -599,9 +624,11 @@ nothing happening and nothing working.
 ## References
 
 Vendor documentation behind the load-bearing claims in this document. Accessed
-2026-09-21.
+2026-09-21, except the EBS and EventBridge entries, accessed 2026-09-22.
 
 - [Fargate task ephemeral storage](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/fargate-task-storage.html) — 20 GiB default, 200 GiB maximum, both compressed and uncompressed image forms charged against the allocation, AES-256 encryption, task metadata v4 reporting
+- [Use Amazon EBS volumes with Amazon ECS](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/ebs-volumes.html) — one volume per task, created new each time and never reattached: the constraint behind the concurrent-run note in Open decisions. The remaining EBS constraints are in RFC-0005, not here
+- [EventBridge `EcsParameters` (Rules API)](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_EcsParameters.html) and [`EcsParameters` (Scheduler API)](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_EcsParameters.html) — no volume-configuration field on either, which is why the deployed trigger cannot attach a volume. The corresponding Terraform gap ([provider issue #43350](https://github.com/hashicorp/terraform-provider-aws/issues/43350)) reflects the API, not the provider
 - [CodeStarSourceConnection action reference](https://docs.aws.amazon.com/codepipeline/latest/userguide/action-reference-CodestarConnectionSource.html) — `CODE_ZIP` is a shallow copy; `CODEBUILD_CLONE_REF` is consumable only by CodeBuild actions
 - [Create a connection to GitLab self-managed](https://docs.aws.amazon.com/dtconsole/latest/userguide/connections-create-gitlab-managed.html) — host resource, VPC fields, and the CLI/CloudFormation `PENDING` → console handshake
 - [GitHub REST: compare two commits](https://docs.github.com/en/rest/commits/commits) — 300-file cap on the changed-file list
